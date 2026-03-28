@@ -20,7 +20,6 @@ from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.runtime import autodetect_device_type, compute_cleanup, compute_init, print0
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
-# ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Evaluate tinygpt model")
 parser.add_argument("--checkpoint", type=str, required=True, help="Path to checkpoint directory")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
@@ -34,11 +33,9 @@ args = parser.parse_args()
 
 eval_modes = {m.strip() for m in args.eval.split(",")}
 
-# ---------------------------------------------------------------------------
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 _, rank, _, world_size, device = compute_init(device_type)
 
-# ---------------------------------------------------------------------------
 model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
 token_bytes = compute_token_bytes(tokenizer, device=device)
@@ -47,7 +44,6 @@ sequence_len = meta["model_config"]["sequence_len"]
 print0(f"Loaded model from {args.checkpoint} (step {meta.get('step', '?')})")
 print0(f"Eval modes: {', '.join(sorted(eval_modes))}")
 
-# ---------------------------------------------------------------------------
 # Sampling
 if "sample" in eval_modes and rank == 0:
     print0("\n" + "=" * 70)
@@ -65,7 +61,6 @@ if "sample" in eval_modes and rank == 0:
         sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=20, temperature=0)
         print0(f"{tokenizer.decode(sample[0])}")
 
-# ---------------------------------------------------------------------------
 # BPB
 if "bpb" in eval_modes:
     print0("\n" + "=" * 70)

@@ -145,11 +145,6 @@ def tokenizing_distributed_data_loader_bestfit(
         yield inputs, targets
 
 
-# ---------------------------------------------------------------------------
-# SFT dataloader (from a Task)
-# ---------------------------------------------------------------------------
-
-
 def sft_data_loader(
     tokenizer: Any,
     task: Any,

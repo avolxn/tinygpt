@@ -17,10 +17,6 @@ import torch.nn.functional as F
 
 from tinygpt.runtime import compute_dtype, get_model_device
 
-# ---------------------------------------------------------------------------
-# Calculator tool helpers (used by the chat engine)
-# ---------------------------------------------------------------------------
-
 
 @contextmanager
 def timeout(duration: int, formula: str) -> Generator[None, None, None]:
@@ -82,11 +78,6 @@ def use_calculator(expr: str) -> object:
     return eval_with_timeout(expr)
 
 
-# ---------------------------------------------------------------------------
-# KV Cache
-# ---------------------------------------------------------------------------
-
-
 class KVCache:
     """
     Pre-allocated KV cache for flash attention (B, T, H, D) layout.
@@ -141,11 +132,6 @@ class KVCache:
             self.prev_embedding = other.prev_embedding.expand(self.batch_size, -1, -1).clone()
 
 
-# ---------------------------------------------------------------------------
-# Sampling
-# ---------------------------------------------------------------------------
-
-
 @torch.inference_mode()
 def sample_next_token(
     logits: torch.Tensor,
@@ -166,11 +152,6 @@ def sample_next_token(
     logits = logits / temperature
     probs = F.softmax(logits, dim=-1)
     return torch.multinomial(probs, num_samples=1, generator=rng)
-
-
-# ---------------------------------------------------------------------------
-# Engine
-# ---------------------------------------------------------------------------
 
 
 class RowState:

@@ -43,10 +43,6 @@ class HuggingFaceTokenizer:
     def __init__(self, tokenizer: HFTokenizer) -> None:
         self.tokenizer = tokenizer
 
-    # ------------------------------------------------------------------
-    # Constructors
-    # ------------------------------------------------------------------
-
     @classmethod
     def from_pretrained(cls, hf_path: str) -> "HuggingFaceTokenizer":
         return cls(HFTokenizer.from_pretrained(hf_path))
@@ -80,10 +76,6 @@ class HuggingFaceTokenizer:
         tokenizer.train_from_iterator(text_iterator, trainer)
         return cls(tokenizer)
 
-    # ------------------------------------------------------------------
-    # Vocabulary utilities
-    # ------------------------------------------------------------------
-
     def get_vocab_size(self) -> int:
         return int(self.tokenizer.get_vocab_size())
 
@@ -103,10 +95,6 @@ class HuggingFaceTokenizer:
         if bos is None:
             raise RuntimeError("Failed to find BOS token in tokenizer")
         return bos
-
-    # ------------------------------------------------------------------
-    # Encode / decode
-    # ------------------------------------------------------------------
 
     def _encode_one(
         self,
@@ -155,19 +143,11 @@ class HuggingFaceTokenizer:
     def decode(self, ids: list[int]) -> str:
         return str(self.tokenizer.decode(ids, skip_special_tokens=False))
 
-    # ------------------------------------------------------------------
-    # Persistence
-    # ------------------------------------------------------------------
-
     def save(self, tokenizer_dir: str) -> None:
         os.makedirs(tokenizer_dir, exist_ok=True)
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
         self.tokenizer.save(tokenizer_path)
         print(f"Saved tokenizer to {tokenizer_path}")
-
-    # ------------------------------------------------------------------
-    # SFT rendering (conversation → token ids + loss mask)
-    # ------------------------------------------------------------------
 
     def render_conversation(
         self,

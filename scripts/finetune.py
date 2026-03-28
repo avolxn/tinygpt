@@ -38,7 +38,6 @@ from tinygpt.runtime import (
 from tinygpt.scheduler import step_scheduler
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
-# ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Supervised fine-tuning")
 parser.add_argument("--checkpoint", type=str, required=True, help="Pre-trained checkpoint directory to start from")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
@@ -74,7 +73,6 @@ parser.add_argument("--tasks", type=str, default="mmlu,gsm8k", help="Comma-separ
 args = parser.parse_args()
 user_config = vars(args).copy()
 
-# ---------------------------------------------------------------------------
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 is_dist, rank, local_rank, world_size, device = compute_init(device_type)
 master_process = rank == 0
@@ -86,14 +84,12 @@ if not fa2_available:
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="tinygpt-sft", name=args.run, config=user_config)
 
-# ---------------------------------------------------------------------------
 # Load model + tokenizer
 model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="train")
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
 sequence_len = args.max_seq_len or meta["model_config"]["sequence_len"]
 token_bytes = compute_token_bytes(tokenizer, device=device)
 
-# ---------------------------------------------------------------------------
 # FSDP wrap
 if device_type == "cuda" and is_dist:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP  # noqa: PLC0415
@@ -114,7 +110,6 @@ if device_type == "cuda" and is_dist:
         device_id=local_rank,
     )
 
-# ---------------------------------------------------------------------------
 # Task mixture
 task_names = {t.strip() for t in args.tasks.split(",")}
 task_list = []
@@ -135,7 +130,6 @@ from tasks.base import TaskMixture  # noqa: E402,PLC0415
 task = TaskMixture(task_list)
 print0(f"Task mixture: {len(task)} examples from {task_names}")
 
-# ---------------------------------------------------------------------------
 # Optimizer
 optimizer = make_optimizer(
     model,
@@ -145,7 +139,6 @@ optimizer = make_optimizer(
     weight_decay=args.weight_decay,
 )
 
-# ---------------------------------------------------------------------------
 # Training loop
 train_loader = sft_data_loader(tokenizer, task, args.device_batch_size, sequence_len, device)
 

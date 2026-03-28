@@ -50,9 +50,6 @@ from tinygpt.runtime import (
 from tinygpt.scheduler import step_scheduler
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
 # Logging
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb)")
@@ -110,9 +107,6 @@ parser.add_argument(
 args = parser.parse_args()
 user_config = vars(args).copy()
 
-# ---------------------------------------------------------------------------
-# Init
-# ---------------------------------------------------------------------------
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 is_dist, rank, local_rank, world_size, device = compute_init(device_type)
 master_process = rank == 0
@@ -142,9 +136,6 @@ else:
         print0("WARNING: Flash Attention 2 not available, using PyTorch SDPA fallback.")
     print0("!" * 70)
 
-# ---------------------------------------------------------------------------
-# Tokenizer
-# ---------------------------------------------------------------------------
 if args.txt:
     # Tiny dataset path: inline train from txt
     print0(f"Loading tokenizer from {args.tokenizer_dir}")
@@ -156,9 +147,6 @@ vocab_size = tokenizer.get_vocab_size()
 token_bytes = compute_token_bytes(tokenizer, device=device)
 print0(f"Vocab size: {vocab_size:,}")
 
-# ---------------------------------------------------------------------------
-# Model
-# ---------------------------------------------------------------------------
 config = make_config(
     args.depth,
     aspect_ratio=args.aspect_ratio,
@@ -175,9 +163,6 @@ with torch.device("meta"):
 model.to_empty(device=device)
 model.init_weights()
 
-# ---------------------------------------------------------------------------
-# FSDP wrap (CUDA only)
-# ---------------------------------------------------------------------------
 if device_type == "cuda" and is_dist:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
     from torch.distributed.fsdp import ShardingStrategy
@@ -198,9 +183,6 @@ if device_type == "cuda" and is_dist:
     )
     print0(f"FSDP enabled with sharding strategy: {args.sharding_strategy}")
 
-# ---------------------------------------------------------------------------
-# Parameter counts
-# ---------------------------------------------------------------------------
 param_counts = model.num_scaling_params() if hasattr(model, "num_scaling_params") else {}
 if param_counts:
     print0("Parameter counts:")
@@ -211,9 +193,6 @@ num_flops_per_token = model.estimate_flops() if hasattr(model, "estimate_flops")
 print0(f"Total params: {num_params:,}")
 print0(f"Estimated FLOPs/token: {num_flops_per_token:e}")
 
-# ---------------------------------------------------------------------------
-# Training horizon
-# ---------------------------------------------------------------------------
 if args.num_iterations > 0:
     num_iterations = args.num_iterations
 elif param_counts and args.target_param_data_ratio > 0:
@@ -243,9 +222,6 @@ print0(f"num_iterations: {num_iterations:,}")
 print0(f"total_batch_size: {total_batch_size:,}")
 print0(f"grad_accum_steps: {grad_accum_steps}")
 
-# ---------------------------------------------------------------------------
-# Optimizer + resume
-# ---------------------------------------------------------------------------
 optimizer = make_optimizer(
     model,
     matrix_lr=args.matrix_lr,
@@ -272,10 +248,6 @@ if args.resume_from:
     smooth_train_loss = loop_state.get("smooth_train_loss", 0.0)
     total_training_time = loop_state.get("total_training_time", 0.0)
     print0(f"Resumed at step {step}")
-
-# ---------------------------------------------------------------------------
-# Data loaders
-# ---------------------------------------------------------------------------
 
 
 def make_loader(split: str):
@@ -367,21 +339,14 @@ def _txt_loader(tokenizer, dataset, B, T, device):
 train_loader = make_loader("train")
 x, y = next(train_loader)
 
-# ---------------------------------------------------------------------------
-# Checkpoint dir
-# ---------------------------------------------------------------------------
 run_name = args.run_name if args.run_name else f"d{args.depth}"
 checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name)
 
-# ---------------------------------------------------------------------------
-# Training loop
-# ---------------------------------------------------------------------------
 model.train()
 
 while True:
     last_step = step == num_iterations
 
-    # -----------------------------------------------------------------------
     # Eval
     if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
         model.eval()
@@ -428,7 +393,6 @@ while True:
     if last_step:
         break
 
-    # -----------------------------------------------------------------------
     # Training step
     synchronize()
     t0 = time.time()
@@ -491,9 +455,6 @@ while True:
     elif step % 5000 == 0:
         gc.collect()
 
-# ---------------------------------------------------------------------------
-# Teardown
-# ---------------------------------------------------------------------------
 print0(f"Peak memory: {get_max_memory() / 1024 / 1024:.1f}MiB")
 print0(f"Total training time: {total_training_time / 60:.2f}m")
 wandb_run.finish()

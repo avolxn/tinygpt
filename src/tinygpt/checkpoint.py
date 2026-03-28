@@ -27,7 +27,6 @@ from tinygpt.gpt import GPT
 
 logger = logging.getLogger(__name__)
 
-
 model_filename = "model.safetensors"
 optim_filename = "optimizer.pt"
 meta_filename = "meta.json"
@@ -40,11 +39,6 @@ def is_fsdp(model: torch.nn.Module) -> bool:
 def fsdp_full_state_dict_ctx(model: torch.nn.Module) -> Any:
     cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
     return FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg)
-
-
-# ---------------------------------------------------------------------------
-# Save
-# ---------------------------------------------------------------------------
 
 
 def save_checkpoint(
@@ -69,26 +63,17 @@ def save_checkpoint(
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    # ------------------------------------------------------------------
-    # Model state dict
-    # ------------------------------------------------------------------
     if is_fsdp(model):
         with fsdp_full_state_dict_ctx(model):
             state_dict = model.state_dict()
     else:
         state_dict = model.state_dict()
 
-    # ------------------------------------------------------------------
-    # Optimizer state dict
-    # ------------------------------------------------------------------
     if is_fsdp(model):
         optim_state = FSDP.full_optim_state_dict(model, optimizer, rank0_only=True)
     else:
         optim_state = optimizer.state_dict()
 
-    # ------------------------------------------------------------------
-    # Write files (rank 0 only)
-    # ------------------------------------------------------------------
     if rank == 0:
         model_path = os.path.join(checkpoint_dir, model_filename)
         # safetensors requires contiguous fp32/bf16 tensors
@@ -104,11 +89,6 @@ def save_checkpoint(
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
         logger.info(f"Saved meta to: {meta_path}")
-
-
-# ---------------------------------------------------------------------------
-# Load
-# ---------------------------------------------------------------------------
 
 
 def load_checkpoint(
@@ -163,11 +143,6 @@ def load_checkpoint(
             logger.warning(f"Optimizer checkpoint not found at {optim_path}, skipping")
 
     return meta  # type: ignore[no-any-return]
-
-
-# ---------------------------------------------------------------------------
-# Directory helpers
-# ---------------------------------------------------------------------------
 
 
 def get_checkpoint_dir(output_dir: str, run_name: str) -> str:

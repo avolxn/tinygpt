@@ -29,7 +29,6 @@ from tinygpt.engine import Engine
 from tinygpt.runtime import autodetect_device_type, compute_init
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
-# ---------------------------------------------------------------------------
 # Abuse prevention limits
 MAX_MESSAGES = 500
 MAX_MSG_LEN = 8000
@@ -38,7 +37,6 @@ MAX_TEMP = 2.0
 MAX_TOP_K = 200
 MAX_GEN_TOKENS = 4096
 
-# ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -56,11 +54,6 @@ args = parser.parse_args()
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 _, _, _, _, _base_device = compute_init(device_type)
-
-
-# ---------------------------------------------------------------------------
-# Worker pool
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -98,11 +91,6 @@ class WorkerPool:
         await self.available.put(worker)
 
 
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
-
-
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -137,11 +125,6 @@ def validate_request(req: ChatRequest) -> None:
         raise HTTPException(400, f"top_k must be in [0, {MAX_TOP_K}]")
     if req.max_tokens is not None and not (1 <= req.max_tokens <= MAX_GEN_TOKENS):
         raise HTTPException(400, f"max_tokens must be in [1, {MAX_GEN_TOKENS}]")
-
-
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 
 
 @asynccontextmanager

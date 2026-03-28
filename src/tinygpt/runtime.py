@@ -14,10 +14,6 @@ import torch
 import torch.distributed as dist
 from torch.distributed.fsdp import MixedPrecision
 
-# ---------------------------------------------------------------------------
-# Compute dtype
-# ---------------------------------------------------------------------------
-
 dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
 
 
@@ -36,11 +32,6 @@ def detect_compute_dtype() -> tuple[torch.dtype, str]:
 
 
 compute_dtype, compute_dtype_reason = detect_compute_dtype()
-
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 
 
 class ColoredFormatter(logging.Formatter):
@@ -76,11 +67,6 @@ setup_default_logging()
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Distributed helpers
-# ---------------------------------------------------------------------------
-
-
 def is_distributed_requested() -> bool:
     """True if launched by torchrun (env vars present)."""
     return all(k in os.environ for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE"))
@@ -113,11 +99,6 @@ def get_model_device(model: torch.nn.Module) -> torch.device:
     if hasattr(model, "get_device"):
         return model.get_device()  # type: ignore[operator, no-any-return]
     return next(model.parameters()).device
-
-
-# ---------------------------------------------------------------------------
-# Device setup
-# ---------------------------------------------------------------------------
 
 
 def autodetect_device_type() -> str:
@@ -172,11 +153,6 @@ def compute_cleanup() -> None:
         dist.destroy_process_group()
 
 
-# ---------------------------------------------------------------------------
-# FSDP mixed precision
-# ---------------------------------------------------------------------------
-
-
 def make_fsdp_mixed_precision(override: torch.dtype | None = None) -> Any:
     """
     Return a MixedPrecision config suitable for FSDP wrapping.
@@ -189,11 +165,6 @@ def make_fsdp_mixed_precision(override: torch.dtype | None = None) -> Any:
         reduce_dtype=dtype,
         buffer_dtype=dtype,
     )
-
-
-# ---------------------------------------------------------------------------
-# MFU / peak flops table
-# ---------------------------------------------------------------------------
 
 
 class DummyWandb:

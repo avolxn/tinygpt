@@ -14,14 +14,9 @@ import os
 
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
-# ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Evaluate tokenizer compression")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer", help="Directory containing tokenizer.json")
 args = parser.parse_args()
-
-# ---------------------------------------------------------------------------
-# Sample texts (same as nanochat tok_eval.py)
-# ---------------------------------------------------------------------------
 
 news_text = """
 (Washington, D.C.)- Mexico's National Service of Agro-Alimentary Health, Safety, and Quality
@@ -80,10 +75,6 @@ all_text = [
     ("science", science_text),
 ]
 
-# ---------------------------------------------------------------------------
-# Load tokenizers
-# ---------------------------------------------------------------------------
-
 tokenizers: dict[str, HuggingFaceTokenizer] = {}
 
 tokenizers["gpt2"] = HuggingFaceTokenizer.from_pretrained("gpt2")
@@ -94,10 +85,6 @@ if os.path.exists(os.path.join(args.tokenizer_dir, "tokenizer.json")):
     print(f"Loaded our tokenizer from {args.tokenizer_dir}")
 else:
     print(f"WARNING: tokenizer not found at {args.tokenizer_dir} — skipping 'ours'")
-
-# ---------------------------------------------------------------------------
-# Evaluate
-# ---------------------------------------------------------------------------
 
 GREEN = "\033[92m"
 RED = "\033[91m"
@@ -116,10 +103,6 @@ for name, tok in tokenizers.items():
             raise ValueError(f"Round-trip failed for {name}/{text_name}")
         nb = len(text.encode("utf-8"))
         results[name][text_name] = {"bytes": nb, "tokens": len(encoded), "ratio": nb / len(encoded)}
-
-# ---------------------------------------------------------------------------
-# Print
-# ---------------------------------------------------------------------------
 
 print("\nVocab sizes:")
 for name, size in vocab_sizes.items():

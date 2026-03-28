@@ -8,10 +8,6 @@ import torch
 from tinygpt.config import GPTConfig
 from tinygpt.gpt import GPT
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
 def tiny_config() -> GPTConfig:
@@ -33,11 +29,6 @@ def tiny_model(tiny_config: GPTConfig) -> GPT:
     model.init_weights()
     model.eval()
     return model
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 def test_forward_no_targets(tiny_model: GPT, tiny_config: GPTConfig) -> None:
