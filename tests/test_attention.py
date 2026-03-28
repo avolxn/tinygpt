@@ -7,7 +7,7 @@ When FA2 is not available, all tests run on SDPA only.
 import pytest
 import torch
 
-from tinygpt.attention import fa2_available, flash_attn_func, flash_attn_with_kvcache
+from tinygpt.attention import flash_attn_available, flash_attn_func, flash_attn_with_kvcache
 
 
 def make_qkv(B: int, T: int, H: int, Hkv: int, D: int, device="cpu") -> tuple[torch.Tensor, ...]:
@@ -40,7 +40,7 @@ def test_sdpa_sliding_window() -> None:
     assert out.shape == (B, T, H, D)
 
 
-@pytest.mark.skipif(not fa2_available, reason="FA2 not available on this machine")
+@pytest.mark.skipif(not flash_attn_available, reason="FA2 not available on this machine")
 def test_fa2_sdpa_equivalence() -> None:
     """FA2 and SDPA produce numerically close outputs (atol=0.01 for bf16)."""
     if not torch.cuda.is_available():
@@ -52,7 +52,7 @@ def test_fa2_sdpa_equivalence() -> None:
     # Use FA2 directly
     import tinygpt.attention as attn_module  # noqa: PLC0415
 
-    out_fa2 = attn_module.fa2.flash_attn_func(q, k, v, causal=True, window_size=(-1, 0))
+    out_fa2 = attn_module.flash_attn.flash_attn_func(q, k, v, causal=True, window_size=(-1, 0))
 
     # Use SDPA directly
     from tinygpt.attention import sdpa_attention  # noqa: PLC0415

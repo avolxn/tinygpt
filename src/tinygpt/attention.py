@@ -14,6 +14,7 @@ Usage:
     y = flash_attn_with_kvcache(q, k_cache, v_cache, k=k, v=v, ...)
 """
 
+import importlib
 import logging
 from typing import Any
 
@@ -24,19 +25,17 @@ from tinygpt.runtime import compute_dtype
 
 logger = logging.getLogger(__name__)
 
-fa2: Any = None
+flash_attn: Any = None
 try:
     if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
-        import flash_attn as _fa2_pkg  # noqa: PLC0415
-
-        fa2 = _fa2_pkg
+        flash_attn = importlib.import_module("flash_attn")
 except ImportError:
     pass
 
-fa2_available = fa2 is not None
+flash_attn_available = flash_attn is not None
 
 # Default backend choice based on hardware/dtype at load time
-use_fa2 = fa2_available and compute_dtype == torch.bfloat16
+use_flash_attn = flash_attn is not None and compute_dtype == torch.bfloat16
 
 
 def sdpa_attention(
@@ -94,8 +93,8 @@ def flash_attn_func(
     Returns:
         (B, T, H, D)
     """
-    if use_fa2:
-        return fa2.flash_attn_func(q, k, v, causal=causal, window_size=window_size)  # type: ignore[no-any-return]
+    if use_flash_attn:
+        return flash_attn.flash_attn_func(q, k, v, causal=causal, window_size=window_size)  # type: ignore[no-any-return]
 
     q = q.transpose(1, 2)
     k = k.transpose(1, 2)
@@ -131,8 +130,8 @@ def flash_attn_with_kvcache(
     Returns:
         (B, T_new, H, D)
     """
-    if use_fa2:
-        return fa2.flash_attn_with_kvcache(  # type: ignore[no-any-return]
+    if use_flash_attn:
+        return flash_attn.flash_attn_with_kvcache(  # type: ignore[no-any-return]
             q,
             k_cache,
             v_cache,
