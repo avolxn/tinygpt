@@ -168,7 +168,6 @@ if param_counts:
     for k, v in param_counts.items():
         print0(f"  {k:<24}: {v:,}")
 num_params = sum(p.numel() for p in model.parameters())
-num_flops_per_token = model.estimate_flops() if hasattr(model, "estimate_flops") else 0
 print0(f"Total params: {num_params:,}")
 
 if args.num_iterations > 0:
