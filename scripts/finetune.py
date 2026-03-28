@@ -19,7 +19,7 @@ from functools import partial
 import torch
 import wandb
 
-from tinygpt.attention import fa2_available
+from tinygpt.attention import flash_attn_available
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, save_checkpoint
 from tinygpt.dataloader import sft_data_loader
 from tinygpt.gpt import Block
@@ -78,7 +78,7 @@ is_dist, rank, local_rank, world_size, device = compute_init(device_type)
 master_process = rank == 0
 
 print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
-if not fa2_available:
+if not flash_attn_available:
     print0("WARNING: FA2 not available, using SDPA fallback.")
 
 use_dummy_wandb = args.run == "dummy" or not master_process

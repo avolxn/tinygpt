@@ -28,7 +28,7 @@ from functools import partial
 import torch
 import wandb
 
-from tinygpt.attention import fa2_available, use_fa2
+from tinygpt.attention import flash_attn_available, use_flash_attn
 from tinygpt.checkpoint import get_checkpoint_dir, save_checkpoint
 from tinygpt.config import make_config
 from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
@@ -126,11 +126,11 @@ use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="tinygpt", name=args.run, config=user_config)
 
 # Flash attention status
-if use_fa2:
+if use_flash_attn:
     print0("Using Flash Attention 2 (Ampere+ GPU detected).")
 else:
     print0("!" * 70)
-    if fa2_available and compute_dtype != torch.bfloat16:
+    if flash_attn_available and compute_dtype != torch.bfloat16:
         print0(f"WARNING: FA2 only supports bf16, compute_dtype={compute_dtype}. Using SDPA.")
     else:
         print0("WARNING: Flash Attention 2 not available, using PyTorch SDPA fallback.")
