@@ -43,19 +43,6 @@ fa2_available = fa2 is not None
 # Default backend choice based on hardware/dtype at load time
 use_fa2 = fa2_available and compute_dtype == torch.bfloat16
 
-# Allow tests to override the backend at runtime: set to 'fa2' or 'sdpa'
-override_backend: str | None = None
-
-
-def active_fa2() -> bool:
-    """Return whether FA2 should be used for this call (respects override_backend)."""
-    if override_backend == "sdpa":
-        return False
-    if override_backend == "fa2":
-        assert fa2_available, "Cannot force FA2: not available on this hardware"
-        return True
-    return use_fa2
-
 
 # ---------------------------------------------------------------------------
 # SDPA helpers
@@ -122,7 +109,7 @@ def flash_attn_func(
     Returns:
         (B, T, H, D)
     """
-    if active_fa2():
+    if use_fa2:
         return fa2.flash_attn_func(q, k, v, causal=causal, window_size=window_size)  # type: ignore[no-any-return]
 
     q = q.transpose(1, 2)
@@ -159,7 +146,7 @@ def flash_attn_with_kvcache(
     Returns:
         (B, T_new, H, D)
     """
-    if active_fa2():
+    if use_fa2:
         return fa2.flash_attn_with_kvcache(  # type: ignore[no-any-return]
             q,
             k_cache,
