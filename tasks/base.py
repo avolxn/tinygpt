@@ -6,6 +6,7 @@ Taken from nanochat/tasks/common.py; renamed to tasks/base.py.
 """
 
 import random
+from typing import Any
 
 
 class Task:
@@ -39,7 +40,7 @@ class Task:
         """
         raise NotImplementedError
 
-    def get_example(self, index: int) -> dict:
+    def get_example(self, index: int) -> dict[str, Any]:
         """Return a single example by its physical index.
 
         Args:
@@ -50,7 +51,7 @@ class Task:
         """
         raise NotImplementedError
 
-    def evaluate(self, problem: dict, completion: str) -> bool:
+    def evaluate(self, problem: dict[str, Any], completion: str) -> bool:
         """Check whether a model completion is correct for the given problem.
 
         Args:
@@ -61,6 +62,22 @@ class Task:
             True if the completion is considered correct.
         """
         raise NotImplementedError
+
+    def reward(self, problem: dict[str, Any], completion: str) -> float:
+        """Return a reward signal for RL training.
+
+        By default, this is 1.0 if the completion is correct, 0.0 otherwise.
+        Subclasses can override for more sophisticated reward schemes.
+
+        Args:
+            problem: The example dict as returned by get_example.
+            completion: The model's generated answer string.
+
+        Returns:
+            A float reward signal (typically 0.0 or 1.0).
+        """
+        is_correct = self.evaluate(problem, completion)
+        return float(is_correct)
 
     def __len__(self) -> int:
         """Return the number of examples after slicing.
@@ -73,7 +90,7 @@ class Task:
         span = stop - start
         return max(0, (span + self.step - 1) // self.step)
 
-    def __getitem__(self, index: int) -> dict:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         """Return the example at a logical index within the slice.
 
         Args:
@@ -94,7 +111,7 @@ class TaskMixture(Task):
     Pass a task multiple times to oversample it.
     """
 
-    def __init__(self, tasks: list[Task], **kwargs) -> None:
+    def __init__(self, tasks: list[Task], **kwargs: Any) -> None:
         """Initialise the mixture by building a shuffled flat index map.
 
         Args:
@@ -120,7 +137,7 @@ class TaskMixture(Task):
         """
         return self.num_conversations
 
-    def get_example(self, index: int) -> dict:
+    def get_example(self, index: int) -> dict[str, Any]:
         """Return the example at a physical index in the shuffled mixture.
 
         Args:
@@ -137,7 +154,7 @@ class TaskMixture(Task):
 class TaskSequence(Task):
     """Sequential concatenation of multiple Task objects."""
 
-    def __init__(self, tasks: list[Task], **kwargs) -> None:
+    def __init__(self, tasks: list[Task], **kwargs: Any) -> None:
         """Initialise the sequence from a list of tasks.
 
         Args:
@@ -157,7 +174,7 @@ class TaskSequence(Task):
         """
         return self.num_conversations
 
-    def get_example(self, index: int) -> dict:
+    def get_example(self, index: int) -> dict[str, Any]:
         """Return the example at a physical index in the concatenated sequence.
 
         Args:
@@ -177,7 +194,7 @@ class TaskSequence(Task):
         raise IndexError(f"Index out of range: {index}")
 
 
-def render_mc(question: str, letters: tuple | list, choices: list[str]) -> str:
+def render_mc(question: str, letters: tuple[str, ...] | list[str], choices: list[str]) -> str:
     """Render a multiple-choice question in the standard tinygpt format.
 
     The letter appears after the choice text (better for small models).

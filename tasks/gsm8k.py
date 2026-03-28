@@ -6,6 +6,7 @@ The dataset uses << >> tool call markers which we map to python parts.
 """
 
 import re
+from typing import Any
 
 from datasets import load_dataset
 
@@ -32,7 +33,7 @@ def extract_answer(text: str) -> str | None:
 class GSM8K(Task):
     """Grade School Math 8K dataset."""
 
-    def __init__(self, subset: str, split: str, **kwargs) -> None:
+    def __init__(self, subset: str, split: str, **kwargs: Any) -> None:
         """Load the GSM8K dataset.
 
         Args:
@@ -58,7 +59,7 @@ class GSM8K(Task):
         """
         return len(self.ds)
 
-    def get_example(self, index: int) -> dict:
+    def get_example(self, index: int) -> dict[str, Any]:
         """Return a conversation dict for a GSM8K problem.
 
         Args:
@@ -73,7 +74,7 @@ class GSM8K(Task):
         answer = row["answer"]
 
         # Parse tool calls encoded as <<expr=result>>
-        parts = []
+        parts: list[dict[str, str]] = []
         for chunk in re.split(r"(<<[^>]+>>)", answer):
             if chunk.startswith("<<") and chunk.endswith(">>"):
                 inner = chunk[2:-2]
@@ -90,7 +91,7 @@ class GSM8K(Task):
             ]
         }
 
-    def evaluate(self, problem: dict, completion: str) -> bool:
+    def evaluate(self, problem: dict[str, Any], completion: str) -> bool:
         """Check whether the completion contains the correct numerical answer.
 
         Args:
