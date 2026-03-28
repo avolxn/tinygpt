@@ -167,7 +167,6 @@ class HuggingFaceTokenizer:
             text: The string to encode.
             prepend: Optional special token (string name or id) to prepend.
             append: Optional special token (string name or id) to append.
-            num_threads: Ignored; present for API compatibility.
 
         Returns:
             List of integer token ids.
@@ -208,7 +207,6 @@ class HuggingFaceTokenizer:
             text: A single string or a list of strings to encode.
             prepend: Optional special token (string name or id) to prepend to each encoding.
             append: Optional special token (string name or id) to append to each encoding.
-            num_threads: Ignored; present for API compatibility.
 
         Returns:
             A flat list of ints for a single string, or a list of lists for batch input.
