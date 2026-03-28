@@ -8,25 +8,20 @@ Usage:
 
 import argparse
 
-import torch
-
-from tinygpt.runtime import autodetect_device_type, compute_init
 from tinygpt.checkpoint import build_model_from_checkpoint
-from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.engine import Engine
+from tinygpt.runtime import autodetect_device_type, compute_init
+from tinygpt.tokenizer import HuggingFaceTokenizer
 
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Chat with tinygpt")
-parser.add_argument("--checkpoint", type=str, required=True,
-                    help="Path to fine-tuned checkpoint directory")
+parser.add_argument("--checkpoint", type=str, required=True, help="Path to fine-tuned checkpoint directory")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
-parser.add_argument("--prompt", type=str, default="",
-                    help="Single-turn prompt (interactive mode if empty)")
+parser.add_argument("--prompt", type=str, default="", help="Single-turn prompt (interactive mode if empty)")
 parser.add_argument("--temperature", type=float, default=0.6)
 parser.add_argument("--top-k", type=int, default=50)
 parser.add_argument("--max-tokens", type=int, default=512)
-parser.add_argument("--device-type", type=str, default="",
-                    choices=["cuda", "cpu", "mps", ""])
+parser.add_argument("--device-type", type=str, default="", choices=["cuda", "cpu", "mps", ""])
 args = parser.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -57,7 +52,8 @@ def run_turn(user_input: str) -> str:
     prompt = conversation_tokens + [user_start] + user_ids + [user_end] + [assistant_start]
     response_tokens: list[int] = []
     for token_column, _ in engine.generate(
-        prompt, num_samples=1,
+        prompt,
+        num_samples=1,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         top_k=args.top_k,
@@ -72,8 +68,12 @@ def run_turn(user_input: str) -> str:
     # Append to conversation history
     conversation_tokens = (
         conversation_tokens
-        + [user_start] + user_ids + [user_end]
-        + [assistant_start] + response_tokens + [assistant_end]
+        + [user_start]
+        + user_ids
+        + [user_end]
+        + [assistant_start]
+        + response_tokens
+        + [assistant_end]
     )
     return response
 

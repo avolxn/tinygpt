@@ -12,22 +12,19 @@ Usage:
 """
 
 import argparse
-import torch
 
-from tinygpt.runtime import autodetect_device_type, compute_init, compute_cleanup, print0
 from tinygpt.checkpoint import build_model_from_checkpoint
-from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
-from tinygpt.metrics import evaluate_bpb, compute_token_bytes
 from tinygpt.engine import Engine
+from tinygpt.metrics import compute_token_bytes, evaluate_bpb
+from tinygpt.runtime import autodetect_device_type, compute_cleanup, compute_init, print0
+from tinygpt.tokenizer import HuggingFaceTokenizer
 
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Evaluate tinygpt model")
-parser.add_argument("--checkpoint", type=str, required=True,
-                    help="Path to checkpoint directory")
+parser.add_argument("--checkpoint", type=str, required=True, help="Path to checkpoint directory")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
-parser.add_argument("--eval", type=str, default="bpb,sample",
-                    help="Comma-separated modes: bpb,sample")
+parser.add_argument("--eval", type=str, default="bpb,sample", help="Comma-separated modes: bpb,sample")
 parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
 parser.add_argument("--text-field", type=str, default="text")
 parser.add_argument("--device-batch-size", type=int, default=32)

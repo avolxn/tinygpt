@@ -20,7 +20,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from tinygpt.runtime import COMPUTE_DTYPE
+from tinygpt.runtime import compute_dtype
 
 logger = logging.getLogger(__name__)
 
@@ -29,49 +29,40 @@ logger = logging.getLogger(__name__)
 # FA2 detection
 # ---------------------------------------------------------------------------
 
+fa2: Any = None
+try:
+    if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
+        import flash_attn as _fa2_pkg  # noqa: PLC0415
 
-def _load_flash_attention_2() -> Any:
-    """Try to load Flash Attention 2 (requires Ampere+ GPU, sm80+)."""
-    if not torch.cuda.is_available():
-        return None
-    try:
-        major, _ = torch.cuda.get_device_capability()
-        if major < 8:
-            return None
-        import flash_attn as _fa2  # noqa: PLC0415
+        fa2 = _fa2_pkg
+except ImportError:
+    pass
 
-        return _fa2
-    except ImportError:
-        return None
+fa2_available = fa2 is not None
 
+# Default backend choice based on hardware/dtype at load time
+use_fa2 = fa2_available and compute_dtype == torch.bfloat16
 
-_fa2 = _load_flash_attention_2()
-HAS_FA2 = _fa2 is not None
-
-# Allow tests to force a specific backend: set to 'fa2' or 'sdpa'
-_override_impl: str | None = None
+# Allow tests to override the backend at runtime: set to 'fa2' or 'sdpa'
+override_backend: str | None = None
 
 
-def _use_fa2() -> bool:
-    if _override_impl == "fa2":
-        assert HAS_FA2, "Cannot force FA2: not available on this hardware"
-        return True
-    if _override_impl == "sdpa":
+def active_fa2() -> bool:
+    """Return whether FA2 should be used for this call (respects override_backend)."""
+    if override_backend == "sdpa":
         return False
-    if HAS_FA2:
-        return COMPUTE_DTYPE == torch.bfloat16
-    return False
-
-
-USE_FA2 = _use_fa2()
+    if override_backend == "fa2":
+        assert fa2_available, "Cannot force FA2: not available on this hardware"
+        return True
+    return use_fa2
 
 
 # ---------------------------------------------------------------------------
-# SDPA helpers (unchanged from nanochat)
+# SDPA helpers
 # ---------------------------------------------------------------------------
 
 
-def _sdpa_attention(
+def sdpa_attention(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
@@ -109,7 +100,7 @@ def _sdpa_attention(
 
 
 # ---------------------------------------------------------------------------
-# Public API (mirrors FA3 API used by gpt.py)
+# Public API
 # ---------------------------------------------------------------------------
 
 
@@ -131,14 +122,14 @@ def flash_attn_func(
     Returns:
         (B, T, H, D)
     """
-    if USE_FA2:
-        return _fa2.flash_attn_func(q, k, v, causal=causal, window_size=window_size)  # type: ignore[no-any-return]
+    if active_fa2():
+        return fa2.flash_attn_func(q, k, v, causal=causal, window_size=window_size)  # type: ignore[no-any-return]
 
     q = q.transpose(1, 2)
     k = k.transpose(1, 2)
     v = v.transpose(1, 2)
     enable_gqa = q.size(1) != k.size(1)
-    y = _sdpa_attention(q, k, v, window_size, enable_gqa)
+    y = sdpa_attention(q, k, v, window_size, enable_gqa)
     return y.transpose(1, 2)
 
 
@@ -168,8 +159,8 @@ def flash_attn_with_kvcache(
     Returns:
         (B, T_new, H, D)
     """
-    if USE_FA2:
-        return _fa2.flash_attn_with_kvcache(  # type: ignore[no-any-return]
+    if active_fa2():
+        return fa2.flash_attn_with_kvcache(  # type: ignore[no-any-return]
             q,
             k_cache,
             v_cache,
@@ -196,5 +187,5 @@ def flash_attn_with_kvcache(
     k_sdpa = k_full.transpose(1, 2)
     v_sdpa = v_full.transpose(1, 2)
     enable_gqa = q_sdpa.size(1) != k_sdpa.size(1)
-    y = _sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
+    y = sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
     return y.transpose(1, 2)

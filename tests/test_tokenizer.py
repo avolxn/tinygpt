@@ -8,8 +8,7 @@ import tempfile
 
 import pytest
 
-from tinygpt.tokenizer import HuggingFaceTokenizer, SPECIAL_TOKENS
-
+from tinygpt.tokenizer import HuggingFaceTokenizer
 
 # ---------------------------------------------------------------------------
 # Fixture: small tokenizer trained on a few sentences

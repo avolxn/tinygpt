@@ -12,53 +12,48 @@ import os
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
-import gc
-import json
-import time
 import argparse
+import gc
 from functools import partial
 
 import torch
 import wandb
 
+from tinygpt.attention import fa2_available
+from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, save_checkpoint
+from tinygpt.dataloader import sft_data_loader
+from tinygpt.gpt import Block
+from tinygpt.metrics import compute_token_bytes
+from tinygpt.optimizer import make_optimizer
 from tinygpt.runtime import (
-    COMPUTE_DTYPE,
-    COMPUTE_DTYPE_REASON,
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
+    compute_dtype,
+    compute_dtype_reason,
     compute_init,
-    get_peak_flops,
     make_fsdp_mixed_precision,
     print0,
 )
-from tinygpt.gpt import Block
-from tinygpt.optimizer import make_optimizer
 from tinygpt.scheduler import step_scheduler
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.dataloader import sft_data_loader
-from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, save_checkpoint
-from tinygpt.metrics import evaluate_bpb, compute_token_bytes
-from tinygpt.engine import Engine
-from tinygpt.attention import HAS_FA2
 
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Supervised fine-tuning")
-parser.add_argument("--checkpoint", type=str, required=True,
-                    help="Pre-trained checkpoint directory to start from")
+parser.add_argument("--checkpoint", type=str, required=True, help="Pre-trained checkpoint directory to start from")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
 # Logging
 parser.add_argument("--run", type=str, default="dummy")
 # Runtime
 parser.add_argument("--device-type", type=str, default="")
-parser.add_argument("--sharding-strategy", type=str, default="FULL_SHARD",
-                    choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"])
+parser.add_argument(
+    "--sharding-strategy", type=str, default="FULL_SHARD", choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"]
+)
 # Training horizon
 parser.add_argument("--num-iterations", type=int, default=1000)
 # Batch sizes
 parser.add_argument("--device-batch-size", type=int, default=8)
-parser.add_argument("--max-seq-len", type=int, default=None,
-                    help="Sequence length (default: inherit from checkpoint)")
+parser.add_argument("--max-seq-len", type=int, default=None, help="Sequence length (default: inherit from checkpoint)")
 # Optimizer
 parser.add_argument("--matrix-lr", type=float, default=0.0003)
 parser.add_argument("--embedding-lr", type=float, default=0.003)
@@ -75,8 +70,7 @@ parser.add_argument("--eval-every", type=int, default=200)
 parser.add_argument("--out-dir", type=str, default="out")
 parser.add_argument("--run-name", type=str, default="sft")
 # Task mixture (uses MMLU + GSM8K by default)
-parser.add_argument("--tasks", type=str, default="mmlu,gsm8k",
-                    help="Comma-separated task names: mmlu,gsm8k")
+parser.add_argument("--tasks", type=str, default="mmlu,gsm8k", help="Comma-separated task names: mmlu,gsm8k")
 args = parser.parse_args()
 user_config = vars(args).copy()
 
@@ -85,14 +79,12 @@ device_type = autodetect_device_type() if args.device_type == "" else args.devic
 is_dist, rank, local_rank, world_size, device = compute_init(device_type)
 master_process = rank == 0
 
-print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
-if not HAS_FA2:
+print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
+if not fa2_available:
     print0("WARNING: FA2 not available, using SDPA fallback.")
 
 use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(
-    project="tinygpt-sft", name=args.run, config=user_config
-)
+wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="tinygpt-sft", name=args.run, config=user_config)
 
 # ---------------------------------------------------------------------------
 # Load model + tokenizer
@@ -117,7 +109,7 @@ if device_type == "cuda" and is_dist:
     model = FSDP(
         model,
         sharding_strategy=strategy_map[args.sharding_strategy],
-        mixed_precision=make_fsdp_mixed_precision(COMPUTE_DTYPE),
+        mixed_precision=make_fsdp_mixed_precision(compute_dtype),
         auto_wrap_policy=wrap_policy,
         device_id=local_rank,
     )
@@ -138,7 +130,7 @@ if "gsm8k" in task_names:
 if not task_list:
     raise ValueError(f"No valid tasks found in: {args.tasks}")
 
-from tasks.base import TaskMixture  # noqa: PLC0415
+from tasks.base import TaskMixture  # noqa: E402,PLC0415
 
 task = TaskMixture(task_list)
 print0(f"Task mixture: {len(task)} examples from {task_names}")
@@ -194,8 +186,9 @@ for step in range(args.num_iterations):
     loss = model(x, y)
     loss.backward()
 
-    lrm = step_scheduler(optimizer, step, args.num_iterations, args.warmup_steps,
-                         args.warmdown_ratio, args.final_lr_frac)
+    lrm = step_scheduler(
+        optimizer, step, args.num_iterations, args.warmup_steps, args.warmdown_ratio, args.final_lr_frac
+    )
     if args.grad_clip > 0:
         if hasattr(model, "clip_grad_norm_"):
             model.clip_grad_norm_(args.grad_clip)

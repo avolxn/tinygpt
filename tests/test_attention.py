@@ -8,8 +8,7 @@ import pytest
 import torch
 
 from tinygpt import attention as attn_module
-from tinygpt.attention import flash_attn_func, flash_attn_with_kvcache, HAS_FA2
-
+from tinygpt.attention import fa2_available, flash_attn_func, flash_attn_with_kvcache
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,20 +31,20 @@ def test_sdpa_full_causal() -> None:
     """SDPA forward pass returns correct shape for causal full-context attention."""
     q, k, v = make_qkv(2, 16, 4, 4, 32)
     # Force SDPA
-    orig = attn_module._override_impl
-    attn_module._override_impl = "sdpa"
+    orig = attn_module.override_backend
+    attn_module.override_backend = "sdpa"
     out = flash_attn_func(q, k, v, causal=True, window_size=(-1, 0))
-    attn_module._override_impl = orig
+    attn_module.override_backend = orig
     assert out.shape == q.shape
 
 
 def test_sdpa_gqa() -> None:
     """SDPA works with GQA (n_head != n_kv_head)."""
     q, k, v = make_qkv(2, 16, 4, 2, 32)
-    orig = attn_module._override_impl
-    attn_module._override_impl = "sdpa"
+    orig = attn_module.override_backend
+    attn_module.override_backend = "sdpa"
     out = flash_attn_func(q, k, v, causal=True, window_size=(-1, 0))
-    attn_module._override_impl = orig
+    attn_module.override_backend = orig
     assert out.shape == q.shape
 
 
@@ -53,15 +52,15 @@ def test_sdpa_sliding_window() -> None:
     """Sliding window reduces effective context but output shape is preserved."""
     B, T, H, D = 1, 32, 2, 16
     q, k, v = make_qkv(B, T, H, H, D)
-    orig = attn_module._override_impl
-    attn_module._override_impl = "sdpa"
+    orig = attn_module.override_backend
+    attn_module.override_backend = "sdpa"
     # window=8 < T=32
     out = flash_attn_func(q, k, v, causal=True, window_size=(8, 0))
-    attn_module._override_impl = orig
+    attn_module.override_backend = orig
     assert out.shape == (B, T, H, D)
 
 
-@pytest.mark.skipif(not HAS_FA2, reason="FA2 not available on this machine")
+@pytest.mark.skipif(not fa2_available, reason="FA2 not available on this machine")
 def test_fa2_sdpa_equivalence() -> None:
     """FA2 and SDPA produce numerically close outputs (atol=0.01 for bf16)."""
     if not torch.cuda.is_available():
@@ -70,13 +69,13 @@ def test_fa2_sdpa_equivalence() -> None:
     q, k, v = make_qkv(2, 64, 4, 4, 32, device=device)
     q, k, v = q.bfloat16(), k.bfloat16(), v.bfloat16()
 
-    attn_module._override_impl = "fa2"
+    attn_module.override_backend = "fa2"
     out_fa2 = flash_attn_func(q, k, v, causal=True, window_size=(-1, 0))
 
-    attn_module._override_impl = "sdpa"
+    attn_module.override_backend = "sdpa"
     out_sdpa = flash_attn_func(q, k, v, causal=True, window_size=(-1, 0))
 
-    attn_module._override_impl = None
+    attn_module.override_backend = None
     assert out_fa2.shape == out_sdpa.shape
     torch.testing.assert_close(out_fa2.float(), out_sdpa.float(), atol=0.02, rtol=1e-2)
 
@@ -85,7 +84,6 @@ def test_kvcache_sdpa() -> None:
     """KV cache SDPA path correctly inserts new tokens and returns correct shape."""
     B, H, D = 1, 2, 16
     T_max = 32
-    device = "cpu"
     q_new = torch.randn(B, 4, H, D)
     k_new = torch.randn(B, 4, H, D)
     v_new = torch.randn(B, 4, H, D)
@@ -93,16 +91,19 @@ def test_kvcache_sdpa() -> None:
     v_cache = torch.zeros(B, T_max, H, D)
     seqlens = torch.zeros(B, dtype=torch.int32)
 
-    orig = attn_module._override_impl
-    attn_module._override_impl = "sdpa"
+    orig = attn_module.override_backend
+    attn_module.override_backend = "sdpa"
     out = flash_attn_with_kvcache(
-        q_new, k_cache, v_cache,
-        k=k_new, v=v_new,
+        q_new,
+        k_cache,
+        v_cache,
+        k=k_new,
+        v=v_new,
         cache_seqlens=seqlens,
         causal=True,
         window_size=(-1, 0),
     )
-    attn_module._override_impl = orig
+    attn_module.override_backend = orig
     assert out.shape == (B, 4, H, D)
     # Cache should be updated in-place
     assert not k_cache[:, :4].eq(0).all(), "Cache was not updated"
@@ -118,22 +119,22 @@ def test_kvcache_incremental_decode() -> None:
     v_cache = torch.zeros(B, T_max, H, D)
     seqlens = torch.zeros(B, dtype=torch.int32)
 
-    orig = attn_module._override_impl
-    attn_module._override_impl = "sdpa"
+    orig = attn_module.override_backend
+    attn_module.override_backend = "sdpa"
 
     # Prefill
     q = torch.randn(B, T_prompt, H, D)
     k = torch.randn(B, T_prompt, H, D)
     v = torch.randn(B, T_prompt, H, D)
-    flash_attn_with_kvcache(q, k_cache, v_cache, k=k, v=v, cache_seqlens=seqlens,
-                             causal=True, window_size=(-1, 0))
+    flash_attn_with_kvcache(q, k_cache, v_cache, k=k, v=v, cache_seqlens=seqlens, causal=True, window_size=(-1, 0))
     seqlens += T_prompt
 
     # Decode one token
     q_dec = torch.randn(B, 1, H, D)
     k_dec = torch.randn(B, 1, H, D)
     v_dec = torch.randn(B, 1, H, D)
-    out = flash_attn_with_kvcache(q_dec, k_cache, v_cache, k=k_dec, v=v_dec,
-                                   cache_seqlens=seqlens, causal=False, window_size=(-1, 0))
-    attn_module._override_impl = orig
+    out = flash_attn_with_kvcache(
+        q_dec, k_cache, v_cache, k=k_dec, v=v_dec, cache_seqlens=seqlens, causal=False, window_size=(-1, 0)
+    )
+    attn_module.override_backend = orig
     assert out.shape == (B, 1, H, D)

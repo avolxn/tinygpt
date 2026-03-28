@@ -18,54 +18,54 @@ import os
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
+import argparse
 import gc
 import json
-import math
 import time
-import argparse
 from dataclasses import asdict
 from functools import partial
 
 import torch
-import torch.distributed as dist
 import wandb
 
+from tinygpt.attention import fa2_available, use_fa2
+from tinygpt.checkpoint import get_checkpoint_dir, save_checkpoint
+from tinygpt.config import make_config
+from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
+from tinygpt.engine import Engine
+from tinygpt.gpt import GPT, Block
+from tinygpt.metrics import compute_token_bytes, evaluate_bpb
+from tinygpt.optimizer import make_optimizer
 from tinygpt.runtime import (
-    COMPUTE_DTYPE,
-    COMPUTE_DTYPE_REASON,
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
+    compute_dtype,
+    compute_dtype_reason,
     compute_init,
     get_peak_flops,
-    print0,
     make_fsdp_mixed_precision,
+    print0,
 )
-from tinygpt.config import make_config
-from tinygpt.gpt import GPT, Block
-from tinygpt.optimizer import make_optimizer
 from tinygpt.scheduler import step_scheduler
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
-from tinygpt.checkpoint import get_checkpoint_dir, save_checkpoint
-from tinygpt.metrics import evaluate_bpb, compute_token_bytes
-from tinygpt.engine import Engine
-from tinygpt.attention import HAS_FA2, USE_FA2
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
 # Logging
-parser.add_argument("--run", type=str, default="dummy",
-                    help="wandb run name ('dummy' disables wandb)")
+parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb)")
 # Runtime
-parser.add_argument("--device-type", type=str, default="",
-                    help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # Distributed
-parser.add_argument("--sharding-strategy", type=str, default="FULL_SHARD",
-                    choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"],
-                    help="FSDP sharding strategy (FULL_SHARD=ZeRO-3, SHARD_GRAD_OP=ZeRO-2)")
+parser.add_argument(
+    "--sharding-strategy",
+    type=str,
+    default="FULL_SHARD",
+    choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"],
+    help="FSDP sharding strategy (FULL_SHARD=ZeRO-3, SHARD_GRAD_OP=ZeRO-2)",
+)
 # Model architecture
 parser.add_argument("--depth", type=int, default=20)
 parser.add_argument("--aspect-ratio", type=int, default=64)
@@ -73,10 +73,10 @@ parser.add_argument("--head-dim", type=int, default=128)
 parser.add_argument("--max-seq-len", type=int, default=2048)
 parser.add_argument("--window-pattern", type=str, default="SSSL")
 # Data
-parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb",
-                    help="HF dataset identifier (empty = use --txt)")
-parser.add_argument("--txt", type=str, default="",
-                    help="Local .txt file to train on (overrides --dataset)")
+parser.add_argument(
+    "--dataset", type=str, default="HuggingFaceFW/fineweb", help="HF dataset identifier (empty = use --txt)"
+)
+parser.add_argument("--txt", type=str, default="", help="Local .txt file to train on (overrides --dataset)")
 parser.add_argument("--text-field", type=str, default="text")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
 # Training horizon
@@ -96,8 +96,7 @@ parser.add_argument("--warmup-steps", type=int, default=40)
 parser.add_argument("--warmdown-ratio", type=float, default=0.65)
 parser.add_argument("--final-lr-frac", type=float, default=0.05)
 # Resume
-parser.add_argument("--resume-from", type=str, default="",
-                    help="Checkpoint directory to resume from")
+parser.add_argument("--resume-from", type=str, default="", help="Checkpoint directory to resume from")
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=250)
 parser.add_argument("--eval-tokens", type=int, default=80 * 524288)
@@ -105,8 +104,9 @@ parser.add_argument("--sample-every", type=int, default=2000)
 parser.add_argument("--save-every", type=int, default=-1)
 # Output
 parser.add_argument("--out-dir", type=str, default="out")
-parser.add_argument("--run-name", type=str, default="",
-                    help="Subdirectory name under out/checkpoints/ (default: d<depth>)")
+parser.add_argument(
+    "--run-name", type=str, default="", help="Subdirectory name under out/checkpoints/ (default: d<depth>)"
+)
 args = parser.parse_args()
 user_config = vars(args).copy()
 
@@ -126,20 +126,18 @@ if device_type == "cuda":
 else:
     gpu_peak_flops = float("inf")
 
-print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
 
 use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(
-    project="tinygpt", name=args.run, config=user_config
-)
+wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="tinygpt", name=args.run, config=user_config)
 
 # Flash attention status
-if USE_FA2:
+if use_fa2:
     print0("Using Flash Attention 2 (Ampere+ GPU detected).")
 else:
     print0("!" * 70)
-    if HAS_FA2 and COMPUTE_DTYPE != torch.bfloat16:
-        print0(f"WARNING: FA2 only supports bf16, COMPUTE_DTYPE={COMPUTE_DTYPE}. Using SDPA.")
+    if fa2_available and compute_dtype != torch.bfloat16:
+        print0(f"WARNING: FA2 only supports bf16, compute_dtype={compute_dtype}. Using SDPA.")
     else:
         print0("WARNING: Flash Attention 2 not available, using PyTorch SDPA fallback.")
     print0("!" * 70)
@@ -194,7 +192,7 @@ if device_type == "cuda" and is_dist:
     model = FSDP(
         model,
         sharding_strategy=strategy_map[args.sharding_strategy],
-        mixed_precision=make_fsdp_mixed_precision(COMPUTE_DTYPE),
+        mixed_precision=make_fsdp_mixed_precision(compute_dtype),
         auto_wrap_policy=wrap_policy,
         device_id=local_rank,
     )
@@ -278,6 +276,7 @@ if args.resume_from:
 # Data loaders
 # ---------------------------------------------------------------------------
 
+
 def make_loader(split: str):
     if args.txt:
         # Wrap local txt file as a trivial HF-like streaming source
@@ -356,9 +355,7 @@ def _txt_loader(tokenizer, dataset, B, T, device):
                 else:
                     si = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
                     doc = doc_buffer.pop(si)
-                    row_buffer[row_idx, pos : pos + remaining] = torch.tensor(
-                        doc[:remaining], dtype=torch.long
-                    )
+                    row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
                     pos += remaining
         cpu_inputs.copy_(row_buffer[:, :-1])
         cpu_targets.copy_(row_buffer[:, 1:])
@@ -434,15 +431,14 @@ while True:
     # Training step
     synchronize()
     t0 = time.time()
-    for micro_step in range(grad_accum_steps):
+    for _ in range(grad_accum_steps):
         loss = model(x, y)
         train_loss_detach = loss.detach()
         loss = loss / grad_accum_steps
         loss.backward()
         x, y = next(train_loader)
 
-    lrm = step_scheduler(optimizer, step, num_iterations, args.warmup_steps,
-                         args.warmdown_ratio, args.final_lr_frac)
+    lrm = step_scheduler(optimizer, step, num_iterations, args.warmup_steps, args.warmdown_ratio, args.final_lr_frac)
 
     if args.grad_clip > 0:
         if hasattr(model, "clip_grad_norm_"):
@@ -470,18 +466,22 @@ while True:
     print0(
         f"step {step:05d}/{num_iterations:05d} ({pct:.1f}%) | "
         f"loss: {debiased:.4f} | lrm: {lrm:.3f} | "
-        f"dt: {dt*1000:.1f}ms | tok/s: {tok_per_sec:,} | mfu: {mfu:.1f}%"
+        f"dt: {dt * 1000:.1f}ms | tok/s: {tok_per_sec:,} | mfu: {mfu:.1f}%"
     )
     if step % 100 == 0:
-        wandb_run.log({
-            "step": step,
-            "train/loss": debiased,
-            "train/lrm": lrm,
-            "train/tok_per_sec": tok_per_sec,
-            "train/mfu": mfu,
-        })
+        wandb_run.log(
+            {
+                "step": step,
+                "train/loss": debiased,
+                "train/lrm": lrm,
+                "train/tok_per_sec": tok_per_sec,
+                "train/mfu": mfu,
+            }
+        )
 
-    first_step = step == 0 or (args.resume_from and step == int(args.resume_from.split("_")[-1]) if args.resume_from else False)
+    first_step = step == 0 or (
+        args.resume_from and step == int(args.resume_from.split("_")[-1]) if args.resume_from else False
+    )
     step += 1
     if step == 1:
         gc.collect()

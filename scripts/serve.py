@@ -10,24 +10,24 @@ Usage:
     python -m scripts.serve --checkpoint out/checkpoints/sft --num-gpus 4 --port 8000
 """
 
+import argparse
 import asyncio
 import json
 import logging
-import argparse
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import AsyncGenerator, Optional
 
 import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from tinygpt.runtime import autodetect_device_type, compute_init
 from tinygpt.checkpoint import build_model_from_checkpoint
-from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.engine import Engine
+from tinygpt.runtime import autodetect_device_type, compute_init
+from tinygpt.tokenizer import HuggingFaceTokenizer
 
 # ---------------------------------------------------------------------------
 # Abuse prevention limits
@@ -43,8 +43,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description="tinygpt web server")
-parser.add_argument("--checkpoint", type=str, required=True,
-                    help="Path to fine-tuned checkpoint directory")
+parser.add_argument("--checkpoint", type=str, required=True, help="Path to fine-tuned checkpoint directory")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
 parser.add_argument("-n", "--num-gpus", type=int, default=1)
 parser.add_argument("-t", "--temperature", type=float, default=0.8)
@@ -52,8 +51,7 @@ parser.add_argument("-k", "--top-k", type=int, default=50)
 parser.add_argument("-m", "--max-tokens", type=int, default=512)
 parser.add_argument("-p", "--port", type=int, default=8000)
 parser.add_argument("--host", type=str, default="0.0.0.0")
-parser.add_argument("--device-type", type=str, default="",
-                    choices=["cuda", "cpu", "mps", ""])
+parser.add_argument("--device-type", type=str, default="", choices=["cuda", "cpu", "mps", ""])
 args = parser.parse_args()
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
@@ -112,9 +110,9 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
-    top_k: Optional[int] = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    top_k: int | None = None
 
 
 def validate_request(req: ChatRequest) -> None:
@@ -242,7 +240,8 @@ async def chat_completions(request: ChatRequest):
     async def stream_response() -> AsyncGenerator[str, None]:
         try:
             for token_column, _ in worker.engine.generate(
-                prompt_tokens, num_samples=1,
+                prompt_tokens,
+                num_samples=1,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_k=top_k,
