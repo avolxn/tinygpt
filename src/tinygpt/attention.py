@@ -1,22 +1,20 @@
 """
 Unified attention backend: FA2 (Ampere+) with SDPA fallback.
 
-Exports `flash_attn` namespace matching the FA3 API used in nanochat, so gpt.py
-needs no changes.  FA2 is tried first; any GPU below SM80 (or CPU/MPS) falls
-back to PyTorch SDPA automatically.
+FA2 is tried first; any GPU below SM80 (or CPU/MPS) falls back to PyTorch SDPA
+automatically.
 
-Usage (same as FA3 module):
-    from tinygpt.attention import flash_attn
+Usage:
+    from tinygpt.attention import flash_attn_func, flash_attn_with_kvcache
 
     # Training (no KV cache)
-    y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+    y = flash_attn_func(q, k, v, causal=True, window_size=window_size)
 
     # Inference (with KV cache)
-    y = flash_attn.flash_attn_with_kvcache(q, k_cache, v_cache, k=k, v=v, ...)
+    y = flash_attn_with_kvcache(q, k_cache, v_cache, k=k, v=v, ...)
 """
 
 import logging
-from types import SimpleNamespace
 from typing import Any
 
 import torch
@@ -200,13 +198,3 @@ def flash_attn_with_kvcache(
     enable_gqa = q_sdpa.size(1) != k_sdpa.size(1)
     y = _sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
     return y.transpose(1, 2)
-
-
-# ---------------------------------------------------------------------------
-# Module-like namespace so gpt.py can do: flash_attn.flash_attn_func(...)
-# ---------------------------------------------------------------------------
-
-flash_attn = SimpleNamespace(
-    flash_attn_func=flash_attn_func,
-    flash_attn_with_kvcache=flash_attn_with_kvcache,
-)
