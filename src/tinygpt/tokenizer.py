@@ -281,6 +281,15 @@ class HuggingFaceTokenizer:
         mask: list[int] = []
 
         def add_tokens(token_ids: list[int] | int | None, mask_val: int) -> None:
+            """Append token ids and their supervision mask values to the output lists.
+
+            Args:
+                token_ids: Single token id (int), list of token ids, or None (error).
+                mask_val: Supervision value (1 for supervised/assistant tokens, 0 otherwise).
+
+            Raises:
+                RuntimeError: If token_ids is None (missing special token).
+            """
             if token_ids is None:
                 raise RuntimeError("Missing special token in tokenizer")
             token_list = [token_ids] if isinstance(token_ids, int) else token_ids
