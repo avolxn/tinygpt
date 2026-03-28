@@ -19,6 +19,8 @@ from tokenizers.trainers import BpeTrainer
 
 SPECIAL_TOKENS = [
     "<|bos|>",
+    "<|system_start|>",
+    "<|system_end|>",
     "<|user_start|>",
     "<|user_end|>",
     "<|assistant_start|>",
@@ -175,9 +177,9 @@ class HuggingFaceTokenizer:
         mask = 1 for assistant tokens (supervised), 0 for everything else.
 
         Conversation format:
-            {"messages": [{"role": "user"|"assistant", "content": str|list}, ...]}
+            {"messages": [{"role": "system"|"user"|"assistant", "content": str|list}, ...]}
 
-        System messages are prepended to the first user message.
+        System messages are wrapped in <|system_start|>...<|system_end|> special tokens.
         """
         ids: list[int] = []
         mask: list[int] = []
@@ -189,14 +191,10 @@ class HuggingFaceTokenizer:
             mask.extend([mask_val] * len(token_list))
 
         messages = conversation["messages"]
-        if messages[0]["role"] == "system":
-            conversation = copy.deepcopy(conversation)
-            messages = conversation["messages"]
-            assert messages[1]["role"] == "user", "System message must be followed by user"
-            messages[1]["content"] = messages[0]["content"] + "\n\n" + messages[1]["content"]
-            messages = messages[1:]
 
         bos = self.get_bos_token_id()
+        system_start = self.encode_special("<|system_start|>")
+        system_end = self.encode_special("<|system_end|>")
         user_start = self.encode_special("<|user_start|>")
         user_end = self.encode_special("<|user_end|>")
         assistant_start = self.encode_special("<|assistant_start|>")
@@ -207,6 +205,14 @@ class HuggingFaceTokenizer:
         output_end = self.encode_special("<|output_end|>")
 
         add_tokens(bos, 0)
+
+        # Strip optional leading system message
+        if messages and messages[0]["role"] == "system":
+            add_tokens(system_start, 0)
+            add_tokens(self._encode_one(messages[0]["content"]), 0)
+            add_tokens(system_end, 0)
+            messages = messages[1:]
+
         for i, message in enumerate(messages):
             expected = "user" if i % 2 == 0 else "assistant"
             assert message["role"] == expected, f"Message {i}: expected {expected}, got {message['role']}"
