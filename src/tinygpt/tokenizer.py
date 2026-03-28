@@ -45,16 +45,40 @@ class HuggingFaceTokenizer:
 
     @classmethod
     def from_pretrained(cls, hf_path: str) -> "HuggingFaceTokenizer":
+        """Load a tokenizer from a HuggingFace Hub repository.
+
+        Args:
+            hf_path: HuggingFace Hub repository identifier.
+
+        Returns:
+            A HuggingFaceTokenizer loaded from the Hub.
+        """
         return cls(HFTokenizer.from_pretrained(hf_path))
 
     @classmethod
     def from_directory(cls, tokenizer_dir: str) -> "HuggingFaceTokenizer":
+        """Load a tokenizer from a local directory containing tokenizer.json.
+
+        Args:
+            tokenizer_dir: Path to the directory containing tokenizer.json.
+
+        Returns:
+            A HuggingFaceTokenizer loaded from the directory.
+        """
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
         return cls(HFTokenizer.from_file(tokenizer_path))
 
     @classmethod
     def train_from_iterator(cls, text_iterator: Iterator[str], vocab_size: int) -> "HuggingFaceTokenizer":
-        """Train a BPE tokenizer from a text iterator."""
+        """Train a BPE tokenizer from a text iterator.
+
+        Args:
+            text_iterator: Iterator yielding training text strings.
+            vocab_size: Target vocabulary size including special tokens.
+
+        Returns:
+            A newly trained HuggingFaceTokenizer.
+        """
         tokenizer = HFTokenizer(BPE(byte_fallback=True, unk_token=None, fuse_unk=False))
         tokenizer.normalizer = None
         gpt4_regex = Regex(SPLIT_PATTERN)
@@ -77,18 +101,52 @@ class HuggingFaceTokenizer:
         return cls(tokenizer)
 
     def get_vocab_size(self) -> int:
+        """Return the total vocabulary size including special tokens.
+
+        Returns:
+            Integer vocabulary size.
+        """
         return int(self.tokenizer.get_vocab_size())
 
     def get_special_tokens(self) -> list[str]:
+        """Return the list of added special token strings.
+
+        Returns:
+            List of special token string representations.
+        """
         return [w.content for w in self.tokenizer.get_added_tokens_decoder().values()]
 
     def id_to_token(self, id: int) -> str:
+        """Convert a token id to its string representation.
+
+        Args:
+            id: Integer token id.
+
+        Returns:
+            String representation of the token.
+        """
         return str(self.tokenizer.id_to_token(id))
 
     def encode_special(self, text: str) -> int | None:
+        """Return the token id for a special token string, or None if not found.
+
+        Args:
+            text: Special token string, e.g. '<|bos|>'.
+
+        Returns:
+            Integer token id, or None if the token is not in the vocabulary.
+        """
         return cast("int | None", self.tokenizer.token_to_id(text))
 
     def get_bos_token_id(self) -> int:
+        """Return the BOS token id, trying <|bos|> then <|endoftext|>.
+
+        Returns:
+            Integer BOS token id.
+
+        Raises:
+            RuntimeError: If neither <|bos|> nor <|endoftext|> is found.
+        """
         bos = self.encode_special("<|bos|>")
         if bos is None:
             bos = self.encode_special("<|endoftext|>")
@@ -103,6 +161,20 @@ class HuggingFaceTokenizer:
         append: str | int | None = None,
         num_threads: int | None = None,  # ignored, for API compatibility
     ) -> list[int]:
+        """Encode a single string, optionally prepending/appending a special token.
+
+        Args:
+            text: The string to encode.
+            prepend: Optional special token (string name or id) to prepend.
+            append: Optional special token (string name or id) to append.
+            num_threads: Ignored; present for API compatibility.
+
+        Returns:
+            List of integer token ids.
+
+        Raises:
+            ValueError: If prepend or append names an unknown special token.
+        """
         ids: list[int] = []
         if prepend is not None:
             if isinstance(prepend, int):
@@ -130,6 +202,20 @@ class HuggingFaceTokenizer:
         append: str | int | None = None,
         num_threads: int | None = None,
     ) -> list[int] | list[list[int]]:
+        """Encode a string or list of strings into token id(s).
+
+        Args:
+            text: A single string or a list of strings to encode.
+            prepend: Optional special token (string name or id) to prepend to each encoding.
+            append: Optional special token (string name or id) to append to each encoding.
+            num_threads: Ignored; present for API compatibility.
+
+        Returns:
+            A flat list of ints for a single string, or a list of lists for batch input.
+
+        Raises:
+            ValueError: If text is not a str or list.
+        """
         if isinstance(text, str):
             return self._encode_one(text, prepend=prepend, append=append)
         elif isinstance(text, list):
@@ -138,12 +224,34 @@ class HuggingFaceTokenizer:
             raise ValueError(f"Invalid input type: {type(text)}")
 
     def __call__(self, *args: Any, **kwargs: Any) -> list[int] | list[list[int]]:
+        """Delegate to encode().
+
+        Args:
+            *args: Positional arguments forwarded to encode().
+            **kwargs: Keyword arguments forwarded to encode().
+
+        Returns:
+            A flat list of ints for a single string, or a list of lists for batch input.
+        """
         return self.encode(*args, **kwargs)
 
     def decode(self, ids: list[int]) -> str:
+        """Decode a list of token ids back to a string, preserving special tokens.
+
+        Args:
+            ids: List of integer token ids to decode.
+
+        Returns:
+            Decoded string with special tokens included.
+        """
         return str(self.tokenizer.decode(ids, skip_special_tokens=False))
 
     def save(self, tokenizer_dir: str) -> None:
+        """Save the tokenizer to a directory as tokenizer.json.
+
+        Args:
+            tokenizer_dir: Directory path where tokenizer.json will be written.
+        """
         os.makedirs(tokenizer_dir, exist_ok=True)
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
         self.tokenizer.save(tokenizer_path)
@@ -154,15 +262,24 @@ class HuggingFaceTokenizer:
         conversation: dict[str, Any],
         max_tokens: int = 2048,
     ) -> tuple[list[int], list[int]]:
-        """
-        Render a Chat conversation dict into (ids, mask).
+        """Render a chat conversation dict into token ids and a supervision mask.
 
-        mask = 1 for assistant tokens (supervised), 0 for everything else.
+        Args:
+            conversation: Dict with a 'messages' key containing a list of
+                role/content dicts. Roles: 'system', 'user', or 'assistant'.
+                Content is a string for system/user messages; a string or list
+                of typed parts for assistant messages.
+            max_tokens: Truncate output to at most this many tokens.
 
-        Conversation format:
-            {"messages": [{"role": "system"|"user"|"assistant", "content": str|list}, ...]}
+        Returns:
+            A (ids, mask) tuple where ids is a flat list of token ids and mask
+            is 1 for assistant tokens (supervised) and 0 for everything else.
 
-        System messages are wrapped in <|system_start|>...<|system_end|> special tokens.
+        Raises:
+            ValueError: If message roles are out of order, content types are
+                unexpected, or part types are unknown.
+            TypeError: If a user message has non-string content.
+            RuntimeError: If a required special token is missing from the tokenizer.
         """
         ids: list[int] = []
         mask: list[int] = []
@@ -235,7 +352,21 @@ class HuggingFaceTokenizer:
         return ids[:max_tokens], mask[:max_tokens]
 
     def render_for_completion(self, conversation: dict[str, Any]) -> list[int]:
-        """Render conversation for RL / completion (no last assistant message)."""
+        """Render a conversation for RL / completion, omitting the last assistant turn.
+
+        Strips the final assistant message and appends <|assistant_start|> so the
+        model can generate the assistant response from scratch.
+
+        Args:
+            conversation: Conversation dict whose last message must be from the assistant.
+
+        Returns:
+            List of token ids ending with the <|assistant_start|> token.
+
+        Raises:
+            ValueError: If the last message is not from the assistant.
+            RuntimeError: If <|assistant_start|> is missing from the tokenizer.
+        """
         conversation = copy.deepcopy(conversation)
         messages = conversation["messages"]
         if messages[-1]["role"] != "assistant":
@@ -254,7 +385,16 @@ class HuggingFaceTokenizer:
         mask: list[int],
         with_token_id: bool = False,
     ) -> str:
-        """Colorize tokenization for debugging."""
+        """Return an ANSI-colored string that visualises token supervision masks.
+
+        Args:
+            ids: List of token ids to visualise.
+            mask: Parallel supervision mask; 1 = supervised (green), 0 = unsupervised (red).
+            with_token_id: If True, append each token's integer id in grey.
+
+        Returns:
+            A pipe-delimited string of ANSI-colored token representations.
+        """
         RED = "\033[91m"
         GREEN = "\033[92m"
         GRAY = "\033[90m"

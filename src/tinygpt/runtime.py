@@ -18,6 +18,11 @@ dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": to
 
 
 def detect_compute_dtype() -> tuple[torch.dtype, str]:
+    """Detect the best compute dtype for the current hardware.
+
+    Returns:
+        A (dtype, reason) tuple where reason is a human-readable explanation.
+    """
     env = os.environ.get("TINYGPT_DTYPE")
     if env is not None:
         return dtype_map[env], f"set via TINYGPT_DTYPE={env}"
@@ -48,6 +53,14 @@ class ColoredFormatter(logging.Formatter):
     BOLD = "\033[1m"
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format a log record with ANSI color codes.
+
+        Args:
+            record: The log record to format.
+
+        Returns:
+            The formatted log message string with color codes applied.
+        """
         levelname = record.levelname
         if levelname in self.COLORS:
             record.levelname = f"{self.COLORS[levelname]}{self.BOLD}{levelname}{self.RESET}"
@@ -58,6 +71,7 @@ class ColoredFormatter(logging.Formatter):
 
 
 def setup_default_logging() -> None:
+    """Configure the root logger with a colored StreamHandler."""
     handler = logging.StreamHandler()
     handler.setFormatter(ColoredFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[handler])
@@ -68,17 +82,30 @@ logger = logging.getLogger(__name__)
 
 
 def is_distributed_requested() -> bool:
-    """True if launched by torchrun (env vars present)."""
+    """Check whether the process was launched by torchrun.
+
+    Returns:
+        True if RANK, LOCAL_RANK and WORLD_SIZE are all set in the environment.
+    """
     return all(k in os.environ for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE"))
 
 
 def is_distributed_initialized() -> bool:
-    """True if torch.distributed is available and process group is initialized."""
+    """Check whether the distributed process group has been initialized.
+
+    Returns:
+        True if torch.distributed is available and the process group is active.
+    """
     return dist.is_available() and dist.is_initialized()
 
 
 def get_dist_info() -> tuple[bool, int, int, int]:
-    """Return (is_dist, rank, local_rank, world_size)."""
+    """Read distributed process info from environment variables.
+
+    Returns:
+        A (is_dist, rank, local_rank, world_size) tuple. When not distributed,
+        returns (False, 0, 0, 1).
+    """
     if is_distributed_requested():
         rank = int(os.environ["RANK"])
         local_rank = int(os.environ["LOCAL_RANK"])
@@ -88,21 +115,38 @@ def get_dist_info() -> tuple[bool, int, int, int]:
 
 
 def print0(s: str = "", **kwargs: Any) -> None:
-    """Print only on rank 0."""
+    """Print a message only on rank 0.
+
+    Args:
+        s: The string to print.
+        **kwargs: Additional keyword arguments forwarded to the built-in print.
+    """
     rank = int(os.environ.get("RANK", 0))
     if rank == 0:
         print(s, **kwargs)
 
 
 def get_model_device(model: torch.nn.Module) -> torch.device:
-    """Return the device where *model* parameters reside."""
+    """Return the device where model parameters reside.
+
+    Args:
+        model: The PyTorch module to inspect.
+
+    Returns:
+        The device of the first parameter, or the result of model.get_device()
+        if available.
+    """
     if hasattr(model, "get_device"):
         return model.get_device()  # type: ignore[operator, no-any-return]
     return next(model.parameters()).device
 
 
 def autodetect_device_type() -> str:
-    """Return 'cuda', 'mps', or 'cpu'."""
+    """Detect the best available compute device.
+
+    Returns:
+        One of 'cuda', 'mps', or 'cpu'.
+    """
     if torch.cuda.is_available():
         device_type = "cuda"
     elif torch.backends.mps.is_available():
@@ -114,11 +158,19 @@ def autodetect_device_type() -> str:
 
 
 def compute_init(device_type: str = "cuda") -> tuple[bool, int, int, int, torch.device]:
-    """
-    Initialize compute environment: seeds, precision, distributed process group.
+    """Initialize compute environment: seeds, precision, and distributed process group.
 
-    Returns (is_dist, rank, local_rank, world_size, device).
     For FSDP, this sets up the process group; FSDP wrapping happens in the training script.
+
+    Args:
+        device_type: One of 'cuda', 'mps', or 'cpu'.
+
+    Returns:
+        A (is_dist, rank, local_rank, world_size, device) tuple.
+
+    Raises:
+        ValueError: If device_type is not one of the allowed values.
+        RuntimeError: If the requested device is not available.
     """
     if device_type not in ("cuda", "mps", "cpu"):
         raise ValueError(f"Invalid device type: {device_type}")
@@ -154,10 +206,13 @@ def compute_cleanup() -> None:
 
 
 def make_fsdp_mixed_precision(override: torch.dtype | None = None) -> Any:
-    """
-    Return a MixedPrecision config suitable for FSDP wrapping.
+    """Return a MixedPrecision config suitable for FSDP wrapping.
 
-    Uses compute_dtype by default.
+    Args:
+        override: dtype to use; if None, the module-level compute_dtype is used.
+
+    Returns:
+        A MixedPrecision object with param, reduce, and buffer dtypes all set.
     """
     dtype = override if override is not None else compute_dtype
     return MixedPrecision(
@@ -171,9 +226,11 @@ class DummyWandb:
     """Drop-in wandb replacement that silently ignores all calls."""
 
     def log(self, *args: object, **kwargs: object) -> None:
+        """Silently ignore log calls."""
         pass
 
     def finish(self) -> None:
+        """Silently ignore finish calls."""
         pass
 
 
@@ -212,7 +269,14 @@ peak_flops_table: tuple[tuple[list[str], float], ...] = (
 
 
 def get_peak_flops(device_name: str) -> float:
-    """Return BF16 peak TFLOPS for a known GPU. Returns inf for unknown GPUs."""
+    """Return the BF16 peak FLOP/s for a known GPU model.
+
+    Args:
+        device_name: GPU model string as returned by torch.cuda.get_device_name().
+
+    Returns:
+        Peak BF16 FLOP/s as a float. Returns inf for unrecognised GPU names.
+    """
     name = device_name.lower()
     for patterns, flops in peak_flops_table:
         if all(p in name for p in patterns):

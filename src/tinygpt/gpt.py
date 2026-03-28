@@ -42,6 +42,14 @@ softcap = 15.0  # logit soft-cap to prevent outlier logits
 
 
 def norm(x: torch.Tensor) -> torch.Tensor:
+    """Apply RMSNorm over the last dimension of x.
+
+    Args:
+        x: Input tensor of arbitrary shape.
+
+    Returns:
+        Normalised tensor of the same shape as x.
+    """
     return F.rms_norm(x, (x.size(-1),))
 
 
@@ -54,15 +62,46 @@ class Linear(nn.Linear):
     """
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the linear transformation, casting weights to match x's dtype.
+
+        Args:
+            x: Input tensor.
+
+        Returns:
+            Output tensor after the linear transformation.
+        """
         return F.linear(x, self.weight.to(dtype=x.dtype))
 
 
 def has_ve(layer_idx: int, n_layer: int) -> bool:
-    """True if this layer should have a Value Embedding (alternating, last always included)."""
+    """Return whether a layer should have a Value Embedding.
+
+    Value embeddings are placed on alternating layers with the last layer always included.
+
+    Args:
+        layer_idx: Zero-based layer index.
+        n_layer: Total number of transformer layers.
+
+    Returns:
+        True if this layer should have a Value Embedding.
+    """
     return layer_idx % 2 == (n_layer - 1) % 2
 
 
 def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    """Apply Rotary Position Embeddings to a 4-D query or key tensor.
+
+    Args:
+        x: Input tensor of shape (B, T, H, D).
+        cos: Cosine values of shape (1, T, 1, D//2).
+        sin: Sine values of shape (1, T, 1, D//2).
+
+    Returns:
+        Rotated tensor of shape (B, T, H, D).
+
+    Raises:
+        ValueError: If x is not a 4-D tensor.
+    """
     if x.ndim != 4:
         raise ValueError(f"Expected 4D tensor, got {x.ndim}D")
     d = x.shape[3] // 2
@@ -74,6 +113,16 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> t
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config: GPTConfig, layer_idx: int) -> None:
+        """Initialise attention projections and optional value-embedding gate.
+
+        Args:
+            config: Model hyperparameters.
+            layer_idx: Zero-based index of this layer, used to decide VE placement.
+
+        Raises:
+            ValueError: If n_embd is not divisible by n_head, or n_head is not
+                divisible by n_kv_head.
+        """
         super().__init__()
         self.layer_idx = layer_idx
         self.n_head = config.n_head
@@ -101,6 +150,19 @@ class CausalSelfAttention(nn.Module):
         window_size: tuple[int, int],
         kv_cache: KVCache | None,
     ) -> torch.Tensor:
+        """Compute multi-head causal self-attention with optional KV cache.
+
+        Args:
+            x: Input hidden states of shape (B, T, C).
+            ve: Optional value embedding of shape (B, T, n_kv_head * head_dim),
+                or None if this layer has no value embedding.
+            cos_sin: (cos, sin) rotary embedding tensors for positions T0..T0+T.
+            window_size: (left, right) sliding window sizes for flash attention.
+            kv_cache: KV cache for incremental decoding, or None for training.
+
+        Returns:
+            Output tensor of shape (B, T, C).
+        """
         B, T, C = x.size()
 
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
@@ -143,11 +205,24 @@ class CausalSelfAttention(nn.Module):
 
 class MLP(nn.Module):
     def __init__(self, config: GPTConfig) -> None:
+        """Initialise the two-layer relu² MLP.
+
+        Args:
+            config: Model hyperparameters; only n_embd is used.
+        """
         super().__init__()
         self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the relu² MLP to the input.
+
+        Args:
+            x: Input tensor of shape (B, T, C).
+
+        Returns:
+            Output tensor of shape (B, T, C).
+        """
         x = self.c_fc(x)
         x = F.relu(x).square()
         x = self.c_proj(x)
@@ -156,6 +231,12 @@ class MLP(nn.Module):
 
 class Block(nn.Module):
     def __init__(self, config: GPTConfig, layer_idx: int) -> None:
+        """Initialise one transformer block (attention + MLP).
+
+        Args:
+            config: Model hyperparameters.
+            layer_idx: Zero-based layer index forwarded to CausalSelfAttention.
+        """
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
@@ -168,6 +249,18 @@ class Block(nn.Module):
         window_size: tuple[int, int],
         kv_cache: KVCache | None,
     ) -> torch.Tensor:
+        """Apply pre-norm attention then pre-norm MLP with residual connections.
+
+        Args:
+            x: Residual stream tensor of shape (B, T, C).
+            ve: Optional value embedding passed to attention.
+            cos_sin: Rotary embedding tensors for this layer's token positions.
+            window_size: Sliding window sizes forwarded to flash attention.
+            kv_cache: Optional KV cache for incremental decoding.
+
+        Returns:
+            Updated residual stream of shape (B, T, C).
+        """
         x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
         x = x + self.mlp(norm(x))
         return x
@@ -175,9 +268,14 @@ class Block(nn.Module):
 
 class GPT(nn.Module):
     def __init__(self, config: GPTConfig, pad_vocab_size_to: int = 64) -> None:
-        """
-        NOTE: this __init__ runs in meta device context during FSDP setup.
-        All actual tensor allocation happens in init_weights().
+        """Register all sub-modules; allocate no tensors (meta-device safe).
+
+        Actual tensor allocation happens in init_weights().
+
+        Args:
+            config: Model architecture hyperparameters.
+            pad_vocab_size_to: Pad vocab to the next multiple of this value for
+                efficiency; default 64.
         """
         super().__init__()
         self.config = config
@@ -257,6 +355,17 @@ class GPT(nn.Module):
         base: int = 100000,
         device: torch.device | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Precompute RoPE cos/sin tensors for up to seq_len positions.
+
+        Args:
+            seq_len: Number of positions to precompute.
+            head_dim: Attention head dimension; must be even.
+            base: RoPE base frequency (theta).
+            device: Target device; defaults to the embedding weight device.
+
+        Returns:
+            A (cos, sin) tuple each of shape (1, seq_len, 1, head_dim // 2).
+        """
         if device is None:
             device = self.wte.weight.device
         channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
@@ -269,7 +378,18 @@ class GPT(nn.Module):
         return cos, sin
 
     def _compute_window_sizes(self, config: GPTConfig) -> list[tuple[int, int]]:
-        """Per-layer (left, right) window size tuples for flash attention."""
+        """Compute per-layer (left, right) window size tuples for flash attention.
+
+        Args:
+            config: Model config supplying window_pattern, sequence_len, and n_layer.
+
+        Returns:
+            A list of length n_layer containing (left, right) window size tuples.
+            The last layer always uses full context.
+
+        Raises:
+            ValueError: If window_pattern contains characters other than 'S' or 'L'.
+        """
         pattern = config.window_pattern.upper()
         if not all(c in "SL" for c in pattern):
             raise ValueError(f"Invalid window_pattern: {pattern!r} (only 'S' and 'L' allowed)")
@@ -281,10 +401,19 @@ class GPT(nn.Module):
         return sizes
 
     def get_device(self) -> torch.device:
+        """Return the device on which this model's parameters reside.
+
+        Returns:
+            The device of the embedding weight tensor.
+        """
         return self.wte.weight.device
 
     def estimate_flops(self) -> int:
-        """Estimated FLOPs per token (forward + backward)."""
+        """Estimate FLOPs per token for both forward and backward passes.
+
+        Returns:
+            Approximate integer FLOPs per token.
+        """
         nparams = sum(p.numel() for p in self.parameters())
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())  # type: ignore[operator,misc]
         nparams_exclude = (
@@ -307,7 +436,12 @@ class GPT(nn.Module):
         return 6 * (nparams - nparams_exclude) + attn_flops
 
     def num_scaling_params(self) -> dict[str, int]:
-        """Parameter counts for scaling law analysis."""
+        """Return parameter counts broken down by component for scaling law analysis.
+
+        Returns:
+            Dict with keys 'wte', 'value_embeds', 'lm_head', 'transformer_matrices',
+            'scalars', and 'total'.
+        """
         wte = sum(p.numel() for p in self.wte.parameters())
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
@@ -336,6 +470,23 @@ class GPT(nn.Module):
         kv_cache: KVCache | None = None,
         loss_reduction: str = "mean",
     ) -> torch.Tensor:
+        """Run a forward pass, returning either logits or cross-entropy loss.
+
+        Args:
+            idx: Token id tensor of shape (B, T).
+            targets: Optional target token ids of shape (B, T); if provided,
+                returns the cross-entropy loss instead of logits.
+            kv_cache: Optional KV cache for incremental decoding.
+            loss_reduction: 'mean', 'sum', or 'none'; passed to F.cross_entropy.
+
+        Returns:
+            Cross-entropy loss scalar (or unreduced tensor) when targets is given,
+            otherwise logits of shape (B, T, vocab_size).
+
+        Raises:
+            ValueError: If T exceeds the rotary cache length, or T <= 1 in
+                training mode.
+        """
         B, T = idx.size()
 
         if T > self.cos.size(1):
@@ -411,7 +562,21 @@ class GPT(nn.Module):
         top_k: int | None = None,
         seed: int = 42,
     ) -> Iterator[int]:
-        """Naive autoregressive generation (no KV cache). Yields token ids."""
+        """Naive autoregressive generation without a KV cache.
+
+        Args:
+            tokens: Prompt token ids.
+            max_tokens: Maximum number of new tokens to generate.
+            temperature: Sampling temperature; 0.0 selects the argmax greedily.
+            top_k: If set, restrict sampling to the top-k most probable tokens.
+            seed: RNG seed used when temperature > 0.
+
+        Yields:
+            Integer token ids, one per generation step.
+
+        Raises:
+            TypeError: If tokens is not a list.
+        """
         if not isinstance(tokens, list):
             raise TypeError("tokens must be a list")
         device = self.get_device()

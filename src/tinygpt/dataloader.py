@@ -31,16 +31,19 @@ def document_batches(
     batch_size: int,
     text_field: str = "text",
 ) -> Iterator[tuple[list[str], int]]:
-    """
-    Infinite iterator that yields (text_batch, epoch) pairs from HF streaming.
+    """Infinite iterator that yields batches of document text from HF streaming.
 
     Args:
-        dataset_name: HF dataset identifier, e.g. "HuggingFaceFW/fineweb"
-        split: "train" or "validation"
-        rank: this process's rank (0-indexed)
-        world_size: total number of processes
-        batch_size: number of documents per batch yielded to the tokenizer
-        text_field: column name containing document text
+        dataset_name: HF dataset identifier, e.g. "HuggingFaceFW/fineweb".
+        split: Dataset split, e.g. "train" or "validation".
+        rank: This process's rank (0-indexed).
+        world_size: Total number of processes.
+        batch_size: Number of documents per batch yielded to the tokenizer.
+        text_field: Column name containing document text.
+
+    Yields:
+        A (texts, epoch) tuple where texts is a list of document strings and
+        epoch is the 1-based epoch counter.
     """
     epoch = 1
     while True:
@@ -65,23 +68,22 @@ def tokenizing_distributed_data_loader_bestfit(
     buffer_size: int = 1000,
     text_field: str = "text",
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
-    """
-    BOS-aligned bestfit dataloader backed by HF datasets streaming.
-
-    Yields (inputs, targets) where:
-      inputs  = (B, T) long tensor of token ids
-      targets = (B, T) long tensor of token ids shifted by 1
+    """BOS-aligned bestfit dataloader backed by HF datasets streaming.
 
     Args:
-        tokenizer: HuggingFaceTokenizer with encode() and get_bos_token_id()
-        B: batch size (number of sequences per step)
-        T: sequence length
-        dataset_name: HF dataset identifier
-        split: "train" or "val" / "validation"
-        device: target device for the output tensors
-        tokenizer_batch_size: documents to tokenize at once
-        buffer_size: bestfit document buffer size (larger = better packing)
-        text_field: column name in the HF dataset containing document text
+        tokenizer: HuggingFaceTokenizer with encode() and get_bos_token_id().
+        B: Batch size (number of sequences per step).
+        T: Sequence length.
+        dataset_name: HF dataset identifier.
+        split: "train" or "val" / "validation".
+        device: Target device for the output tensors.
+        tokenizer_batch_size: Documents to tokenize at once.
+        buffer_size: Bestfit document buffer size; larger values improve packing.
+        text_field: Column name in the HF dataset containing document text.
+
+    Yields:
+        An (inputs, targets) tuple of (B, T) long tensors where targets are
+        inputs shifted by one position.
     """
     _, rank, _, world_size = get_dist_info()
     hf_split = "validation" if split == "val" else split
@@ -152,13 +154,21 @@ def sft_data_loader(
     T: int,
     device: torch.device | str = "cuda",
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
-    """
-    SFT dataloader that packs tokenized conversations with loss masking.
+    """SFT dataloader that packs tokenized conversations with loss masking.
 
     Targets are -1 (ignore_index) for non-assistant tokens so the model only
     learns to predict assistant responses.
 
-    Yields (inputs, targets) tensors of shape (B, T).
+    Args:
+        tokenizer: HuggingFaceTokenizer with render_conversation() and get_bos_token_id().
+        task: Task object with __len__ and __getitem__ returning conversation dicts.
+        B: Batch size (number of sequences per step).
+        T: Sequence length.
+        device: Target device for the output tensors.
+
+    Yields:
+        An (inputs, targets) tuple of (B, T) long tensors where non-assistant
+        target positions are set to -1.
     """
     _, rank, _, world_size = get_dist_info()
     n = len(task)
