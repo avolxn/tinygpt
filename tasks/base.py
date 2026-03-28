@@ -13,7 +13,7 @@ class Task:
 
     def __init__(self, start: int = 0, stop: int | None = None, step: int = 1) -> None:
         assert start >= 0, f"start must be non-negative, got {start}"
-        assert stop is None or stop >= start, f"stop must be >= start"
+        assert stop is None or stop >= start, "stop must be >= start"
         assert step >= 1, f"step must be >= 1, got {step}"
         self.start = start
         self.stop = stop
@@ -101,6 +101,6 @@ def render_mc(question: str, letters: tuple | list, choices: list[str]) -> str:
     The letter appears *after* the choice text (better for small models).
     """
     query = f"Multiple Choice question: {question}\n"
-    query += "".join(f"- {choice}={letter}\n" for letter, choice in zip(letters, choices))
+    query += "".join(f"- {choice}={letter}\n" for letter, choice in zip(letters, choices, strict=True))
     query += "\nRespond only with the letter of the correct answer."
     return query

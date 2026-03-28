@@ -24,11 +24,6 @@ from tinygpt.runtime import compute_dtype
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# FA2 detection
-# ---------------------------------------------------------------------------
-
 fa2: Any = None
 try:
     if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
@@ -42,11 +37,6 @@ fa2_available = fa2 is not None
 
 # Default backend choice based on hardware/dtype at load time
 use_fa2 = fa2_available and compute_dtype == torch.bfloat16
-
-
-# ---------------------------------------------------------------------------
-# SDPA helpers
-# ---------------------------------------------------------------------------
 
 
 def sdpa_attention(
@@ -84,11 +74,6 @@ def sdpa_attention(
     if window >= 0 and window < Tk:
         mask = mask & ((row_idx - col_idx) <= window)
     return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=enable_gqa)
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 def flash_attn_func(

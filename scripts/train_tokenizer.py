@@ -28,7 +28,6 @@ import torch
 
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
-# ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Train a BPE tokenizer")
 parser.add_argument(
     "--dataset", type=str, default="HuggingFaceFW/fineweb", help="HF dataset identifier (ignored if --txt is given)"
@@ -47,11 +46,6 @@ args = parser.parse_args()
 print(f"vocab_size:  {args.vocab_size:,}")
 print(f"max_chars:   {args.max_chars:,}")
 print(f"doc_cap:     {args.doc_cap:,}")
-
-
-# ---------------------------------------------------------------------------
-# Text iterator
-# ---------------------------------------------------------------------------
 
 
 def text_iterator():
@@ -86,36 +80,20 @@ def text_iterator():
                 return
 
 
-# ---------------------------------------------------------------------------
-# Train
-# ---------------------------------------------------------------------------
-
 print("Training tokenizer...")
 t0 = time.time()
 tokenizer = HuggingFaceTokenizer.train_from_iterator(text_iterator(), args.vocab_size)
 t1 = time.time()
 print(f"Training time: {t1 - t0:.2f}s")
 
-# ---------------------------------------------------------------------------
-# Save
-# ---------------------------------------------------------------------------
-
 os.makedirs(args.out_dir, exist_ok=True)
 tokenizer.save(args.out_dir)
-
-# ---------------------------------------------------------------------------
-# Quick sanity check
-# ---------------------------------------------------------------------------
 
 test_text = "Hello world! This is a test.\nNumbers: 123, 4567\nUnicode: 你好 🌍"
 encoded = tokenizer.encode(test_text)
 if tokenizer.decode(encoded) != test_text:
     raise RuntimeError("Encode/decode round-trip failed!")
 print(f"Sanity check passed: {len(encoded)} tokens for {len(test_text)} chars")
-
-# ---------------------------------------------------------------------------
-# Build and save token_bytes tensor
-# ---------------------------------------------------------------------------
 
 vocab_size = tokenizer.get_vocab_size()
 special_set = set(tokenizer.get_special_tokens())

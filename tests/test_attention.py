@@ -9,21 +9,12 @@ import torch
 
 from tinygpt.attention import fa2_available, flash_attn_func, flash_attn_with_kvcache
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def make_qkv(B: int, T: int, H: int, Hkv: int, D: int, device="cpu") -> tuple[torch.Tensor, ...]:
     q = torch.randn(B, T, H, D, device=device)
     k = torch.randn(B, T, Hkv, D, device=device)
     v = torch.randn(B, T, Hkv, D, device=device)
     return q, k, v
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 def test_sdpa_full_causal() -> None:

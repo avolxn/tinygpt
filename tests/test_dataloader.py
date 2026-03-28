@@ -10,10 +10,6 @@ import torch
 
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture(scope="module")
 def tokenizer() -> HuggingFaceTokenizer:
@@ -24,11 +20,6 @@ def tokenizer() -> HuggingFaceTokenizer:
         "1 2 3 4 5 6 7 8 9 10. " * 20,
     ]
     return HuggingFaceTokenizer.train_from_iterator(iter(texts * 20), vocab_size=512)
-
-
-# ---------------------------------------------------------------------------
-# Synthetic HF-like streaming source
-# ---------------------------------------------------------------------------
 
 
 def make_in_memory_loader(tokenizer, docs, B, T, device="cpu"):
@@ -88,11 +79,6 @@ def make_in_memory_loader(tokenizer, docs, B, T, device="cpu"):
             yield inputs, targets
 
     return loader_gen()
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 def test_bos_starts_every_row(tokenizer: HuggingFaceTokenizer) -> None:

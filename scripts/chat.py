@@ -13,7 +13,6 @@ from tinygpt.engine import Engine
 from tinygpt.runtime import autodetect_device_type, compute_init
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
-# ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Chat with tinygpt")
 parser.add_argument("--checkpoint", type=str, required=True, help="Path to fine-tuned checkpoint directory")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
@@ -24,7 +23,6 @@ parser.add_argument("--max-tokens", type=int, default=512)
 parser.add_argument("--device-type", type=str, default="", choices=["cuda", "cpu", "mps", ""])
 args = parser.parse_args()
 
-# ---------------------------------------------------------------------------
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 _, _, _, _, device = compute_init(device_type)
 

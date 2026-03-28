@@ -10,10 +10,6 @@ import pytest
 
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
-# ---------------------------------------------------------------------------
-# Fixture: small tokenizer trained on a few sentences
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture(scope="module")
 def tokenizer() -> HuggingFaceTokenizer:
@@ -25,11 +21,6 @@ def tokenizer() -> HuggingFaceTokenizer:
         "Special: @#$%^&*()",
     ]
     return HuggingFaceTokenizer.train_from_iterator(iter(texts * 10), vocab_size=512)
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 def test_encode_decode_roundtrip(tokenizer: HuggingFaceTokenizer) -> None:

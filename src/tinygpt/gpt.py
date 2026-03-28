@@ -40,10 +40,6 @@ if TYPE_CHECKING:
 qk_scale = 1.2  # post-QK-norm scale applied to queries and keys
 softcap = 15.0  # logit soft-cap to prevent outlier logits
 
-# ---------------------------------------------------------------------------
-# Primitives
-# ---------------------------------------------------------------------------
-
 
 def norm(x: torch.Tensor) -> torch.Tensor:
     return F.rms_norm(x, (x.size(-1),))
@@ -61,19 +57,9 @@ class Linear(nn.Linear):
         return F.linear(x, self.weight.to(dtype=x.dtype))
 
 
-# ---------------------------------------------------------------------------
-# Value embedding helpers
-# ---------------------------------------------------------------------------
-
-
 def has_ve(layer_idx: int, n_layer: int) -> bool:
     """True if this layer should have a Value Embedding (alternating, last always included)."""
     return layer_idx % 2 == (n_layer - 1) % 2
-
-
-# ---------------------------------------------------------------------------
-# RoPE
-# ---------------------------------------------------------------------------
 
 
 def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
@@ -84,11 +70,6 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> t
     y1 = x1 * cos + x2 * sin
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat([y1, y2], 3)
-
-
-# ---------------------------------------------------------------------------
-# Attention
-# ---------------------------------------------------------------------------
 
 
 class CausalSelfAttention(nn.Module):
@@ -160,11 +141,6 @@ class CausalSelfAttention(nn.Module):
         return self.c_proj(y)  # type: ignore[no-any-return]
 
 
-# ---------------------------------------------------------------------------
-# MLP
-# ---------------------------------------------------------------------------
-
-
 class MLP(nn.Module):
     def __init__(self, config: GPTConfig) -> None:
         super().__init__()
@@ -176,11 +152,6 @@ class MLP(nn.Module):
         x = F.relu(x).square()
         x = self.c_proj(x)
         return x
-
-
-# ---------------------------------------------------------------------------
-# Block
-# ---------------------------------------------------------------------------
 
 
 class Block(nn.Module):
@@ -200,11 +171,6 @@ class Block(nn.Module):
         x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
         x = x + self.mlp(norm(x))
         return x
-
-
-# ---------------------------------------------------------------------------
-# GPT
-# ---------------------------------------------------------------------------
 
 
 class GPT(nn.Module):
