@@ -159,7 +159,6 @@ class HuggingFaceTokenizer:
         text: str,
         prepend: str | int | None = None,
         append: str | int | None = None,
-        num_threads: int | None = None,  # ignored, for API compatibility
     ) -> list[int]:
         """Encode a single string, optionally prepending/appending a special token.
 
@@ -199,7 +198,6 @@ class HuggingFaceTokenizer:
         text: str | list[str],
         prepend: str | int | None = None,
         append: str | int | None = None,
-        num_threads: int | None = None,
     ) -> list[int] | list[list[int]]:
         """Encode a string or list of strings into token id(s).
 
