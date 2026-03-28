@@ -30,7 +30,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from tinygpt.attention import flash_attn
+from tinygpt.attention import flash_attn_func, flash_attn_with_kvcache
 from tinygpt.config import GPTConfig
 from tinygpt.runtime import COMPUTE_DTYPE, print0
 
@@ -136,10 +136,10 @@ class CausalSelfAttention(nn.Module):
         k = k * _QK_SCALE
 
         if kv_cache is None:
-            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+            y = flash_attn_func(q, k, v, causal=True, window_size=window_size)
         else:
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
-            y = flash_attn.flash_attn_with_kvcache(
+            y = flash_attn_with_kvcache(
                 q,
                 k_cache,
                 v_cache,
