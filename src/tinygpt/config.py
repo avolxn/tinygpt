@@ -29,11 +29,21 @@ def make_config(
     sequence_len: int = 2048,
     window_pattern: str = "SSSL",
 ) -> GPTConfig:
-    """
-    Build a GPTConfig from a depth scalar (nanochat-style autoconfig).
+    """Build a GPTConfig from a depth scalar.
 
-    model_dim = depth * aspect_ratio, rounded up to a multiple of head_dim so
-    that head_dim divides evenly.
+    model_dim is set to depth * aspect_ratio, rounded up to the next multiple
+    of head_dim so that head_dim divides evenly.
+
+    Args:
+        depth: Number of transformer layers.
+        aspect_ratio: Multiplier for model width relative to depth.
+        head_dim: Attention head dimension; model_dim is rounded up to a multiple.
+        vocab_size: Vocabulary size.
+        sequence_len: Maximum sequence length.
+        window_pattern: Sliding window pattern string (e.g. "SSSL").
+
+    Returns:
+        A GPTConfig with n_layer, n_head, n_kv_head, and n_embd derived from depth.
     """
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim

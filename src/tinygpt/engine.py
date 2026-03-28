@@ -20,6 +20,16 @@ from tinygpt.runtime import compute_dtype, get_model_device
 
 @contextmanager
 def timeout(duration: int, formula: str) -> Generator[None, None, None]:
+    """Context manager that raises TimeoutError if the body exceeds a time limit.
+
+    Args:
+        duration: Maximum allowed seconds before a TimeoutError is raised.
+        formula: Human-readable label included in the TimeoutError message.
+
+    Raises:
+        TimeoutError: If the body takes longer than duration seconds.
+    """
+
     def _handler(signum: int, frame: Any) -> None:
         raise TimeoutError(f"'{formula}': timed out after {duration}s")
 
@@ -32,6 +42,15 @@ def timeout(duration: int, formula: str) -> Generator[None, None, None]:
 
 
 def eval_with_timeout(formula: str, max_time: int = 3) -> object:
+    """Evaluate a Python expression string with a wall-clock time limit.
+
+    Args:
+        formula: Python expression to evaluate.
+        max_time: Maximum seconds to allow before aborting.
+
+    Returns:
+        The result of the expression, or None if evaluation fails or times out.
+    """
     try:
         with timeout(max_time, formula):
             with warnings.catch_warnings():
@@ -43,7 +62,14 @@ def eval_with_timeout(formula: str, max_time: int = 3) -> object:
 
 
 def use_calculator(expr: str) -> object:
-    """Safely evaluate a Python expression (math or .count() only)."""
+    """Safely evaluate a Python expression limited to arithmetic or .count() calls.
+
+    Args:
+        expr: Expression string to evaluate.
+
+    Returns:
+        The numeric result, or None if the expression is unsafe or evaluation fails.
+    """
     expr = expr.replace(",", "")
     if all(x in "0123456789*+-/.() " for x in expr):
         if "**" in expr:
@@ -95,6 +121,17 @@ class KVCache:
         device: torch.device,
         dtype: torch.dtype,
     ) -> None:
+        """Allocate zeroed K/V cache tensors for the full model.
+
+        Args:
+            batch_size: Number of parallel sequences.
+            num_heads: Number of KV heads per layer.
+            seq_len: Maximum sequence length the cache can hold.
+            head_dim: Dimensionality of each attention head.
+            num_layers: Number of transformer layers.
+            device: Device on which to allocate the cache tensors.
+            dtype: dtype of the cache tensors.
+        """
         self.batch_size = batch_size
         self.max_seq_len = seq_len
         self.n_layers = num_layers
@@ -106,20 +143,47 @@ class KVCache:
         self.prev_embedding: torch.Tensor | None = None
 
     def reset(self) -> None:
+        """Reset all sequence positions to zero, clearing cached KV state."""
         self.cache_seqlens.zero_()
         self.prev_embedding = None
 
     def get_pos(self) -> int:
+        """Return the current fill position (number of tokens already cached).
+
+        Returns:
+            Integer position of the first free slot, read from cache_seqlens[0].
+        """
         return self.cache_seqlens[0].item()  # type: ignore[return-value]
 
     def get_layer_cache(self, layer_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the K and V cache slices for a specific layer.
+
+        Args:
+            layer_idx: Index of the transformer layer.
+
+        Returns:
+            A (k_cache, v_cache) tuple each of shape (B, T_max, H, D).
+        """
         return self.k_cache[layer_idx], self.v_cache[layer_idx]
 
     def advance(self, num_tokens: int) -> None:
+        """Increment all sequence positions by num_tokens.
+
+        Args:
+            num_tokens: Number of newly appended tokens.
+        """
         self.cache_seqlens += num_tokens
 
     def prefill(self, other: "KVCache") -> None:
-        """Copy KV state from a batch-1 prefill cache into this decode cache."""
+        """Copy KV state from a batch-1 prefill cache into this decode cache.
+
+        Args:
+            other: Source batch-1 cache populated during the prefill forward pass.
+
+        Raises:
+            RuntimeError: If this cache already has tokens (get_pos() != 0).
+            ValueError: If other has a different number of layers.
+        """
         if self.get_pos() != 0:
             raise RuntimeError("prefill() called on non-empty cache")
         if self.n_layers != other.n_layers:
@@ -139,7 +203,17 @@ def sample_next_token(
     temperature: float = 1.0,
     top_k: int | None = None,
 ) -> torch.Tensor:
-    """Sample next token from logits (B, vocab_size). Returns (B, 1)."""
+    """Sample the next token from a logits distribution.
+
+    Args:
+        logits: Unnormalised logits of shape (B, vocab_size).
+        rng: Random number generator for sampling.
+        temperature: Softmax temperature; 0.0 selects the argmax deterministically.
+        top_k: If set, restrict sampling to the top-k most likely tokens.
+
+    Returns:
+        Selected token ids of shape (B, 1).
+    """
     if temperature == 0.0:
         return torch.argmax(logits, dim=-1, keepdim=True)
     if top_k is not None and top_k > 0:
@@ -156,6 +230,11 @@ def sample_next_token(
 
 class RowState:
     def __init__(self, tokens: list[int]) -> None:
+        """Initialise per-row generation state.
+
+        Args:
+            tokens: The prompt token ids for this row.
+        """
         self.current_tokens = tokens
         self.forced_tokens: deque[int] = deque()
         self.in_python_block = False
@@ -167,6 +246,12 @@ class Engine:
     """Efficient batched inference engine with KV cache and tool use."""
 
     def __init__(self, model: torch.nn.Module, tokenizer: Any) -> None:
+        """Initialise the engine with a model and tokenizer.
+
+        Args:
+            model: GPT model to use for generation.
+            tokenizer: HuggingFaceTokenizer used to encode/decode tokens.
+        """
         self.model = model
         self.tokenizer = tokenizer
 
@@ -180,12 +265,28 @@ class Engine:
         top_k: int | None = None,
         seed: int = 42,
     ) -> Iterator[tuple[list[int], list[int]]]:
-        """
-        Streaming batched generation with single prefill + KV cache decode.
+        """Stream tokens for num_samples parallel sequences from a shared prompt.
 
-        Yields (token_column, token_masks) at each step:
-            token_column: list[int] of length num_samples
-            token_masks:  list[int], 1=sampled, 0=forced (tool output)
+        Performs a single batch-1 prefill then decodes all samples in parallel
+        using a shared KV cache.  Forced tool-output tokens are injected when
+        a python block is evaluated by use_calculator.
+
+        Args:
+            tokens: Prompt token ids shared across all samples.
+            num_samples: Number of independent sequences to generate.
+            max_tokens: Maximum new tokens to generate; None means model seq_len.
+            temperature: Sampling temperature; 0.0 = greedy.
+            top_k: Top-k sampling cutoff; None disables top-k.
+            seed: RNG seed for reproducibility.
+
+        Yields:
+            (token_column, token_masks) at each decode step, where token_column
+            is a list of length num_samples and token_masks is 1 for sampled
+            tokens and 0 for forced tool-output tokens.
+
+        Raises:
+            TypeError: If tokens is not a non-empty list of ints.
+            RuntimeError: If the tokenizer is missing required special tokens.
         """
         if not isinstance(tokens, list) or not tokens or not isinstance(tokens[0], int):
             raise TypeError("tokens must be a non-empty list of ints")
@@ -292,7 +393,17 @@ class Engine:
         num_samples: int = 1,
         **kwargs: Any,
     ) -> tuple[list[list[int]], list[list[int]]]:
-        """Non-streaming generation. Returns (sequences, masks)."""
+        """Generate num_samples completions and return them all at once.
+
+        Args:
+            tokens: Prompt token ids.
+            num_samples: Number of independent sequences to generate.
+            **kwargs: Additional keyword arguments forwarded to generate().
+
+        Returns:
+            A (sequences, masks) tuple where sequences is a list of token id
+            lists and masks is a corresponding list of 0/1 mask lists.
+        """
         assistant_end = self.tokenizer.encode_special("<|assistant_end|>")
         bos = self.tokenizer.get_bos_token_id()
         results = [tokens.copy() for _ in range(num_samples)]

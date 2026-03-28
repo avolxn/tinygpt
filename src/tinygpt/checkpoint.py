@@ -33,10 +33,27 @@ meta_filename = "meta.json"
 
 
 def is_fsdp(model: torch.nn.Module) -> bool:
+    """Check if a model is wrapped with FSDP.
+
+    Args:
+        model: The PyTorch module to check.
+
+    Returns:
+        True if model is an instance of FullyShardedDataParallel.
+    """
     return isinstance(model, FSDP)
 
 
 def fsdp_full_state_dict_ctx(model: torch.nn.Module) -> Any:
+    """Return a context manager that gathers a full state dict to rank 0.
+
+    Args:
+        model: FSDP-wrapped model.
+
+    Returns:
+        A context manager that sets the model's state dict type to FULL_STATE_DICT
+        with CPU offload and rank-0-only gathering.
+    """
     cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
     return FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg)
 
@@ -48,18 +65,17 @@ def save_checkpoint(
     meta: dict[str, Any],
     rank: int = 0,
 ) -> None:
-    """
-    Save model, optimizer and meta to *checkpoint_dir*.
+    """Save model, optimizer and meta to checkpoint_dir.
 
     For FSDP models, state dicts are gathered to rank 0 only before saving.
     For non-FSDP models, only rank 0 writes (consistent behaviour in DDP-less runs).
 
     Args:
-        checkpoint_dir: directory where checkpoint files will be written
-        model: (FSDP-wrapped or plain) GPT instance
-        optimizer: AdamW optimizer
-        meta: JSON-serialisable metadata dict
-        rank: this process's rank
+        checkpoint_dir: Directory where checkpoint files will be written.
+        model: FSDP-wrapped or plain GPT instance.
+        optimizer: AdamW optimizer.
+        meta: JSON-serialisable metadata dict.
+        rank: This process's rank.
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -98,18 +114,17 @@ def load_checkpoint(
     device: torch.device,
     rank: int = 0,
 ) -> dict[str, Any]:
-    """
-    Load model weights and optionally optimizer state into existing objects.
+    """Load model weights and optionally optimizer state into existing objects.
 
     For FSDP models, the full state dict is loaded on rank 0 and then
     scattered to all ranks.
 
     Args:
-        checkpoint_dir: directory containing checkpoint files
-        model: (FSDP-wrapped or plain) model to load weights into
-        optimizer: optimizer to restore state into (None = skip)
-        device: target device for tensor loading
-        rank: this process's rank
+        checkpoint_dir: Directory containing checkpoint files.
+        model: FSDP-wrapped or plain model to load weights into.
+        optimizer: Optimizer to restore state into; None skips optimizer loading.
+        device: Target device for tensor loading.
+        rank: This process's rank.
 
     Returns:
         The meta dict loaded from meta.json.
@@ -146,7 +161,15 @@ def load_checkpoint(
 
 
 def get_checkpoint_dir(output_dir: str, run_name: str) -> str:
-    """Return the checkpoint subdirectory for a given run."""
+    """Return the checkpoint subdirectory for a given run.
+
+    Args:
+        output_dir: Root output directory.
+        run_name: Name of the training run.
+
+    Returns:
+        Path to the checkpoint directory for this run.
+    """
     return os.path.join(output_dir, "checkpoints", run_name)
 
 
@@ -155,11 +178,16 @@ def build_model_from_checkpoint(
     device: torch.device,
     phase: str = "eval",
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
-    """
-    Convenience: instantiate a GPT model from a saved checkpoint.
+    """Instantiate a GPT model from a saved checkpoint.
 
-    Returns (model, meta) with model already on *device*.
-    Does not load optimizer.
+    Args:
+        checkpoint_dir: Directory containing the checkpoint files.
+        device: Device on which to place the model.
+        phase: Either 'eval' (model.eval()) or 'train' (model.train()).
+
+    Returns:
+        A (model, meta) tuple with the model placed on device and meta.json
+        loaded as a dict.
     """
     meta_path = os.path.join(checkpoint_dir, "meta.json")
     with open(meta_path, encoding="utf-8") as f:

@@ -45,12 +45,17 @@ def sdpa_attention(
     window_size: tuple[int, int],
     enable_gqa: bool,
 ) -> torch.Tensor:
-    """
-    SDPA attention with optional sliding window.
+    """SDPA attention with optional sliding window.
 
     Args:
-        q, k, v: (B, H, T, D) layout.
-        window_size: (left, right); left=-1 means unlimited.
+        q: Query tensor of shape (B, H, T, D).
+        k: Key tensor of shape (B, H, T, D).
+        v: Value tensor of shape (B, H, T, D).
+        window_size: (left, right) sliding window; left=-1 means unlimited.
+        enable_gqa: Whether to enable grouped-query attention.
+
+    Returns:
+        Output tensor of shape (B, H, T, D).
     """
     Tq = q.size(2)
     Tk = k.size(2)
