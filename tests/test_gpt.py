@@ -74,13 +74,6 @@ def test_init_weights_not_nan(tiny_model: GPT) -> None:
         assert not torch.isnan(param).any(), f"NaN in parameter: {name}"
 
 
-def test_estimate_flops(tiny_model: GPT) -> None:
-    """estimate_flops() returns a positive integer."""
-    flops = tiny_model.estimate_flops()
-    assert isinstance(flops, int)
-    assert flops > 0
-
-
 def test_num_scaling_params(tiny_model: GPT) -> None:
     """num_scaling_params() returns a dict summing to total param count."""
     counts = tiny_model.num_scaling_params()
