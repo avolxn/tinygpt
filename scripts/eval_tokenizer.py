@@ -112,7 +112,8 @@ for name, tok in tokenizers.items():
     for text_name, text in all_text:
         encoded = tok.encode(text)
         decoded = tok.decode(encoded)
-        assert decoded == text, f"Round-trip failed for {name}/{text_name}"
+        if decoded != text:
+            raise ValueError(f"Round-trip failed for {name}/{text_name}")
         nb = len(text.encode("utf-8"))
         results[name][text_name] = {"bytes": nb, "tokens": len(encoded), "ratio": nb / len(encoded)}
 

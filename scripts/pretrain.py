@@ -232,10 +232,11 @@ else:
 
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len
 world_tokens = tokens_per_fwdbwd * world_size
-assert total_batch_size % world_tokens == 0, (
-    f"total_batch_size {total_batch_size} must be divisible by "
-    f"world_tokens {world_tokens} = device_batch_size*seq_len*world_size"
-)
+if total_batch_size % world_tokens != 0:
+    raise ValueError(
+        f"total_batch_size {total_batch_size} must be divisible by "
+        f"world_tokens {world_tokens} = device_batch_size*seq_len*world_size"
+    )
 grad_accum_steps = total_batch_size // world_tokens
 
 print0(f"num_iterations: {num_iterations:,}")

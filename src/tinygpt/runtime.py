@@ -139,11 +139,12 @@ def compute_init(device_type: str = "cuda") -> tuple[bool, int, int, int, torch.
     Returns (is_dist, rank, local_rank, world_size, device).
     For FSDP, this sets up the process group; FSDP wrapping happens in the training script.
     """
-    assert device_type in ("cuda", "mps", "cpu"), f"Invalid device type: {device_type}"
-    if device_type == "cuda":
-        assert torch.cuda.is_available(), "PyTorch is not configured for CUDA"
-    if device_type == "mps":
-        assert torch.backends.mps.is_available(), "PyTorch is not configured for MPS"
+    if device_type not in ("cuda", "mps", "cpu"):
+        raise ValueError(f"Invalid device type: {device_type}")
+    if device_type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("PyTorch is not configured for CUDA")
+    if device_type == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError("PyTorch is not configured for MPS")
 
     torch.manual_seed(42)
     if device_type == "cuda":
