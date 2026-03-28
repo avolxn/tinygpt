@@ -15,7 +15,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from tinygpt.runtime import COMPUTE_DTYPE
+from tinygpt.runtime import COMPUTE_DTYPE, get_model_device
 
 # ---------------------------------------------------------------------------
 # Calculator tool helpers (used by the chat engine)
@@ -205,8 +205,6 @@ class Engine:
             token_masks:  list[int], 1=sampled, 0=forced (tool output)
         """
         assert isinstance(tokens, list) and isinstance(tokens[0], int)
-        from tinygpt.runtime import get_model_device  # noqa: PLC0415
-
         device = get_model_device(self.model)
         dtype = COMPUTE_DTYPE if device.type == "cuda" else torch.float32
         rng = torch.Generator(device=device)

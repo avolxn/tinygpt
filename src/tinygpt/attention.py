@@ -20,6 +20,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from tinygpt.runtime import COMPUTE_DTYPE
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,8 +59,6 @@ def _use_fa2() -> bool:
     if _override_impl == "sdpa":
         return False
     if HAS_FA2:
-        from tinygpt.runtime import COMPUTE_DTYPE  # local import avoids circular dep at module load
-
         return COMPUTE_DTYPE == torch.bfloat16
     return False
 
