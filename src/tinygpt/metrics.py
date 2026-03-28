@@ -20,6 +20,8 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from tinygpt.runtime import get_model_device
+
 
 @torch.no_grad()
 def evaluate_bpb(
@@ -41,8 +43,6 @@ def evaluate_bpb(
     Returns:
         Bits per byte (lower is better).
     """
-    from tinygpt.runtime import get_model_device  # noqa: PLC0415
-
     device = get_model_device(model)
     total_nats = torch.tensor(0.0, dtype=torch.float32, device=device)
     total_bytes = torch.tensor(0, dtype=torch.int64, device=device)

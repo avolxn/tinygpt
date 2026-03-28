@@ -18,6 +18,12 @@ import os
 from typing import Any
 
 import torch
+from safetensors.torch import load_file, save_file
+from torch.distributed.fsdp import FullStateDictConfig, StateDictType
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+from tinygpt.config import GPTConfig
+from tinygpt.gpt import GPT
 
 logger = logging.getLogger(__name__)
 
@@ -28,18 +34,10 @@ _META_FILE = "meta.json"
 
 
 def _is_fsdp(model: torch.nn.Module) -> bool:
-    try:
-        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP  # noqa: PLC0415
-
-        return isinstance(model, FSDP)
-    except ImportError:
-        return False
+    return isinstance(model, FSDP)
 
 
 def _fsdp_full_state_dict_ctx(model: torch.nn.Module) -> Any:
-    from torch.distributed.fsdp import FullStateDictConfig, StateDictType  # noqa: PLC0415
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP  # noqa: PLC0415
-
     cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
     return FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg)
 
@@ -69,8 +67,6 @@ def save_checkpoint(
         meta: JSON-serialisable metadata dict
         rank: this process's rank
     """
-    from safetensors.torch import save_file  # local import — optional dep
-
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -86,8 +82,6 @@ def save_checkpoint(
     # Optimizer state dict
     # ------------------------------------------------------------------
     if _is_fsdp(model):
-        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP  # noqa: PLC0415
-
         optim_state = FSDP.full_optim_state_dict(model, optimizer, rank0_only=True)
     else:
         optim_state = optimizer.state_dict()
@@ -140,8 +134,6 @@ def load_checkpoint(
     Returns:
         The meta dict loaded from meta.json.
     """
-    from safetensors.torch import load_file  # local import — optional dep
-
     meta_path = os.path.join(checkpoint_dir, _META_FILE)
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
@@ -161,8 +153,6 @@ def load_checkpoint(
         optim_path = os.path.join(checkpoint_dir, _OPTIM_FILE)
         try:
             if _is_fsdp(model):
-                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP  # noqa: PLC0415
-
                 full_optim = torch.load(optim_path, map_location="cpu", weights_only=False) if rank == 0 else None
                 sharded_optim = FSDP.scatter_full_optim_state_dict(full_optim, model)
                 optimizer.load_state_dict(sharded_optim)
@@ -196,9 +186,6 @@ def build_model_from_checkpoint(
     Returns (model, meta) with model already on *device*.
     Does not load optimizer.
     """
-    from tinygpt.config import GPTConfig  # noqa: PLC0415
-    from tinygpt.gpt import GPT  # local import to avoid circular deps at module load  # noqa: PLC0415
-
     meta_path = os.path.join(checkpoint_dir, "meta.json")
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)

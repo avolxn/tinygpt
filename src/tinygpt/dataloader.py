@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import torch
+from datasets import load_dataset
 
 from tinygpt.runtime import get_dist_info
 
@@ -41,8 +42,6 @@ def _document_batches(
         batch_size: number of documents per batch yielded to the tokenizer
         text_field: column name containing document text
     """
-    from datasets import load_dataset  # local import — optional dep
-
     epoch = 1
     while True:
         ds = load_dataset(dataset_name, split=split, streaming=True, trust_remote_code=True)

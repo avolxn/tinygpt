@@ -120,8 +120,6 @@ def make_optimizer(
     Returns:
         Configured AdamW optimizer
     """
-    import torch.cuda
-
     use_fused = fused and torch.cuda.is_available()
     param_groups = make_param_groups(
         model,

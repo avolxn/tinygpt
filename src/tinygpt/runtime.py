@@ -12,6 +12,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+from torch.distributed.fsdp import MixedPrecision
 
 # ---------------------------------------------------------------------------
 # Compute dtype
@@ -181,8 +182,6 @@ def make_fsdp_mixed_precision(compute_dtype: torch.dtype | None = None) -> Any:
 
     Uses COMPUTE_DTYPE by default. On CPU/MPS returns None (FSDP not used there).
     """
-    from torch.distributed.fsdp import MixedPrecision  # local import to avoid hard dep on FSDP on CPU
-
     dtype = compute_dtype if compute_dtype is not None else COMPUTE_DTYPE
     return MixedPrecision(
         param_dtype=dtype,
