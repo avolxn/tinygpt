@@ -1,5 +1,5 @@
 """
-Pretrain a GPT model with FSDP.
+Pretrain a GPT model via HuggingFace Trainer + FSDP.
 
 Single GPU:
     python -m scripts.pretrain
@@ -19,25 +19,21 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import argparse
-import gc
 import json
-import time
 from dataclasses import asdict
 from functools import partial
 
 import torch
-import wandb
+from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available, use_flash_attn
-from tinygpt.checkpoint import get_checkpoint_dir, save_checkpoint
+from tinygpt.checkpoint import get_checkpoint_dir, load_checkpoint
 from tinygpt.config import make_config
 from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
-from tinygpt.engine import Engine
 from tinygpt.gpt import GPT, Block
+from tinygpt.hf_trainer import SamplerCallback, TinyGPTTrainer
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
-from tinygpt.optimizer import make_optimizer
 from tinygpt.runtime import (
-    DummyWandb,
     autodetect_device_type,
     compute_cleanup,
     compute_dtype,
@@ -47,7 +43,6 @@ from tinygpt.runtime import (
     make_fsdp_mixed_precision,
     print0,
 )
-from tinygpt.scheduler import step_scheduler
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
@@ -61,7 +56,7 @@ parser.add_argument(
     type=str,
     default="FULL_SHARD",
     choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"],
-    help="FSDP sharding strategy (FULL_SHARD=ZeRO-3, SHARD_GRAD_OP=ZeRO-2)",
+    help="FSDP sharding strategy",
 )
 # Model architecture
 parser.add_argument("--depth", type=int, default=20)
@@ -70,10 +65,8 @@ parser.add_argument("--head-dim", type=int, default=128)
 parser.add_argument("--max-seq-len", type=int, default=2048)
 parser.add_argument("--window-pattern", type=str, default="SSSL")
 # Data
-parser.add_argument(
-    "--dataset", type=str, default="HuggingFaceFW/fineweb", help="HF dataset identifier (empty = use --txt)"
-)
-parser.add_argument("--txt", type=str, default="", help="Local .txt file to train on (overrides --dataset)")
+parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
+parser.add_argument("--txt", type=str, default="", help="Local .txt file (overrides --dataset)")
 parser.add_argument("--text-field", type=str, default="text")
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
 # Training horizon
@@ -93,25 +86,21 @@ parser.add_argument("--warmup-steps", type=int, default=40)
 parser.add_argument("--warmdown-ratio", type=float, default=0.65)
 parser.add_argument("--final-lr-frac", type=float, default=0.05)
 # Resume
-parser.add_argument("--resume-from", type=str, default="", help="Checkpoint directory to resume from")
-# Evaluation
+parser.add_argument("--resume-from", type=str, default="")
+# Evaluation / sampling
 parser.add_argument("--eval-every", type=int, default=250)
 parser.add_argument("--eval-tokens", type=int, default=80 * 524288)
 parser.add_argument("--sample-every", type=int, default=2000)
 parser.add_argument("--save-every", type=int, default=-1)
 # Output
 parser.add_argument("--out-dir", type=str, default="out")
-parser.add_argument(
-    "--run-name", type=str, default="", help="Subdirectory name under out/checkpoints/ (default: d<depth>)"
-)
+parser.add_argument("--run-name", type=str, default="")
 args = parser.parse_args()
 user_config = vars(args).copy()
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 is_dist, rank, local_rank, world_size, device = compute_init(device_type)
 master_process = rank == 0
-synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
-get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 if device_type == "cuda":
     gpu_name = torch.cuda.get_device_name(0)
@@ -122,10 +111,6 @@ else:
 
 print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
 
-use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="tinygpt", name=args.run, config=user_config)
-
-# Flash attention status
 if use_flash_attn:
     print0("Using Flash Attention 2 (Ampere+ GPU detected).")
 else:
@@ -135,12 +120,6 @@ else:
     else:
         print0("WARNING: Flash Attention 2 not available, using PyTorch SDPA fallback.")
     print0("!" * 70)
-
-if args.txt:
-    # Tiny dataset path: inline train from txt
-    print0(f"Loading tokenizer from {args.tokenizer_dir}")
-else:
-    print0(f"Loading tokenizer from {args.tokenizer_dir}")
 
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
 vocab_size = tokenizer.get_vocab_size()
@@ -164,9 +143,9 @@ model.to_empty(device=device)
 model.init_weights()
 
 if device_type == "cuda" and is_dist:
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp import ShardingStrategy
-    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP  # noqa: PLC0415
+    from torch.distributed.fsdp import ShardingStrategy  # noqa: PLC0415
+    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy  # noqa: PLC0415
 
     strategy_map = {
         "FULL_SHARD": ShardingStrategy.FULL_SHARD,
@@ -191,7 +170,6 @@ if param_counts:
 num_params = sum(p.numel() for p in model.parameters())
 num_flops_per_token = model.estimate_flops() if hasattr(model, "estimate_flops") else 0
 print0(f"Total params: {num_params:,}")
-print0(f"Estimated FLOPs/token: {num_flops_per_token:e}")
 
 if args.num_iterations > 0:
     num_iterations = args.num_iterations
@@ -203,7 +181,6 @@ elif param_counts and args.target_param_data_ratio > 0:
 else:
     num_iterations = 1000
 
-# Batch size
 if args.total_batch_size > 0:
     total_batch_size = args.total_batch_size
 else:
@@ -222,42 +199,20 @@ print0(f"num_iterations: {num_iterations:,}")
 print0(f"total_batch_size: {total_batch_size:,}")
 print0(f"grad_accum_steps: {grad_accum_steps}")
 
-optimizer = make_optimizer(
-    model,
-    matrix_lr=args.matrix_lr,
-    embedding_lr=args.embedding_lr,
-    scalar_lr=args.scalar_lr,
-    weight_decay=args.weight_decay,
-)
-
-step = 0
-val_bpb = None
-min_val_bpb = float("inf")
-smooth_train_loss = 0.0
-total_training_time = 0.0
-
+start_step = 0
 if args.resume_from:
-    from tinygpt.checkpoint import load_checkpoint  # noqa: PLC0415
-
     print0(f"Resuming from {args.resume_from}")
-    meta = load_checkpoint(args.resume_from, model, optimizer, device, rank=rank)
-    step = meta.get("step", 0)
-    val_bpb = meta.get("val_bpb")
-    loop_state = meta.get("loop_state", {})
-    min_val_bpb = loop_state.get("min_val_bpb", float("inf"))
-    smooth_train_loss = loop_state.get("smooth_train_loss", 0.0)
-    total_training_time = loop_state.get("total_training_time", 0.0)
-    print0(f"Resumed at step {step}")
+    meta = load_checkpoint(args.resume_from, model, optimizer=None, device=device, rank=rank)
+    start_step = meta.get("step", 0)
+    print0(f"Resumed at step {start_step}")
+
+run_name = args.run_name if args.run_name else f"d{args.depth}"
+checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name)
 
 
 def make_loader(split: str):
     if args.txt:
-        # Wrap local txt file as a trivial HF-like streaming source
-        # We'll use the tokenizing loader but point at our custom iterator
-        # For simplicity, fall back to the bestfit loader with the txt file
-        # exposed as a local HF dataset:
-        dataset = _TxtDataset(args.txt)
-        return _txt_loader(tokenizer, dataset, args.device_batch_size, args.max_seq_len, device)
+        return _txt_loader(tokenizer, args.txt, args.device_batch_size, args.max_seq_len, device)
     return tokenizing_distributed_data_loader_bestfit(
         tokenizer,
         args.device_batch_size,
@@ -269,36 +224,25 @@ def make_loader(split: str):
     )
 
 
-class _TxtDataset:
-    """Minimal wrapper so local txt files work like HF streaming datasets."""
+def _txt_loader(tok, path: str, B: int, T: int, dev):
+    """Minimal bestfit loader backed by a local text file."""
+    import torch  # noqa: PLC0415
 
-    def __init__(self, path: str) -> None:
-        with open(path, encoding="utf-8") as f:
-            self.lines = [ln.strip() for ln in f if ln.strip()]
+    with open(path, encoding="utf-8") as f:
+        lines = [ln.strip() for ln in f if ln.strip()]
 
-    def __iter__(self):
-        while True:
-            yield from self.lines
-
-
-def _txt_loader(tokenizer, dataset, B, T, device):
-    """Minimal bestfit loader backed by a local text iterator."""
-    bos = tokenizer.get_bos_token_id()
+    bos = tok.get_bos_token_id()
     row_capacity = T + 1
-    doc_buffer = []
-    data_iter = iter(dataset)
+    doc_buffer: list[list[int]] = []
 
-    def refill():
-        for _ in range(128):
-            try:
-                doc_buffer.append(tokenizer.encode(next(data_iter), prepend=bos))
-            except StopIteration:
-                break
+    def refill() -> None:
+        for ln in lines:
+            doc_buffer.append(tok.encode(ln, prepend=bos))
 
-    use_cuda = str(device) == "cuda"
+    use_cuda = str(dev) == "cuda"
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
     cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device)
+    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=dev)
     cpu_inputs = cpu_buffer[: B * T].view(B, T)
     cpu_targets = cpu_buffer[B * T :].view(B, T)
     inputs = gpu_buffer[: B * T].view(B, T)
@@ -337,125 +281,67 @@ def _txt_loader(tokenizer, dataset, B, T, device):
 
 
 train_loader = make_loader("train")
-x, y = next(train_loader)
+eval_steps = max(1, args.eval_tokens // (args.device_batch_size * args.max_seq_len * world_size))
 
-run_name = args.run_name if args.run_name else f"d{args.depth}"
-checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name)
 
-model.train()
+def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
+    """Evaluate bits-per-byte on the validation split."""
+    eval_loader = make_loader("val")
+    bpb = evaluate_bpb(eval_model, eval_loader, eval_steps, token_bytes)
+    print0(f"Step {step:05d} | val bpb: {bpb:.6f}")
+    return {"bpb": bpb}
 
-while True:
-    last_step = step == num_iterations
 
-    # Eval
-    if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
-        model.eval()
-        val_loader = make_loader("val")
-        eval_steps = max(1, args.eval_tokens // (args.device_batch_size * args.max_seq_len * world_size))
-        val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | val bpb: {val_bpb:.6f}")
-        if val_bpb < min_val_bpb:
-            min_val_bpb = val_bpb
-        wandb_run.log({"step": step, "val/bpb": val_bpb, "total_time": total_training_time})
-        model.train()
+training_args = TrainingArguments(
+    output_dir=checkpoint_dir,
+    max_steps=num_iterations,
+    per_device_train_batch_size=args.device_batch_size,
+    gradient_accumulation_steps=grad_accum_steps,
+    warmup_steps=args.warmup_steps,
+    weight_decay=args.weight_decay,
+    max_grad_norm=args.grad_clip,
+    logging_steps=100,
+    eval_strategy="steps" if args.eval_every > 0 else "no",
+    eval_steps=args.eval_every if args.eval_every > 0 else None,
+    save_strategy="steps",
+    save_steps=args.save_every if args.save_every > 0 else num_iterations,
+    remove_unused_columns=False,
+    dataloader_num_workers=0,
+    report_to=["wandb"] if args.run != "dummy" and master_process else [],
+    run_name=args.run if args.run != "dummy" else None,
+    label_names=["labels"],
+    fsdp="",  # We pre-wrap with FSDP above
+    no_cuda=(device_type != "cuda"),
+    bf16=(compute_dtype == torch.bfloat16 and device_type == "cuda"),
+    fp16=False,
+    prediction_loss_only=True,
+    disable_tqdm=not master_process,
+)
 
-    # Sample
-    if args.sample_every > 0 and master_process and (last_step or (step > 0 and step % args.sample_every == 0)):
-        model.eval()
-        engine = Engine(model, tokenizer)
-        prompts = ["The capital of France is", "The chemical symbol of gold is"]
-        for prompt in prompts:
-            tokens = tokenizer(prompt, prepend="<|bos|>")
-            sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
-            print0(tokenizer.decode(sample[0]))
-        model.train()
+callbacks = [
+    SamplerCallback(
+        tokenizer=tokenizer,
+        device=device,
+        sample_every=args.sample_every,
+        master_process=master_process,
+    ),
+]
 
-    # Checkpoint
-    if last_step or (step > 0 and args.save_every > 0 and step % args.save_every == 0):
-        save_checkpoint(
-            checkpoint_dir,
-            model,
-            optimizer,
-            {
-                "step": step,
-                "val_bpb": val_bpb,
-                "model_config": model_config_kwargs,
-                "user_config": user_config,
-                "loop_state": {
-                    "min_val_bpb": min_val_bpb,
-                    "smooth_train_loss": smooth_train_loss,
-                    "total_training_time": total_training_time,
-                },
-            },
-            rank=rank,
-        )
+trainer = TinyGPTTrainer(
+    model=model,
+    args=training_args,
+    callbacks=callbacks,
+    matrix_lr=args.matrix_lr,
+    embedding_lr=args.embedding_lr,
+    scalar_lr=args.scalar_lr,
+    warmdown_ratio=args.warmdown_ratio,
+    final_lr_frac=args.final_lr_frac,
+    train_loader=train_loader,
+    eval_fn=eval_fn if args.eval_every > 0 else None,
+)
 
-    if last_step:
-        break
+if start_step > 0:
+    trainer.state.global_step = start_step
 
-    # Training step
-    synchronize()
-    t0 = time.time()
-    for _ in range(grad_accum_steps):
-        loss = model(x, y)
-        train_loss_detach = loss.detach()
-        loss = loss / grad_accum_steps
-        loss.backward()
-        x, y = next(train_loader)
-
-    lrm = step_scheduler(optimizer, step, num_iterations, args.warmup_steps, args.warmdown_ratio, args.final_lr_frac)
-
-    if args.grad_clip > 0:
-        if hasattr(model, "clip_grad_norm_"):
-            model.clip_grad_norm_(args.grad_clip)
-        else:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-
-    optimizer.step()
-    model.zero_grad(set_to_none=True)
-    train_loss_f = train_loss_detach.item()
-    synchronize()
-    t1 = time.time()
-    dt = t1 - t0
-
-    ema_beta = 0.9
-    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
-    debiased = smooth_train_loss / (1 - ema_beta ** (step + 1))
-    if step > 10:
-        total_training_time += dt
-    tok_per_sec = int(total_batch_size / dt)
-    flops_per_sec = num_flops_per_token * total_batch_size / dt
-    mfu = 100 * flops_per_sec / (gpu_peak_flops * world_size)
-    pct = 100 * step / num_iterations
-
-    print0(
-        f"step {step:05d}/{num_iterations:05d} ({pct:.1f}%) | "
-        f"loss: {debiased:.4f} | lrm: {lrm:.3f} | "
-        f"dt: {dt * 1000:.1f}ms | tok/s: {tok_per_sec:,} | mfu: {mfu:.1f}%"
-    )
-    if step % 100 == 0:
-        wandb_run.log(
-            {
-                "step": step,
-                "train/loss": debiased,
-                "train/lrm": lrm,
-                "train/tok_per_sec": tok_per_sec,
-                "train/mfu": mfu,
-            }
-        )
-
-    first_step = step == 0 or (
-        args.resume_from and step == int(args.resume_from.split("_")[-1]) if args.resume_from else False
-    )
-    step += 1
-    if step == 1:
-        gc.collect()
-        gc.freeze()
-        gc.disable()
-    elif step % 5000 == 0:
-        gc.collect()
-
-print0(f"Peak memory: {get_max_memory() / 1024 / 1024:.1f}MiB")
-print0(f"Total training time: {total_training_time / 60:.2f}m")
-wandb_run.finish()
+trainer.train()
 compute_cleanup()
