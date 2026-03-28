@@ -383,32 +383,3 @@ class HuggingFaceTokenizer:
             raise RuntimeError("Missing assistant_start token in tokenizer")
         ids.append(assistant_start)
         return ids
-
-    def visualize_tokenization(
-        self,
-        ids: list[int],
-        mask: list[int],
-        with_token_id: bool = False,
-    ) -> str:
-        """Return an ANSI-colored string that visualises token supervision masks.
-
-        Args:
-            ids: List of token ids to visualise.
-            mask: Parallel supervision mask; 1 = supervised (green), 0 = unsupervised (red).
-            with_token_id: If True, append each token's integer id in grey.
-
-        Returns:
-            A pipe-delimited string of ANSI-colored token representations.
-        """
-        RED = "\033[91m"
-        GREEN = "\033[92m"
-        GRAY = "\033[90m"
-        RESET = "\033[0m"
-        parts = []
-        for token_id, mask_val in zip(ids, mask, strict=True):
-            token_str = self.decode([token_id])
-            color = GREEN if mask_val == 1 else RED
-            parts.append(f"{color}{token_str}{RESET}")
-            if with_token_id:
-                parts.append(f"{GRAY}({token_id}){RESET}")
-        return "|".join(parts)
