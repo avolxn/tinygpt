@@ -23,7 +23,7 @@ from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from tinygpt.config import GPTConfig
-from tinygpt.gpt import GPT
+from tinygpt.model import GPT
 
 logger = logging.getLogger(__name__)
 

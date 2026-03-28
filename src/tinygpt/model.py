@@ -32,7 +32,7 @@ import torch.nn.functional as F
 
 from tinygpt.attention import flash_attn_func, flash_attn_with_kvcache
 from tinygpt.config import GPTConfig
-from tinygpt.runtime import compute_dtype, print0
+from tinygpt.utils import compute_dtype, print0
 
 if TYPE_CHECKING:
     from tinygpt.engine import KVCache

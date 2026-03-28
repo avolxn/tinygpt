@@ -21,7 +21,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from tinygpt.runtime import compute_dtype
+from tinygpt.utils import compute_dtype
 
 logger = logging.getLogger(__name__)
 

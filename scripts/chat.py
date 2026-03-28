@@ -10,8 +10,8 @@ import argparse
 
 from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.engine import Engine
-from tinygpt.runtime import autodetect_device_type, compute_init
 from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.utils import autodetect_device_type, compute_init
 
 parser = argparse.ArgumentParser(description="Chat with tinygpt")
 parser.add_argument("--checkpoint", type=str, required=True, help="Path to fine-tuned checkpoint directory")

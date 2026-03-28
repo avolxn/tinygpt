@@ -30,9 +30,10 @@ from tasks.gsm8k import GSM8K
 from tinygpt.checkpoint import get_checkpoint_dir, load_checkpoint, save_checkpoint
 from tinygpt.config import GPTConfig, make_config
 from tinygpt.engine import Engine
-from tinygpt.gpt import GPT, Block
+from tinygpt.model import GPT, Block
 from tinygpt.optimizer import make_optimizer
-from tinygpt.runtime import (
+from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.utils import (
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
@@ -42,7 +43,6 @@ from tinygpt.runtime import (
     make_fsdp_mixed_precision,
     print0,
 )
-from tinygpt.tokenizer import HuggingFaceTokenizer
 
 parser = argparse.ArgumentParser(description="Reinforcement learning on GSM8K")
 # Logging

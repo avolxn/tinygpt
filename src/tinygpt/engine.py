@@ -15,7 +15,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from tinygpt.runtime import compute_dtype, get_model_device
+from tinygpt.utils import compute_dtype, get_model_device
 
 
 @contextmanager
