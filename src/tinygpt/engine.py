@@ -15,7 +15,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from tinygpt.runtime import COMPUTE_DTYPE, get_model_device
+from tinygpt.runtime import compute_dtype, get_model_device
 
 # ---------------------------------------------------------------------------
 # Calculator tool helpers (used by the chat engine)
@@ -23,7 +23,7 @@ from tinygpt.runtime import COMPUTE_DTYPE, get_model_device
 
 
 @contextmanager
-def _timeout(duration: int, formula: str) -> Generator[None, None, None]:
+def timeout(duration: int, formula: str) -> Generator[None, None, None]:
     def _handler(signum: int, frame: Any) -> None:
         raise TimeoutError(f"'{formula}': timed out after {duration}s")
 
@@ -35,9 +35,9 @@ def _timeout(duration: int, formula: str) -> Generator[None, None, None]:
         signal.alarm(0)
 
 
-def _eval_with_timeout(formula: str, max_time: int = 3) -> object:
+def eval_with_timeout(formula: str, max_time: int = 3) -> object:
     try:
-        with _timeout(max_time, formula):
+        with timeout(max_time, formula):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 return eval(formula, {"__builtins__": {}}, {})
@@ -52,7 +52,7 @@ def use_calculator(expr: str) -> object:
     if all(x in "0123456789*+-/.() " for x in expr):
         if "**" in expr:
             return None
-        return _eval_with_timeout(expr)
+        return eval_with_timeout(expr)
     allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'\"()._ "
     if not all(x in allowed for x in expr):
         return None
@@ -79,7 +79,7 @@ def use_calculator(expr: str) -> object:
         return None
     if ".count(" not in expr:
         return None
-    return _eval_with_timeout(expr)
+    return eval_with_timeout(expr)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ def sample_next_token(
 # ---------------------------------------------------------------------------
 
 
-class _RowState:
+class RowState:
     def __init__(self, tokens: list[int]) -> None:
         self.current_tokens = tokens
         self.forced_tokens: deque[int] = deque()
@@ -206,7 +206,7 @@ class Engine:
         """
         assert isinstance(tokens, list) and isinstance(tokens[0], int)
         device = get_model_device(self.model)
-        dtype = COMPUTE_DTYPE if device.type == "cuda" else torch.float32
+        dtype = compute_dtype if device.type == "cuda" else torch.float32
         rng = torch.Generator(device=device)
         rng.manual_seed(seed)
 
@@ -255,7 +255,7 @@ class Engine:
         kv_decode.prefill(kv_prefill)
         del kv_prefill
 
-        row_states = [_RowState(tokens.copy()) for _ in range(num_samples)]
+        row_states = [RowState(tokens.copy()) for _ in range(num_samples)]
         num_generated = 0
 
         while True:

@@ -28,16 +28,16 @@ from tinygpt.gpt import GPT
 logger = logging.getLogger(__name__)
 
 
-_MODEL_FILE = "model.safetensors"
-_OPTIM_FILE = "optimizer.pt"
-_META_FILE = "meta.json"
+model_filename = "model.safetensors"
+optim_filename = "optimizer.pt"
+meta_filename = "meta.json"
 
 
-def _is_fsdp(model: torch.nn.Module) -> bool:
+def is_fsdp(model: torch.nn.Module) -> bool:
     return isinstance(model, FSDP)
 
 
-def _fsdp_full_state_dict_ctx(model: torch.nn.Module) -> Any:
+def fsdp_full_state_dict_ctx(model: torch.nn.Module) -> Any:
     cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
     return FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg)
 
@@ -72,8 +72,8 @@ def save_checkpoint(
     # ------------------------------------------------------------------
     # Model state dict
     # ------------------------------------------------------------------
-    if _is_fsdp(model):
-        with _fsdp_full_state_dict_ctx(model):
+    if is_fsdp(model):
+        with fsdp_full_state_dict_ctx(model):
             state_dict = model.state_dict()
     else:
         state_dict = model.state_dict()
@@ -81,7 +81,7 @@ def save_checkpoint(
     # ------------------------------------------------------------------
     # Optimizer state dict
     # ------------------------------------------------------------------
-    if _is_fsdp(model):
+    if is_fsdp(model):
         optim_state = FSDP.full_optim_state_dict(model, optimizer, rank0_only=True)
     else:
         optim_state = optimizer.state_dict()
@@ -90,17 +90,17 @@ def save_checkpoint(
     # Write files (rank 0 only)
     # ------------------------------------------------------------------
     if rank == 0:
-        model_path = os.path.join(checkpoint_dir, _MODEL_FILE)
+        model_path = os.path.join(checkpoint_dir, model_filename)
         # safetensors requires contiguous fp32/bf16 tensors
         state_dict_cpu = {k: v.contiguous().cpu() for k, v in state_dict.items()}
         save_file(state_dict_cpu, model_path)
         logger.info(f"Saved model to: {model_path}")
 
-        optim_path = os.path.join(checkpoint_dir, _OPTIM_FILE)
+        optim_path = os.path.join(checkpoint_dir, optim_filename)
         torch.save(optim_state, optim_path)
         logger.info(f"Saved optimizer to: {optim_path}")
 
-        meta_path = os.path.join(checkpoint_dir, _META_FILE)
+        meta_path = os.path.join(checkpoint_dir, meta_filename)
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
         logger.info(f"Saved meta to: {meta_path}")
@@ -134,25 +134,25 @@ def load_checkpoint(
     Returns:
         The meta dict loaded from meta.json.
     """
-    meta_path = os.path.join(checkpoint_dir, _META_FILE)
+    meta_path = os.path.join(checkpoint_dir, meta_filename)
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
 
-    model_path = os.path.join(checkpoint_dir, _MODEL_FILE)
+    model_path = os.path.join(checkpoint_dir, model_filename)
     state_dict = load_file(model_path, device=str(device))
     # Strip torch.compile prefix if present
     state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
 
-    if _is_fsdp(model):
-        with _fsdp_full_state_dict_ctx(model):
+    if is_fsdp(model):
+        with fsdp_full_state_dict_ctx(model):
             model.load_state_dict(state_dict, strict=True, assign=True)
     else:
         model.load_state_dict(state_dict, strict=True, assign=True)
 
     if optimizer is not None:
-        optim_path = os.path.join(checkpoint_dir, _OPTIM_FILE)
+        optim_path = os.path.join(checkpoint_dir, optim_filename)
         try:
-            if _is_fsdp(model):
+            if is_fsdp(model):
                 full_optim = torch.load(optim_path, map_location="cpu", weights_only=False) if rank == 0 else None
                 sharded_optim = FSDP.scatter_full_optim_state_dict(full_optim, model)
                 optimizer.load_state_dict(sharded_optim)

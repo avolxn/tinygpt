@@ -23,7 +23,7 @@ from tinygpt.runtime import get_dist_info
 logger = logging.getLogger(__name__)
 
 
-def _document_batches(
+def document_batches(
     dataset_name: str,
     split: str,
     rank: int,
@@ -86,7 +86,7 @@ def tokenizing_distributed_data_loader_bestfit(
     _, rank, _, world_size = get_dist_info()
     hf_split = "validation" if split == "val" else split
 
-    batches = _document_batches(dataset_name, hf_split, rank, world_size, tokenizer_batch_size, text_field)
+    batches = document_batches(dataset_name, hf_split, rank, world_size, tokenizer_batch_size, text_field)
     bos_token = tokenizer.get_bos_token_id()
     doc_buffer: list[list[int]] = []
 

@@ -8,7 +8,6 @@ import torch
 from tinygpt.config import GPTConfig
 from tinygpt.gpt import GPT
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -111,8 +110,13 @@ def test_window_sizes_last_layer_full(tiny_config: GPTConfig) -> None:
     """The last layer always gets full context regardless of window_pattern."""
     for pattern in ("L", "SL", "SSSL"):
         config = GPTConfig(
-            sequence_len=64, vocab_size=256, n_layer=4,
-            n_head=2, n_kv_head=2, n_embd=64, window_pattern=pattern,
+            sequence_len=64,
+            vocab_size=256,
+            n_layer=4,
+            n_head=2,
+            n_kv_head=2,
+            n_embd=64,
+            window_pattern=pattern,
         )
         model = GPT(config)
         last_window = model.window_sizes[-1]

@@ -1,7 +1,7 @@
 """
 Hardware and process setup utilities for tinygpt.
 
-Covers: device detection, COMPUTE_DTYPE, FSDP mixed precision, distributed init,
+Covers: device detection, compute_dtype, FSDP mixed precision, distributed init,
 print0, MFU utilities. Nothing about the model.
 """
 
@@ -18,13 +18,13 @@ from torch.distributed.fsdp import MixedPrecision
 # Compute dtype
 # ---------------------------------------------------------------------------
 
-_DTYPE_MAP = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
+dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
 
 
-def _detect_compute_dtype() -> tuple[torch.dtype, str]:
+def detect_compute_dtype() -> tuple[torch.dtype, str]:
     env = os.environ.get("TINYGPT_DTYPE")
     if env is not None:
-        return _DTYPE_MAP[env], f"set via TINYGPT_DTYPE={env}"
+        return dtype_map[env], f"set via TINYGPT_DTYPE={env}"
     if torch.cuda.is_available():
         capability = torch.cuda.get_device_capability()
         if capability >= (8, 0):
@@ -35,7 +35,7 @@ def _detect_compute_dtype() -> tuple[torch.dtype, str]:
     return torch.float32, "auto-detected: no CUDA (CPU/MPS)"
 
 
-COMPUTE_DTYPE, COMPUTE_DTYPE_REASON = _detect_compute_dtype()
+compute_dtype, compute_dtype_reason = detect_compute_dtype()
 
 
 # ---------------------------------------------------------------------------
@@ -176,13 +176,13 @@ def compute_cleanup() -> None:
 # ---------------------------------------------------------------------------
 
 
-def make_fsdp_mixed_precision(compute_dtype: torch.dtype | None = None) -> Any:
+def make_fsdp_mixed_precision(override: torch.dtype | None = None) -> Any:
     """
     Return a MixedPrecision config suitable for FSDP wrapping.
 
-    Uses COMPUTE_DTYPE by default. On CPU/MPS returns None (FSDP not used there).
+    Uses compute_dtype by default.
     """
-    dtype = compute_dtype if compute_dtype is not None else COMPUTE_DTYPE
+    dtype = override if override is not None else compute_dtype
     return MixedPrecision(
         param_dtype=dtype,
         reduce_dtype=dtype,
@@ -206,7 +206,7 @@ class DummyWandb:
 
 
 # BF16 peak flops for known GPUs; first matching entry wins (most specific first)
-_PEAK_FLOPS_TABLE: tuple[tuple[list[str], float], ...] = (
+peak_flops_table: tuple[tuple[list[str], float], ...] = (
     (["gb200"], 2.5e15),
     (["grace blackwell"], 2.5e15),
     (["b200"], 2.25e15),
@@ -242,7 +242,7 @@ _PEAK_FLOPS_TABLE: tuple[tuple[list[str], float], ...] = (
 def get_peak_flops(device_name: str) -> float:
     """Return BF16 peak TFLOPS for a known GPU. Returns inf for unknown GPUs."""
     name = device_name.lower()
-    for patterns, flops in _PEAK_FLOPS_TABLE:
+    for patterns, flops in peak_flops_table:
         if all(p in name for p in patterns):
             return flops
     logger.warning(f"Peak flops undefined for: {device_name}, MFU will show as 0%")

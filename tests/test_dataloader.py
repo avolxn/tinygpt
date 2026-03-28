@@ -9,8 +9,6 @@ import pytest
 import torch
 
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -38,7 +36,6 @@ def make_in_memory_loader(tokenizer, docs, B, T, device="cpu"):
     A bestfit loader backed by a simple in-memory document list.
     Monkeypatches _document_batches to avoid network access.
     """
-    import tinygpt.dataloader as dl  # noqa: PLC0415
 
     bos = tokenizer.get_bos_token_id()
     row_capacity = T + 1
@@ -83,9 +80,7 @@ def make_in_memory_loader(tokenizer, docs, B, T, device="cpu"):
                     else:
                         si = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
                         doc = doc_buffer.pop(si)
-                        row_buffer[row_idx, pos : pos + remaining] = torch.tensor(
-                            doc[:remaining], dtype=torch.long
-                        )
+                        row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
                         pos += remaining
             cpu_inputs.copy_(row_buffer[:, :-1])
             cpu_targets.copy_(row_buffer[:, 1:])

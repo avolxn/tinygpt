@@ -20,9 +20,9 @@ Usage:
     python -m scripts.train_tokenizer --vocab-size 8192 --max-chars 10000000
 """
 
+import argparse
 import os
 import time
-import argparse
 
 import torch
 
@@ -30,22 +30,18 @@ from tinygpt.tokenizer import HuggingFaceTokenizer
 
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Train a BPE tokenizer")
-parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb",
-                    help="HF dataset identifier (ignored if --txt is given)")
-parser.add_argument("--split", type=str, default="train",
-                    help="Dataset split to train on")
-parser.add_argument("--text-field", type=str, default="text",
-                    help="Column name containing document text")
-parser.add_argument("--txt", type=str, default="",
-                    help="Local .txt file to train on (one document per line)")
-parser.add_argument("--max-chars", type=int, default=2_000_000_000,
-                    help="Maximum characters to train on (default: 2B)")
-parser.add_argument("--doc-cap", type=int, default=10_000,
-                    help="Maximum characters per document (default: 10k)")
-parser.add_argument("--vocab-size", type=int, default=32768,
-                    help="Vocabulary size (default: 32768 = 2^15)")
-parser.add_argument("--out-dir", type=str, default="out/tokenizer",
-                    help="Output directory for tokenizer.json and token_bytes.pt")
+parser.add_argument(
+    "--dataset", type=str, default="HuggingFaceFW/fineweb", help="HF dataset identifier (ignored if --txt is given)"
+)
+parser.add_argument("--split", type=str, default="train", help="Dataset split to train on")
+parser.add_argument("--text-field", type=str, default="text", help="Column name containing document text")
+parser.add_argument("--txt", type=str, default="", help="Local .txt file to train on (one document per line)")
+parser.add_argument("--max-chars", type=int, default=2_000_000_000, help="Maximum characters to train on (default: 2B)")
+parser.add_argument("--doc-cap", type=int, default=10_000, help="Maximum characters per document (default: 10k)")
+parser.add_argument("--vocab-size", type=int, default=32768, help="Vocabulary size (default: 32768 = 2^15)")
+parser.add_argument(
+    "--out-dir", type=str, default="out/tokenizer", help="Output directory for tokenizer.json and token_bytes.pt"
+)
 args = parser.parse_args()
 
 print(f"vocab_size:  {args.vocab_size:,}")
@@ -56,6 +52,7 @@ print(f"doc_cap:     {args.doc_cap:,}")
 # ---------------------------------------------------------------------------
 # Text iterator
 # ---------------------------------------------------------------------------
+
 
 def text_iterator():
     nchars = 0

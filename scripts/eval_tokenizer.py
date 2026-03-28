@@ -16,8 +16,7 @@ from tinygpt.tokenizer import HuggingFaceTokenizer
 
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Evaluate tokenizer compression")
-parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer",
-                    help="Directory containing tokenizer.json")
+parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer", help="Directory containing tokenizer.json")
 args = parser.parse_args()
 
 # ---------------------------------------------------------------------------

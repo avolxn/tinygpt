@@ -32,13 +32,13 @@ import torch.nn.functional as F
 
 from tinygpt.attention import flash_attn_func, flash_attn_with_kvcache
 from tinygpt.config import GPTConfig
-from tinygpt.runtime import COMPUTE_DTYPE, print0
+from tinygpt.runtime import compute_dtype, print0
 
 if TYPE_CHECKING:
     from tinygpt.engine import KVCache
 
-_QK_SCALE = 1.2  # post-QK-norm scale applied to queries and keys
-_SOFTCAP = 15.0  # logit soft-cap to prevent outlier logits
+qk_scale = 1.2  # post-QK-norm scale applied to queries and keys
+softcap = 15.0  # logit soft-cap to prevent outlier logits
 
 # ---------------------------------------------------------------------------
 # Primitives
@@ -132,8 +132,8 @@ class CausalSelfAttention(nn.Module):
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
-        q = q * _QK_SCALE
-        k = k * _QK_SCALE
+        q = q * qk_scale
+        k = k * qk_scale
 
         if kv_cache is None:
             y = flash_attn_func(q, k, v, causal=True, window_size=window_size)
@@ -275,10 +275,10 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
 
-        if COMPUTE_DTYPE != torch.float16:
-            self.wte.to(dtype=COMPUTE_DTYPE)
+        if compute_dtype != torch.float16:
+            self.wte.to(dtype=compute_dtype)
             for ve_mod in self.value_embeds.values():
-                ve_mod.to(dtype=COMPUTE_DTYPE)
+                ve_mod.to(dtype=compute_dtype)
 
     def _precompute_rotary_embeddings(
         self,
@@ -294,8 +294,8 @@ class GPT(nn.Module):
         t = torch.arange(seq_len, dtype=torch.float32, device=device)
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos = cos.to(COMPUTE_DTYPE)[None, :, None, :]
-        sin = sin.to(COMPUTE_DTYPE)[None, :, None, :]
+        cos = cos.to(compute_dtype)[None, :, None, :]
+        sin = sin.to(compute_dtype)[None, :, None, :]
         return cos, sin
 
     def _compute_window_sizes(self, config: GPTConfig) -> list[tuple[int, int]]:
@@ -372,7 +372,7 @@ class GPT(nn.Module):
         cos_sin = self.cos[:, T0 : T0 + T], self.sin[:, T0 : T0 + T]
 
         x = self.wte(idx)
-        x = x.to(COMPUTE_DTYPE)
+        x = x.to(compute_dtype)
         x = norm(x)
 
         # Smear: mix previous token's embedding into current position
@@ -415,7 +415,7 @@ class GPT(nn.Module):
         logits = self.lm_head(x)
         logits = logits[..., : self.config.vocab_size]
         logits = logits.float()
-        logits = _SOFTCAP * torch.tanh(logits / _SOFTCAP)
+        logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
             loss = F.cross_entropy(
