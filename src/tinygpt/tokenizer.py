@@ -100,7 +100,8 @@ class HuggingFaceTokenizer:
         bos = self.encode_special("<|bos|>")
         if bos is None:
             bos = self.encode_special("<|endoftext|>")
-        assert bos is not None, "Failed to find BOS token in tokenizer"
+        if bos is None:
+            raise RuntimeError("Failed to find BOS token in tokenizer")
         return bos
 
     # ------------------------------------------------------------------
@@ -120,7 +121,8 @@ class HuggingFaceTokenizer:
                 ids.append(prepend)
             else:
                 tok = self.encode_special(prepend)
-                assert tok is not None, f"Unknown special token: {prepend!r}"
+                if tok is None:
+                    raise ValueError(f"Unknown special token: {prepend!r}")
                 ids.append(tok)
         ids.extend(self.tokenizer.encode(text, add_special_tokens=False).ids)
         if append is not None:
@@ -128,7 +130,8 @@ class HuggingFaceTokenizer:
                 ids.append(append)
             else:
                 tok = self.encode_special(append)
-                assert tok is not None, f"Unknown special token: {append!r}"
+                if tok is None:
+                    raise ValueError(f"Unknown special token: {append!r}")
                 ids.append(tok)
         return ids
 
@@ -185,7 +188,8 @@ class HuggingFaceTokenizer:
         mask: list[int] = []
 
         def add_tokens(token_ids: list[int] | int | None, mask_val: int) -> None:
-            assert token_ids is not None, "Missing special token in tokenizer"
+            if token_ids is None:
+                raise RuntimeError("Missing special token in tokenizer")
             token_list = [token_ids] if isinstance(token_ids, int) else token_ids
             ids.extend(token_list)
             mask.extend([mask_val] * len(token_list))
@@ -215,11 +219,13 @@ class HuggingFaceTokenizer:
 
         for i, message in enumerate(messages):
             expected = "user" if i % 2 == 0 else "assistant"
-            assert message["role"] == expected, f"Message {i}: expected {expected}, got {message['role']}"
+            if message["role"] != expected:
+                raise ValueError(f"Message {i}: expected {expected}, got {message['role']}")
 
             content = message["content"]
             if message["role"] == "user":
-                assert isinstance(content, str), "User messages must be strings"
+                if not isinstance(content, str):
+                    raise TypeError("User messages must be strings")
                 add_tokens(user_start, 0)
                 add_tokens(self._encode_one(content), 0)
                 add_tokens(user_end, 0)
@@ -252,11 +258,13 @@ class HuggingFaceTokenizer:
         """Render conversation for RL / completion (no last assistant message)."""
         conversation = copy.deepcopy(conversation)
         messages = conversation["messages"]
-        assert messages[-1]["role"] == "assistant", "Last message must be from assistant"
+        if messages[-1]["role"] != "assistant":
+            raise ValueError("Last message must be from assistant")
         messages.pop()
         ids, _ = self.render_conversation(conversation)
         assistant_start = self.encode_special("<|assistant_start|>")
-        assert assistant_start is not None
+        if assistant_start is None:
+            raise RuntimeError("Missing assistant_start token in tokenizer")
         ids.append(assistant_start)
         return ids
 

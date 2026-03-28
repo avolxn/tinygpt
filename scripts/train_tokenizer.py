@@ -109,7 +109,8 @@ tokenizer.save(args.out_dir)
 
 test_text = "Hello world! This is a test.\nNumbers: 123, 4567\nUnicode: 你好 🌍"
 encoded = tokenizer.encode(test_text)
-assert tokenizer.decode(encoded) == test_text, "Encode/decode round-trip failed!"
+if tokenizer.decode(encoded) != test_text:
+    raise RuntimeError("Encode/decode round-trip failed!")
 print(f"Sanity check passed: {len(encoded)} tokens for {len(test_text)} chars")
 
 # ---------------------------------------------------------------------------

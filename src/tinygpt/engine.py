@@ -129,8 +129,10 @@ class KVCache:
 
     def prefill(self, other: "KVCache") -> None:
         """Copy KV state from a batch-1 prefill cache into this decode cache."""
-        assert self.get_pos() == 0
-        assert self.n_layers == other.n_layers
+        if self.get_pos() != 0:
+            raise RuntimeError("prefill() called on non-empty cache")
+        if self.n_layers != other.n_layers:
+            raise ValueError(f"Layer count mismatch: {self.n_layers} vs {other.n_layers}")
         other_pos = other.get_pos()
         self.k_cache[:, :, :other_pos, :, :] = other.k_cache[:, :, :other_pos, :, :]
         self.v_cache[:, :, :other_pos, :, :] = other.v_cache[:, :, :other_pos, :, :]
@@ -204,7 +206,8 @@ class Engine:
             token_column: list[int] of length num_samples
             token_masks:  list[int], 1=sampled, 0=forced (tool output)
         """
-        assert isinstance(tokens, list) and isinstance(tokens[0], int)
+        if not isinstance(tokens, list) or not tokens or not isinstance(tokens[0], int):
+            raise TypeError("tokens must be a non-empty list of ints")
         device = get_model_device(self.model)
         dtype = compute_dtype if device.type == "cuda" else torch.float32
         rng = torch.Generator(device=device)
@@ -219,7 +222,8 @@ class Engine:
         output_end = get_special("<|output_end|>")
         assistant_end = get_special("<|assistant_end|>")
         bos = self.tokenizer.get_bos_token_id()
-        assert output_start is not None and output_end is not None, "Tokenizer missing output delimiters"
+        if output_start is None or output_end is None:
+            raise RuntimeError("Tokenizer missing output delimiters")
 
         cfg: Any = self.model.config
         n_kv_head: int = cfg.n_kv_head

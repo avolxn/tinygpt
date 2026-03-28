@@ -77,7 +77,8 @@ def has_ve(layer_idx: int, n_layer: int) -> bool:
 
 
 def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    assert x.ndim == 4
+    if x.ndim != 4:
+        raise ValueError(f"Expected 4D tensor, got {x.ndim}D")
     d = x.shape[3] // 2
     x1, x2 = x[..., :d], x[..., d:]
     y1 = x1 * cos + x2 * sin
@@ -98,8 +99,10 @@ class CausalSelfAttention(nn.Module):
         self.n_kv_head = config.n_kv_head
         self.n_embd = config.n_embd
         self.head_dim = self.n_embd // self.n_head
-        assert self.n_embd % self.n_head == 0
-        assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
+        if self.n_embd % self.n_head != 0:
+            raise ValueError(f"n_embd ({self.n_embd}) must be divisible by n_head ({self.n_head})")
+        if self.n_kv_head > self.n_head or self.n_head % self.n_kv_head != 0:
+            raise ValueError(f"n_head ({self.n_head}) must be divisible by n_kv_head ({self.n_kv_head})")
         self.c_q = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
         self.c_k = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
@@ -125,7 +128,8 @@ class CausalSelfAttention(nn.Module):
 
         if ve is not None:
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
-            assert self.ve_gate is not None
+            if self.ve_gate is None:
+                raise RuntimeError("ve_gate is None but ve input was provided")
             gate = 3 * torch.sigmoid(self.ve_gate(x[..., : self.ve_gate_channels]))
             v = v + gate.unsqueeze(-1) * ve
 
@@ -301,7 +305,8 @@ class GPT(nn.Module):
     def _compute_window_sizes(self, config: GPTConfig) -> list[tuple[int, int]]:
         """Per-layer (left, right) window size tuples for flash attention."""
         pattern = config.window_pattern.upper()
-        assert all(c in "SL" for c in pattern), f"Invalid window_pattern: {pattern}"
+        if not all(c in "SL" for c in pattern):
+            raise ValueError(f"Invalid window_pattern: {pattern!r} (only 'S' and 'L' allowed)")
         long_window = config.sequence_len
         short_window = math.ceil(long_window / 4 / 128) * 128
         char_to_window = {"L": (long_window, 0), "S": (short_window, 0)}
@@ -367,7 +372,8 @@ class GPT(nn.Module):
     ) -> torch.Tensor:
         B, T = idx.size()
 
-        assert T <= self.cos.size(1), f"Sequence length {T} > rotary cache {self.cos.size(1)}"
+        if T > self.cos.size(1):
+            raise ValueError(f"Sequence length {T} > rotary cache {self.cos.size(1)}")
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = self.cos[:, T0 : T0 + T], self.sin[:, T0 : T0 + T]
 
@@ -379,7 +385,8 @@ class GPT(nn.Module):
         smear = self.smear_lambda.to(x.dtype)
         smear_ch = self.smear_gate.in_features
         if kv_cache is None:
-            assert T > 1, "Training forward pass requires T > 1"
+            if T <= 1:
+                raise ValueError("Training forward pass requires T > 1")
             gate = smear * torch.sigmoid(self.smear_gate(x[:, 1:, :smear_ch]))
             x = torch.cat([x[:, :1], x[:, 1:] + gate * x[:, :-1]], dim=1)
         else:
@@ -439,7 +446,8 @@ class GPT(nn.Module):
         seed: int = 42,
     ) -> Iterator[int]:
         """Naive autoregressive generation (no KV cache). Yields token ids."""
-        assert isinstance(tokens, list)
+        if not isinstance(tokens, list):
+            raise TypeError("tokens must be a list")
         device = self.get_device()
         rng = None
         if temperature > 0:
