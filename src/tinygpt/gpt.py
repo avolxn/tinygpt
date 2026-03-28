@@ -408,33 +408,6 @@ class GPT(nn.Module):
         """
         return self.wte.weight.device
 
-    def estimate_flops(self) -> int:
-        """Estimate FLOPs per token for both forward and backward passes.
-
-        Returns:
-            Approximate integer FLOPs per token.
-        """
-        nparams = sum(p.numel() for p in self.parameters())
-        value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())  # type: ignore[operator,misc]
-        nparams_exclude = (
-            self.wte.weight.numel()
-            + value_embeds_numel
-            + self.resid_lambdas.numel()
-            + self.x0_lambdas.numel()
-            + self.smear_gate.weight.numel()
-            + self.smear_lambda.numel()
-            + self.backout_lambda.numel()
-        )
-        n_head = self.config.n_head
-        head_dim = self.config.n_embd // self.config.n_head
-        seq_len = self.config.sequence_len
-        attn_flops = 0
-        for window_size in self.window_sizes:
-            window = window_size[0]
-            effective_seq = seq_len if window < 0 else min(window, seq_len)
-            attn_flops += 12 * n_head * head_dim * effective_seq
-        return 6 * (nparams - nparams_exclude) + attn_flops
-
     def num_scaling_params(self) -> dict[str, int]:
         """Return parameter counts broken down by component for scaling law analysis.
 
