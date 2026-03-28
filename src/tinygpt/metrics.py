@@ -20,7 +20,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
-from tinygpt.runtime import get_model_device
+from tinygpt.utils import get_model_device
 
 
 @torch.no_grad()

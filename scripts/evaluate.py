@@ -17,8 +17,8 @@ from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
 from tinygpt.engine import Engine
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
-from tinygpt.runtime import autodetect_device_type, compute_cleanup, compute_init, print0
 from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.utils import autodetect_device_type, compute_cleanup, compute_init, print0
 
 parser = argparse.ArgumentParser(description="Evaluate tinygpt model")
 parser.add_argument("--checkpoint", type=str, required=True, help="Path to checkpoint directory")

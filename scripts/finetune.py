@@ -21,9 +21,10 @@ from transformers import TrainingArguments
 from tinygpt.attention import flash_attn_available
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir
 from tinygpt.dataloader import sft_data_loader
-from tinygpt.gpt import Block
-from tinygpt.hf_trainer import TinyGPTTrainer
-from tinygpt.runtime import (
+from tinygpt.model import Block
+from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.trainer import TinyGPTTrainer
+from tinygpt.utils import (
     autodetect_device_type,
     compute_cleanup,
     compute_dtype,
@@ -32,7 +33,6 @@ from tinygpt.runtime import (
     make_fsdp_mixed_precision,
     print0,
 )
-from tinygpt.tokenizer import HuggingFaceTokenizer
 
 parser = argparse.ArgumentParser(description="Supervised fine-tuning")
 parser.add_argument("--checkpoint", type=str, required=True, help="Pre-trained checkpoint directory")

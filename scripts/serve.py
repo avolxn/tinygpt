@@ -26,8 +26,8 @@ from pydantic import BaseModel
 
 from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.engine import Engine
-from tinygpt.runtime import autodetect_device_type, compute_init
 from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.utils import autodetect_device_type, compute_init
 
 # Abuse prevention limits
 MAX_MESSAGES = 500

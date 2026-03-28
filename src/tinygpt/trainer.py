@@ -272,7 +272,7 @@ class SamplerCallback(TrainerCallback):
         if state.global_step % self._sample_every != 0:
             return
         from tinygpt.engine import Engine  # noqa: PLC0415
-        from tinygpt.runtime import print0  # noqa: PLC0415
+        from tinygpt.utils import print0  # noqa: PLC0415
 
         model.eval()
         engine = Engine(model, self._tokenizer)

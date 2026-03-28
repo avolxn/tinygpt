@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from tinygpt.config import GPTConfig
-from tinygpt.gpt import GPT
+from tinygpt.model import GPT
 
 
 @pytest.fixture()

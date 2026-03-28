@@ -18,7 +18,7 @@ from typing import Any
 import torch
 from datasets import load_dataset
 
-from tinygpt.runtime import get_dist_info
+from tinygpt.utils import get_dist_info
 
 logger = logging.getLogger(__name__)
 
