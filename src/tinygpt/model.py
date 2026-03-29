@@ -35,7 +35,7 @@ from tinygpt.config import GPTConfig
 from tinygpt.utils import compute_dtype, print0
 
 if TYPE_CHECKING:
-    from tinygpt.engine import KVCache
+    from tinygpt.kvcache import KVCache
 
 qk_scale = 1.2  # post-QK-norm scale applied to queries and keys
 softcap = 15.0  # logit soft-cap to prevent outlier logits
