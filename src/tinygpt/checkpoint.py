@@ -1,15 +1,12 @@
 """
-FSDP-aware checkpoint save/load.
+Checkpoint save/load in HuggingFace format.
 
-Model weights are stored with safetensors (no pickle).
-Optimizer state is stored with torch.save (still pickle, but isolated from weights).
-Meta-data is stored as plain JSON.
+Model weights: model.safetensors (via safetensors library, no pickle).
+Config: config.json (model architecture).
+Training metadata: training_args.json (step, learning rate, etc).
+Optimizer state: optimizer_state.pt (via torch.save, isolated from weights).
 
-Directory layout per checkpoint:
-    <checkpoint_dir>/
-        model.safetensors   — full model state dict (rank 0 only)
-        optimizer.pt        — full optimizer state dict (rank 0 only)
-        meta.json           — JSON metadata
+FSDP-aware: state dicts gathered to rank 0 before saving.
 """
 
 import json
@@ -28,8 +25,9 @@ from tinygpt.model import GPT
 logger = logging.getLogger(__name__)
 
 model_filename = "model.safetensors"
-optim_filename = "optimizer.pt"
-meta_filename = "meta.json"
+config_filename = "config.json"
+optim_filename = "optimizer_state.pt"
+training_args_filename = "training_args.json"
 
 
 def is_fsdp(model: torch.nn.Module) -> bool:
@@ -58,14 +56,27 @@ def fsdp_full_state_dict_ctx(model: torch.nn.Module) -> Any:
     return FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg)
 
 
+def get_checkpoint_dir(output_dir: str, run_name: str) -> str:
+    """Return the checkpoint subdirectory for a given run.
+
+    Args:
+        output_dir: Root output directory.
+        run_name: Name of the training run.
+
+    Returns:
+        Path to the checkpoint directory for this run.
+    """
+    return os.path.join(output_dir, "checkpoints", run_name)
+
+
 def save_checkpoint(
     checkpoint_dir: str,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-    meta: dict[str, Any],
+    training_args: dict[str, Any],
     rank: int = 0,
 ) -> None:
-    """Save model, optimizer and meta to checkpoint_dir.
+    """Save checkpoint in HuggingFace format.
 
     For FSDP models, state dicts are gathered to rank 0 only before saving.
     For non-FSDP models, only rank 0 writes (consistent behaviour in DDP-less runs).
@@ -74,7 +85,7 @@ def save_checkpoint(
         checkpoint_dir: Directory where checkpoint files will be written.
         model: FSDP-wrapped or plain GPT instance.
         optimizer: AdamW optimizer.
-        meta: JSON-serialisable metadata dict.
+        training_args: Dict with 'step', 'model_config', and other metadata.
         rank: This process's rank.
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -91,20 +102,29 @@ def save_checkpoint(
         optim_state = optimizer.state_dict()
 
     if rank == 0:
+        # Save model weights (safetensors format)
         model_path = os.path.join(checkpoint_dir, model_filename)
-        # safetensors requires contiguous fp32/bf16 tensors
         state_dict_cpu = {k: v.contiguous().cpu() for k, v in state_dict.items()}
         save_file(state_dict_cpu, model_path)
         logger.info(f"Saved model to: {model_path}")
 
+        # Save config.json (HuggingFace convention)
+        config_path = os.path.join(checkpoint_dir, config_filename)
+        model_config = training_args.get("model_config", {})
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(model_config, f, indent=2)
+        logger.info(f"Saved config to: {config_path}")
+
+        # Save training arguments / metadata
+        args_path = os.path.join(checkpoint_dir, training_args_filename)
+        with open(args_path, "w", encoding="utf-8") as f:
+            json.dump(training_args, f, indent=2)
+        logger.info(f"Saved training args to: {args_path}")
+
+        # Save optimizer state (torch format)
         optim_path = os.path.join(checkpoint_dir, optim_filename)
         torch.save(optim_state, optim_path)
         logger.info(f"Saved optimizer to: {optim_path}")
-
-        meta_path = os.path.join(checkpoint_dir, meta_filename)
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2)
-        logger.info(f"Saved meta to: {meta_path}")
 
 
 def load_checkpoint(
@@ -127,15 +147,24 @@ def load_checkpoint(
         rank: This process's rank.
 
     Returns:
-        The meta dict loaded from meta.json.
+        Dict with loaded training_args (step, model_config, etc.).
     """
-    meta_path = os.path.join(checkpoint_dir, meta_filename)
-    with open(meta_path, encoding="utf-8") as f:
-        meta = json.load(f)
+    # Load training args
+    training_args: dict[str, Any] = {}
+    args_path = os.path.join(checkpoint_dir, training_args_filename)
+    if os.path.exists(args_path):
+        with open(args_path, encoding="utf-8") as f:
+            training_args = json.load(f)
+    else:
+        # Fallback for old format (meta.json)
+        meta_path = os.path.join(checkpoint_dir, "meta.json")
+        if os.path.exists(meta_path):
+            with open(meta_path, encoding="utf-8") as f:
+                training_args = json.load(f)
 
+    # Load model weights
     model_path = os.path.join(checkpoint_dir, model_filename)
     state_dict = load_file(model_path, device=str(device))
-    # Strip torch.compile prefix if present
     state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
 
     if is_fsdp(model):
@@ -144,6 +173,7 @@ def load_checkpoint(
     else:
         model.load_state_dict(state_dict, strict=True, assign=True)
 
+    # Load optimizer state
     if optimizer is not None:
         optim_path = os.path.join(checkpoint_dir, optim_filename)
         try:
@@ -157,20 +187,7 @@ def load_checkpoint(
         except FileNotFoundError:
             logger.warning(f"Optimizer checkpoint not found at {optim_path}, skipping")
 
-    return meta  # type: ignore[no-any-return]
-
-
-def get_checkpoint_dir(output_dir: str, run_name: str) -> str:
-    """Return the checkpoint subdirectory for a given run.
-
-    Args:
-        output_dir: Root output directory.
-        run_name: Name of the training run.
-
-    Returns:
-        Path to the checkpoint directory for this run.
-    """
-    return os.path.join(output_dir, "checkpoints", run_name)
+    return training_args
 
 
 def build_model_from_checkpoint(
@@ -186,25 +203,35 @@ def build_model_from_checkpoint(
         phase: Either 'eval' (model.eval()) or 'train' (model.train()).
 
     Returns:
-        A (model, meta) tuple with the model placed on device and meta.json
-        loaded as a dict.
+        A (model, training_args) tuple with the model placed on device and
+        training_args dict loaded from checkpoint metadata.
     """
-    meta_path = os.path.join(checkpoint_dir, "meta.json")
-    with open(meta_path, encoding="utf-8") as f:
-        meta = json.load(f)
+    # Load config
+    config_path = os.path.join(checkpoint_dir, config_filename)
+    if os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            config_kwargs = json.load(f)
+    else:
+        # Fallback for old format
+        meta_path = os.path.join(checkpoint_dir, "meta.json")
+        if os.path.exists(meta_path):
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+                config_kwargs = meta["model_config"]
+        else:
+            raise FileNotFoundError(f"No config found in {checkpoint_dir}")
 
-    config_kwargs = meta["model_config"]
     config = GPTConfig(**config_kwargs)
 
     with torch.device("meta"):
         model = GPT(config)
     model.to_empty(device=device)
     model.init_weights()
-    load_checkpoint(checkpoint_dir, model, optimizer=None, device=device)
+    training_args = load_checkpoint(checkpoint_dir, model, optimizer=None, device=device)
 
     if phase == "eval":
         model.eval()
     else:
         model.train()
 
-    return model, meta
+    return model, training_args
