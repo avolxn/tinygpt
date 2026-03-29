@@ -23,7 +23,7 @@ from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir
 from tinygpt.dataloader import sft_data_loader
 from tinygpt.model import Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.trainer import TinyGPTTrainer
+from tinygpt.train import TinyGPTTrainer
 from tinygpt.utils import (
     autodetect_device_type,
     compute_cleanup,

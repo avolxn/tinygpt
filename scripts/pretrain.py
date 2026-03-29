@@ -33,7 +33,7 @@ from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import GPT, Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.trainer import SamplerCallback, TinyGPTTrainer
+from tinygpt.train import SamplerCallback, TinyGPTTrainer
 from tinygpt.utils import (
     autodetect_device_type,
     compute_cleanup,

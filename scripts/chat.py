@@ -9,7 +9,7 @@ Usage:
 import argparse
 
 from tinygpt.checkpoint import build_model_from_checkpoint
-from tinygpt.engine import Engine
+from tinygpt.inference import Engine
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.utils import autodetect_device_type, compute_init
 
