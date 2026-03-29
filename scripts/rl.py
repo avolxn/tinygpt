@@ -29,7 +29,7 @@ from tasks.gsm8k import GSM8K
 
 from tinygpt.checkpoint import get_checkpoint_dir, load_checkpoint, save_checkpoint
 from tinygpt.config import GPTConfig, make_config
-from tinygpt.engine import Engine
+from tinygpt.inference import Engine
 from tinygpt.model import GPT, Block
 from tinygpt.optimizer import make_optimizer
 from tinygpt.tokenizer import HuggingFaceTokenizer
