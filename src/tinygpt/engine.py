@@ -142,11 +142,6 @@ class KVCache:
         self.cache_seqlens = torch.zeros(batch_size, dtype=torch.int32, device=device)
         self.prev_embedding: torch.Tensor | None = None
 
-    def reset(self) -> None:
-        """Reset all sequence positions to zero, clearing cached KV state."""
-        self.cache_seqlens.zero_()
-        self.prev_embedding = None
-
     def get_pos(self) -> int:
         """Return the current fill position (number of tokens already cached).
 

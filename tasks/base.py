@@ -151,49 +151,6 @@ class TaskMixture(Task):
         return self.tasks[task_idx][local_idx]
 
 
-class TaskSequence(Task):
-    """Sequential concatenation of multiple Task objects."""
-
-    def __init__(self, tasks: list[Task], **kwargs: Any) -> None:
-        """Initialise the sequence from a list of tasks.
-
-        Args:
-            tasks: List of Task objects to concatenate in order.
-            **kwargs: Forwarded to Task.__init__ (start, stop, step).
-        """
-        super().__init__(**kwargs)
-        self.tasks = tasks
-        self.lengths = [len(t) for t in tasks]
-        self.num_conversations = sum(self.lengths)
-
-    def num_examples(self) -> int:
-        """Return the total number of examples across all tasks in sequence.
-
-        Returns:
-            Sum of all task lengths.
-        """
-        return self.num_conversations
-
-    def get_example(self, index: int) -> dict[str, Any]:
-        """Return the example at a physical index in the concatenated sequence.
-
-        Args:
-            index: Physical index into the concatenated sequence.
-
-        Returns:
-            The conversation dict from the appropriate sub-task.
-
-        Raises:
-            IndexError: If index is out of range.
-        """
-        assert 0 <= index < self.num_conversations
-        for task_idx, task_len in enumerate(self.lengths):
-            if index < task_len:
-                return self.tasks[task_idx][index]
-            index -= task_len
-        raise IndexError(f"Index out of range: {index}")
-
-
 def render_mc(question: str, letters: tuple[str, ...] | list[str], choices: list[str]) -> str:
     """Render a multiple-choice question in the standard tinygpt format.
 
