@@ -8,6 +8,7 @@ print0, MFU utilities. Nothing about the model.
 import logging
 import os
 import re
+import urllib.request
 from typing import Any
 
 import torch
@@ -283,3 +284,49 @@ def get_peak_flops(device_name: str) -> float:
             return flops
     logger.warning(f"Peak flops undefined for: {device_name}, MFU will show as 0%")
     return float("inf")
+
+
+def get_cache_dir() -> str:
+    """Return the tinygpt cache directory, creating it if necessary.
+
+    Returns:
+        Absolute path to ~/.cache/tinygpt.
+    """
+    path = os.path.join(os.path.expanduser("~"), ".cache", "tinygpt")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def download_file_with_lock(url: str, filename: str) -> str:
+    """Download a file from a URL into the tinygpt cache directory.
+
+    Safe for concurrent callers: uses a lock file so only one process
+    downloads at a time; all others wait and reuse the cached copy.
+
+    Args:
+        url: URL to download from.
+        filename: Local filename to save as (relative to the cache dir).
+
+    Returns:
+        Absolute path to the downloaded file.
+    """
+    from filelock import FileLock  # noqa: PLC0415
+
+    cache_dir = get_cache_dir()
+    file_path = os.path.join(cache_dir, filename)
+    lock_path = file_path + ".lock"
+
+    if os.path.exists(file_path):
+        return file_path
+
+    with FileLock(lock_path):
+        if os.path.exists(file_path):
+            return file_path
+        print(f"Downloading {url} ...")
+        with urllib.request.urlopen(url) as response:
+            content = response.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+        print(f"Saved to {file_path}")
+
+    return file_path
