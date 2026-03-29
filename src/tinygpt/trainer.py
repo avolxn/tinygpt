@@ -195,7 +195,7 @@ class TinyGPTTrainer(Trainer):
         return prefixed
 
     def save_model(self, output_dir: str | None = None, _internal_call: bool = False) -> None:
-        """Save checkpoint using tinygpt's safetensors format.
+        """Save checkpoint in HuggingFace format (safetensors + config.json).
 
         Args:
             output_dir: Directory to save the checkpoint. Defaults to
