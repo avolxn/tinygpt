@@ -65,7 +65,22 @@ parser.add_argument("--eval-every", type=int, default=200)
 parser.add_argument("--out-dir", type=str, default="out")
 parser.add_argument("--run-name", type=str, default="sft")
 # Task mixture
-parser.add_argument("--tasks", type=str, default="mmlu,gsm8k")
+parser.add_argument(
+    "--tasks",
+    type=str,
+    default="smoltalk,mmlu,gsm8k,spellingbee",
+    help="Comma-separated task groups: smoltalk,mmlu,gsm8k,spellingbee,identity",
+)
+parser.add_argument(
+    "--identity-conversations",
+    type=str,
+    default="",
+    help="Path to identity_conversations.jsonl (used when 'identity' in --tasks)",
+)
+parser.add_argument("--mmlu-epochs", type=int, default=3)
+parser.add_argument("--gsm8k-epochs", type=int, default=4)
+parser.add_argument("--spelling-size", type=int, default=80000)
+parser.add_argument("--simple-spelling-size", type=int, default=200000)
 args = parser.parse_args()
 user_config = vars(args).copy()
 
@@ -100,21 +115,39 @@ if device_type == "cuda" and is_dist:
         device_id=local_rank,
     )
 
+from tasks.base import TaskMixture  # noqa: E402, PLC0415
+
 task_names = {t.strip() for t in args.tasks.split(",")}
 task_list = []
+
+if "smoltalk" in task_names:
+    from tasks.smoltalk import SmolTalk  # noqa: PLC0415
+
+    task_list.append(SmolTalk(split="train"))
+
+if "identity" in task_names and args.identity_conversations:
+    from tasks.customjson import CustomJSON  # noqa: PLC0415
+
+    task_list += [CustomJSON(filepath=args.identity_conversations)] * 2
+
 if "mmlu" in task_names:
     from tasks.mmlu import MMLU  # noqa: PLC0415
 
-    task_list.append(MMLU(subset="all", split="auxiliary_train"))
+    task_list += [MMLU(subset="all", split="auxiliary_train")] * args.mmlu_epochs
+
 if "gsm8k" in task_names:
     from tasks.gsm8k import GSM8K  # noqa: PLC0415
 
-    task_list.append(GSM8K(subset="main", split="train"))
+    task_list += [GSM8K(subset="main", split="train")] * args.gsm8k_epochs
+
+if "spellingbee" in task_names:
+    from tasks.spellingbee import SimpleSpelling, SpellingBee  # noqa: PLC0415
+
+    task_list.append(SimpleSpelling(size=args.simple_spelling_size, split="train"))
+    task_list.append(SpellingBee(size=args.spelling_size, split="train"))
 
 if not task_list:
     raise ValueError(f"No valid tasks found in: {args.tasks}")
-
-from tasks.base import TaskMixture  # noqa: E402, PLC0415
 
 task = TaskMixture(task_list)
 print0(f"Task mixture: {len(task)} examples from {task_names}")
