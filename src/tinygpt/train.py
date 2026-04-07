@@ -198,7 +198,7 @@ class TinyGPTTrainer(Trainer):
         return prefixed
 
     def save_model(self, output_dir: str | None = None, _internal_call: bool = False) -> None:
-        """Save checkpoint in HuggingFace format (safetensors + config.json).
+        """Save checkpoint in nanochat format (model_*.pt + meta_*.json + optim_*_rank0.pt).
 
         Args:
             output_dir: Directory to save the checkpoint. Defaults to
