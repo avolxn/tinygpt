@@ -6,6 +6,11 @@ Metadata:          meta_{step:06d}.json   (model_config + training args)
 Optimizer state:   optim_{step:06d}_rank{rank}.pt
 
 FSDP-aware: model state dict and optimizer state gathered to rank 0 before saving.
+
+State dict key mapping (tinygpt flat layout → nanochat nested layout):
+  wte.*  → transformer.wte.*
+  h.*    → transformer.h.*
+  (all other keys unchanged)
 """
 
 import glob
@@ -25,6 +30,49 @@ from tinygpt.model import GPT
 logger = logging.getLogger(__name__)
 
 _CKPT_RE = re.compile(r"model_(\d+)\.pt$")
+
+# Keys that live directly under GPT (flat tinygpt layout) and need the
+# "transformer." prefix to match nanochat's nested ModuleDict layout.
+_TRANSFORMER_PREFIXES = ("wte.", "h.")
+
+
+def _to_nanochat_keys(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Remap flat tinygpt state dict keys to nanochat's nested layout.
+
+    Args:
+        state_dict: State dict with tinygpt-style keys.
+
+    Returns:
+        New dict with keys compatible with nanochat checkpoints.
+    """
+    out: dict[str, torch.Tensor] = {}
+    for k, v in state_dict.items():
+        if any(k.startswith(p) for p in _TRANSFORMER_PREFIXES):
+            out[f"transformer.{k}"] = v
+        else:
+            out[k] = v
+    return out
+
+
+def _from_nanochat_keys(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Strip the "transformer." prefix added by nanochat back to tinygpt flat layout.
+
+    Args:
+        state_dict: State dict with nanochat-style keys.
+
+    Returns:
+        New dict with flat tinygpt-compatible keys.
+    """
+    prefix = "transformer."
+    out: dict[str, torch.Tensor] = {}
+    for k, v in state_dict.items():
+        if k.startswith(prefix):
+            stripped = k[len(prefix):]
+            if any(stripped.startswith(p) for p in _TRANSFORMER_PREFIXES):
+                out[stripped] = v
+                continue
+        out[k] = v
+    return out
 
 
 def is_fsdp(model: torch.nn.Module) -> bool:
@@ -122,6 +170,8 @@ def save_checkpoint(
         state_dict = model.state_dict()
         optim_state = optimizer.state_dict()
 
+    state_dict = _to_nanochat_keys(state_dict)
+
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -168,6 +218,7 @@ def load_checkpoint(
     model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
     state_dict: dict[str, torch.Tensor] = torch.load(model_path, map_location=device, weights_only=True)
     state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
+    state_dict = _from_nanochat_keys(state_dict)
 
     if is_fsdp(model):
         with fsdp_full_state_dict_ctx(model):
