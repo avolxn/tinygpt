@@ -198,30 +198,28 @@ class TinyGPTTrainer(Trainer):
         return prefixed
 
     def save_model(self, output_dir: str | None = None, _internal_call: bool = False) -> None:
-        """Save checkpoint in HuggingFace format (safetensors + config.json).
+        """Save checkpoint in nanochat format (model_*.pt + meta_*.json + optim_*_rank{rank}.pt).
 
         Args:
             output_dir: Directory to save the checkpoint. Defaults to
                 self.args.output_dir.
             _internal_call: Ignored; present for API compatibility.
         """
-
         if output_dir is None:
             output_dir = self.args.output_dir
         assert output_dir is not None
         assert self.model is not None
         assert self.optimizer is not None
+        step = self.state.global_step
         inner: Any = self.model.module if hasattr(self.model, "module") else self.model
         config_dict: dict[str, Any] = asdict(inner.config) if hasattr(inner, "config") else {}
         rank = self.args.local_rank if self.args.local_rank >= 0 else 0
         save_checkpoint(
             output_dir,
-            self.model,
-            self.optimizer,
-            {
-                "step": self.state.global_step,
-                "model_config": config_dict,
-            },
+            step,
+            self.model.state_dict(),
+            self.optimizer.state_dict(),
+            {"step": step, "model_config": config_dict},
             rank=rank,
         )
 
