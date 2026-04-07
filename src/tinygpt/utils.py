@@ -13,6 +13,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+from filelock import FileLock
 from torch.distributed.fsdp import MixedPrecision
 
 dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
@@ -228,44 +229,43 @@ class DummyWandb:
 
     def log(self, *args: object, **kwargs: object) -> None:
         """Silently ignore log calls."""
-        pass
+        ...
 
     def finish(self) -> None:
         """Silently ignore finish calls."""
-        pass
+        ...
 
 
-# BF16 peak flops for known GPUs; first matching entry wins (most specific first)
-peak_flops_table: tuple[tuple[list[str], float], ...] = (
-    (["gb200"], 2.5e15),
-    (["grace blackwell"], 2.5e15),
-    (["b200"], 2.25e15),
-    (["b100"], 1.8e15),
-    (["h200", "nvl"], 836e12),
-    (["h200", "pcie"], 836e12),
-    (["h200"], 989e12),
-    (["h100", "nvl"], 835e12),
-    (["h100", "pcie"], 756e12),
-    (["h100"], 989e12),
-    (["h800", "nvl"], 989e12),
-    (["h800"], 756e12),
-    (["a100"], 312e12),
-    (["a800"], 312e12),
-    (["a40"], 149.7e12),
-    (["a30"], 165e12),
-    (["l40s"], 362e12),
-    (["l40-s"], 362e12),
-    (["l40 s"], 362e12),
-    (["l4"], 121e12),
-    (["mi355"], 2.5e15),
-    (["mi325"], 1.3074e15),
-    (["mi300x"], 1.3074e15),
-    (["mi300a"], 980.6e12),
-    (["mi250x"], 383e12),
-    (["mi250"], 362.1e12),
-    (["5090"], 209.5e12),
-    (["4090"], 165.2e12),
-    (["3090"], 71e12),
+peak_flops_table: tuple[tuple[frozenset[str], float], ...] = (
+    (frozenset({"gb200"}), 2.5e15),
+    (frozenset({"grace blackwell"}), 2.5e15),
+    (frozenset({"b200"}), 2.25e15),
+    (frozenset({"b100"}), 1.8e15),
+    (frozenset({"h200", "nvl"}), 836e12),
+    (frozenset({"h200", "pcie"}), 836e12),
+    (frozenset({"h200"}), 989e12),
+    (frozenset({"h100", "nvl"}), 835e12),
+    (frozenset({"h100", "pcie"}), 756e12),
+    (frozenset({"h100"}), 989e12),
+    (frozenset({"h800", "nvl"}), 989e12),
+    (frozenset({"h800"}), 756e12),
+    (frozenset({"a100"}), 312e12),
+    (frozenset({"a800"}), 312e12),
+    (frozenset({"a40"}), 149.7e12),
+    (frozenset({"a30"}), 165e12),
+    (frozenset({"l40s"}), 362e12),
+    (frozenset({"l40-s"}), 362e12),
+    (frozenset({"l40 s"}), 362e12),
+    (frozenset({"l4"}), 121e12),
+    (frozenset({"mi355"}), 2.5e15),
+    (frozenset({"mi325"}), 1.3074e15),
+    (frozenset({"mi300x"}), 1.3074e15),
+    (frozenset({"mi300a"}), 980.6e12),
+    (frozenset({"mi250x"}), 383e12),
+    (frozenset({"mi250"}), 362.1e12),
+    (frozenset({"5090"}), 209.5e12),
+    (frozenset({"4090"}), 165.2e12),
+    (frozenset({"3090"}), 71e12),
 )
 
 
@@ -310,8 +310,6 @@ def download_file_with_lock(url: str, filename: str) -> str:
     Returns:
         Absolute path to the downloaded file.
     """
-    from filelock import FileLock  # noqa: PLC0415
-
     cache_dir = get_cache_dir()
     file_path = os.path.join(cache_dir, filename)
     lock_path = file_path + ".lock"
