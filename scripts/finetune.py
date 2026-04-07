@@ -68,8 +68,8 @@ parser.add_argument("--run-name", type=str, default="sft")
 parser.add_argument(
     "--tasks",
     type=str,
-    default="smoltalk,mmlu,gsm8k,spellingbee",
-    help="Comma-separated task groups: smoltalk,mmlu,gsm8k,spellingbee,identity",
+    default="smoltalk,mmlu,gsm8k",
+    help="Comma-separated task groups: smoltalk,mmlu,gsm8k,identity",
 )
 parser.add_argument(
     "--identity-conversations",
@@ -79,8 +79,6 @@ parser.add_argument(
 )
 parser.add_argument("--mmlu-epochs", type=int, default=3)
 parser.add_argument("--gsm8k-epochs", type=int, default=4)
-parser.add_argument("--spelling-size", type=int, default=80000)
-parser.add_argument("--simple-spelling-size", type=int, default=200000)
 args = parser.parse_args()
 user_config = vars(args).copy()
 
@@ -139,12 +137,6 @@ if "gsm8k" in task_names:
     from tasks.gsm8k import GSM8K  # noqa: PLC0415
 
     task_list += [GSM8K(subset="main", split="train")] * args.gsm8k_epochs
-
-if "spellingbee" in task_names:
-    from tasks.spellingbee import SimpleSpelling, SpellingBee  # noqa: PLC0415
-
-    task_list.append(SimpleSpelling(size=args.simple_spelling_size, split="train"))
-    task_list.append(SpellingBee(size=args.spelling_size, split="train"))
 
 if not task_list:
     raise ValueError(f"No valid tasks found in: {args.tasks}")
