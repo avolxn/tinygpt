@@ -547,8 +547,6 @@ class GPT(nn.Module):
         Raises:
             TypeError: If tokens is not a list.
         """
-        if not isinstance(tokens, list):
-            raise TypeError("tokens must be a list")
         device = self.get_device()
         rng = None
         if temperature > 0:
