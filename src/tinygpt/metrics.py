@@ -52,16 +52,11 @@ def evaluate_bpb(
         loss2d = loss2d.view(-1)
         y = y.view(-1)
 
-        if (y.int() < 0).any():
-            valid = y >= 0
-            y_safe = torch.where(valid, y, torch.zeros_like(y))
-            num_bytes2d = torch.where(valid, token_bytes[y_safe], torch.zeros_like(y, dtype=token_bytes.dtype))
-            total_nats += (loss2d * (num_bytes2d > 0)).sum()
-            total_bytes += num_bytes2d.sum()
-        else:
-            num_bytes2d = token_bytes[y]
-            total_nats += (loss2d * (num_bytes2d > 0)).sum()
-            total_bytes += num_bytes2d.sum()
+        valid = y >= 0
+        y_safe = torch.where(valid, y, torch.zeros_like(y))
+        num_bytes2d = torch.where(valid, token_bytes[y_safe], torch.zeros_like(y, dtype=token_bytes.dtype))
+        total_nats += (loss2d * (num_bytes2d > 0)).sum()
+        total_bytes += num_bytes2d.sum()
 
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     if world_size > 1:
