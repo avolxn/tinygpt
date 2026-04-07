@@ -114,27 +114,6 @@ def test_render_conversation_mask_assistant_only(tokenizer: HuggingFaceTokenizer
             assert mask[i] == 0, f"User token at position {i} should have mask=0"
 
 
-def test_render_conversation_system_message(tokenizer: HuggingFaceTokenizer) -> None:
-    """System messages are wrapped in system_start/system_end special tokens."""
-    conv = {
-        "messages": [
-            {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "Hi"},
-            {"role": "assistant", "content": "Hello!"},
-        ]
-    }
-    ids, mask = tokenizer.render_conversation(conv)
-    assert len(ids) > 0
-    system_start = tokenizer.encode_special("<|system_start|>")
-    system_end = tokenizer.encode_special("<|system_end|>")
-    assert system_start in ids, "system_start token must appear in output"
-    assert system_end in ids, "system_end token must appear in output"
-    # System tokens must not be supervised
-    for pos, tok in enumerate(ids):
-        if tok in (system_start, system_end):
-            assert mask[pos] == 0, "System delimiter must have mask=0"
-
-
 def test_render_conversation_max_tokens(tokenizer: HuggingFaceTokenizer) -> None:
     """Output is truncated to max_tokens."""
     conv = {

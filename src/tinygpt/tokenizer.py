@@ -19,8 +19,6 @@ from tokenizers.trainers import BpeTrainer
 
 SPECIAL_TOKENS = [
     "<|bos|>",
-    "<|system_start|>",
-    "<|system_end|>",
     "<|user_start|>",
     "<|user_end|>",
     "<|assistant_start|>",
@@ -262,8 +260,8 @@ class HuggingFaceTokenizer:
 
         Args:
             conversation: Dict with a 'messages' key containing a list of
-                role/content dicts. Roles: 'system', 'user', or 'assistant'.
-                Content is a string for system/user messages; a string or list
+                role/content dicts. Roles: 'user' or 'assistant'.
+                Content is a string for user messages; a string or list
                 of typed parts for assistant messages.
             max_tokens: Truncate output to at most this many tokens.
 
@@ -299,8 +297,6 @@ class HuggingFaceTokenizer:
         messages = conversation["messages"]
 
         bos = self.get_bos_token_id()
-        system_start = self.encode_special("<|system_start|>")
-        system_end = self.encode_special("<|system_end|>")
         user_start = self.encode_special("<|user_start|>")
         user_end = self.encode_special("<|user_end|>")
         assistant_start = self.encode_special("<|assistant_start|>")
@@ -311,13 +307,6 @@ class HuggingFaceTokenizer:
         output_end = self.encode_special("<|output_end|>")
 
         add_tokens(bos, 0)
-
-        # Strip optional leading system message
-        if messages and messages[0]["role"] == "system":
-            add_tokens(system_start, 0)
-            add_tokens(self._encode_one(messages[0]["content"]), 0)
-            add_tokens(system_end, 0)
-            messages = messages[1:]
 
         for i, message in enumerate(messages):
             expected = "user" if i % 2 == 0 else "assistant"

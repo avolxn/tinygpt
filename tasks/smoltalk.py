@@ -50,10 +50,10 @@ class SmolTalk(Task):
         """
         row = self.ds[index]
         messages: list[dict[str, str]] = row["messages"]
-        first = messages[0]
-        rest = messages[1:] if first["role"] == "system" else messages
-        assert len(rest) >= 2, "SmolTalk messages must have at least 2 non-system messages"
-        for i, msg in enumerate(rest):
+        if messages and messages[0]["role"] == "system":
+            messages = messages[1:]
+        assert len(messages) >= 2, "SmolTalk messages must have at least 2 messages"
+        for i, msg in enumerate(messages):
             expected = "user" if i % 2 == 0 else "assistant"
             assert msg["role"] == expected, f"Message {i} role {msg['role']!r} != {expected!r}"
             assert isinstance(msg["content"], str), f"Message {i} content must be a string"
