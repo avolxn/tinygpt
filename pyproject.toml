@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "avolxn", email = "vladislav.eldashov@gmail.com" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "torch>=2.4.0",
     "tokenizers>=0.21.0",
@@ -42,7 +42,7 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 src = ["src"]
 
 [tool.ruff.lint]
@@ -50,7 +50,7 @@ select = ["E", "W", "F", "B", "I", "UP"]
 ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 ignore_missing_imports = true
 pretty = true
