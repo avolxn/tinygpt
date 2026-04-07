@@ -219,7 +219,6 @@ if "chat" in eval_modes:
     from tasks.gsm8k import GSM8K  # noqa: PLC0415
     from tasks.humaneval import HumanEval  # noqa: PLC0415
     from tasks.mmlu import MMLU  # noqa: PLC0415
-    from tasks.spellingbee import SpellingBee  # noqa: PLC0415
 
     ALL_TASKS: dict[str, Any] = {
         "ARC-Easy": partial(ARC, subset="ARC-Easy", split="test"),
@@ -227,7 +226,6 @@ if "chat" in eval_modes:
         "MMLU": partial(MMLU, subset="all", split="test"),
         "GSM8K": partial(GSM8K, subset="main", split="test"),
         "HumanEval": HumanEval,
-        "SpellingBee": partial(SpellingBee, size=256, split="test"),
     }
     BASELINES: dict[str, float] = {
         "ARC-Easy": 0.25,
@@ -235,7 +233,6 @@ if "chat" in eval_modes:
         "MMLU": 0.25,
         "GSM8K": 0.0,
         "HumanEval": 0.0,
-        "SpellingBee": 0.0,
     }
 
     task_names = list(ALL_TASKS.keys()) if not args.tasks else args.tasks.split("|")
