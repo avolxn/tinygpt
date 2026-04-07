@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import torch
 import torch.nn as nn
@@ -281,7 +281,7 @@ class GPT(nn.Module):
         self.config = config
         self.window_sizes = self._compute_window_sizes(config)
 
-        padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
+        padded_vocab_size = math.ceil(config.vocab_size / pad_vocab_size_to) * pad_vocab_size_to
         if padded_vocab_size != config.vocab_size:
             print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} for efficiency")
 
@@ -319,7 +319,7 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5
         for block_mod in self.h:
-            block: Block = block_mod  # type: ignore[assignment]
+            block = cast(Block, block_mod)
             torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
@@ -332,12 +332,10 @@ class GPT(nn.Module):
         n_layer = self.config.n_layer
         for i in range(n_layer):
             self.resid_lambdas.data[i] = 1.15 - (0.10 * i / max(n_layer - 1, 1))
-        for i in range(n_layer):
             self.x0_lambdas.data[i] = 0.20 - (0.15 * i / max(n_layer - 1, 1))
 
         for ve_mod in self.value_embeds.values():
-            ve: nn.Embedding = ve_mod  # type: ignore[assignment]
-            torch.nn.init.uniform_(ve.weight, -s, s)
+            torch.nn.init.uniform_(cast(nn.Embedding, ve_mod).weight, -s, s)
 
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -494,11 +492,10 @@ class GPT(nn.Module):
         backout_layer = n_layer // 2
         x_backout = None
         for i, block_mod in enumerate(self.h):
-            block: Block = block_mod  # type: ignore[assignment]
+            block = cast(Block, block_mod)
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             if str(i) in self.value_embeds:
-                ve_emb: nn.Embedding = self.value_embeds[str(i)]  # type: ignore[assignment]
-                ve = ve_emb(idx).to(x.dtype)
+                ve = cast(nn.Embedding, self.value_embeds[str(i)])(idx).to(x.dtype)
             else:
                 ve = None
             x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)

@@ -65,7 +65,7 @@ def sdpa_attention(
         return F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
 
     if Tq == 1:
-        if window >= 0 and window < Tk:
+        if 0 <= window < Tk:
             start = max(0, Tk - (window + 1))
             k = k[:, :, start:, :]
             v = v[:, :, start:, :]
@@ -75,7 +75,7 @@ def sdpa_attention(
     row_idx = (Tk - Tq) + torch.arange(Tq, device=device).unsqueeze(1)
     col_idx = torch.arange(Tk, device=device).unsqueeze(0)
     mask = col_idx <= row_idx
-    if window >= 0 and window < Tk:
+    if 0 <= window < Tk:
         mask = mask & ((row_idx - col_idx) <= window)
     return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=enable_gqa)
 
