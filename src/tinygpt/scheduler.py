@@ -1,5 +1,5 @@
 """
-Learning rate scheduler: linear warmup + cosine decay.
+Learning rate scheduler: linear warmup + linear decay.
 
 Applied to `initial_lr` stored in each optimizer param group.
 """
@@ -18,13 +18,13 @@ def get_lr_multiplier(
     Schedule:
       [0, warmup_steps)           : linear ramp 0 → 1
       [warmup_steps, decay_start] : constant 1
-      [decay_start, num_steps]    : cosine decay from 1 → final_lr_frac
+      [decay_start, num_steps]    : linear decay from 1 → final_lr_frac
 
     Args:
         step: current optimization step (0-indexed)
         num_steps: total number of optimization steps
         warmup_steps: number of warmup steps
-        warmdown_ratio: fraction of num_steps used for cosine decay
+        warmdown_ratio: fraction of num_steps used for linear decay
         final_lr_frac: LR at the end as a fraction of peak LR
 
     Returns:

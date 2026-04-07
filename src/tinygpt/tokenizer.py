@@ -357,7 +357,7 @@ class HuggingFaceTokenizer:
         return ids[:max_tokens], mask[:max_tokens]
 
     def render_for_completion(self, conversation: dict[str, Any]) -> list[int]:
-        """Render a conversation for RL / completion, omitting the last assistant turn.
+        """Render a conversation for completion, omitting the last assistant turn.
 
         Strips the final assistant message and appends <|assistant_start|> so the
         model can generate the assistant response from scratch.
