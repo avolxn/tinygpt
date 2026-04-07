@@ -104,6 +104,8 @@ def save_checkpoint(
         training_args: Dict with 'step', 'model_config', and other metadata.
         rank: This process's rank.
     """
+    if "step" not in training_args:
+        raise ValueError("training_args must contain a 'step' key")
     step: int = training_args["step"]
 
     if is_fsdp(model):
