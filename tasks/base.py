@@ -63,22 +63,6 @@ class Task:
         """
         raise NotImplementedError
 
-    def reward(self, problem: dict[str, Any], completion: str) -> float:
-        """Return a reward signal for RL training.
-
-        By default, this is 1.0 if the completion is correct, 0.0 otherwise.
-        Subclasses can override for more sophisticated reward schemes.
-
-        Args:
-            problem: The example dict as returned by get_example.
-            completion: The model's generated answer string.
-
-        Returns:
-            A float reward signal (typically 0.0 or 1.0).
-        """
-        is_correct = self.evaluate(problem, completion)
-        return float(is_correct)
-
     def __len__(self) -> int:
         """Return the number of examples after slicing.
 

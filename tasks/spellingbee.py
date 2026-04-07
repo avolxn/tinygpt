@@ -200,19 +200,6 @@ class SpellingBee(Task):
         pred = _extract_answer(completion)
         return bool(pred is not None and pred == ref)
 
-    def reward(self, problem: dict[str, Any], completion: str) -> float:
-        """Return 1.0 if correct, 0.0 otherwise.
-
-        Args:
-            problem: Conversation dict from get_example.
-            completion: Model's free-form response string.
-
-        Returns:
-            Float reward signal.
-        """
-        return float(self.evaluate(problem, completion))
-
-
 class SimpleSpelling(Task):
     """Spell a word character by character.
 
