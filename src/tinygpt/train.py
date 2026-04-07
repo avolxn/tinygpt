@@ -5,7 +5,7 @@ TinyGPTTrainer subclasses transformers.Trainer to plug in:
 - tinygpt's multi-group AdamW optimizer (make_optimizer)
 - tinygpt's warmup + cosine LR schedule (get_lr_multiplier)
 - Pre-batched infinite iterators as data sources (no re-batching)
-- tinygpt's safetensors checkpoint format (save_checkpoint)
+- tinygpt's nanochat checkpoint format (save_checkpoint)
 - Pluggable eval_fn for bpb / SFT-loss evaluation
 """
 
