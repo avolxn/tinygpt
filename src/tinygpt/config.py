@@ -15,8 +15,6 @@ class GPTConfig:
     n_head: int = 6
     n_kv_head: int = 6
     n_embd: int = 768
-    # Sliding window pattern tiled across layers. Final layer always full context.
-    # L = long (full context), S = short (quarter context). Examples: "L", "SSSL"
     window_pattern: str = "SSSL"
 
 

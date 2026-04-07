@@ -29,7 +29,6 @@ SPECIAL_TOKENS = [
     "<|output_end|>",
 ]
 
-# NOTE: uses \p{N}{1,2} instead of GPT-4's \p{N}{1,3} for smaller vocab sizes.
 SPLIT_PATTERN = (
     r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
 )

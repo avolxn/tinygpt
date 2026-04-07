@@ -1,5 +1,5 @@
 """
-Learning rate scheduler: linear warmup + linear decay.
+Learning rate scheduler: linear warmup, constant plateau, then linear decay.
 
 Applied to `initial_lr` stored in each optimizer param group.
 """
@@ -38,5 +38,5 @@ def get_lr_multiplier(
     elif step <= decay_start:
         return 1.0
     else:
-        progress = (num_steps - step) / warmdown_steps  # 1.0 at decay_start → 0.0 at num_steps
+        progress = (num_steps - step) / warmdown_steps
         return final_lr_frac + (1.0 - final_lr_frac) * progress

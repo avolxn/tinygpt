@@ -10,6 +10,7 @@ import warnings
 from collections import deque
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -105,7 +106,6 @@ def use_calculator(expr: str) -> object:
     return eval_with_timeout(expr)
 
 
-@torch.inference_mode()
 def sample_next_token(
     logits: torch.Tensor,
     rng: torch.Generator,
@@ -137,18 +137,15 @@ def sample_next_token(
     return torch.multinomial(probs, num_samples=1, generator=rng)
 
 
+@dataclass
 class RowState:
-    def __init__(self, tokens: list[int]) -> None:
-        """Initialise per-row generation state.
+    """Per-row generation state for the inference engine."""
 
-        Args:
-            tokens: The prompt token ids for this row.
-        """
-        self.current_tokens = tokens
-        self.forced_tokens: deque[int] = deque()
-        self.in_python_block = False
-        self.python_expr_tokens: list[int] = []
-        self.completed = False
+    current_tokens: list[int]
+    forced_tokens: deque[int] = field(default_factory=deque)
+    in_python_block: bool = False
+    python_expr_tokens: list[int] = field(default_factory=list)
+    completed: bool = False
 
 
 class Engine:
@@ -222,7 +219,6 @@ class Engine:
         n_layer: int = cfg.n_layer
         seq_len: int = cfg.sequence_len
 
-        # 1) Prefill with batch=1
         kv_prefill = KVCache(
             batch_size=1,
             seq_len=len(tokens),
@@ -236,7 +232,6 @@ class Engine:
         logits = self.model.forward(ids, kv_cache=kv_prefill)
         logits = logits[:, -1, :].expand(num_samples, -1)
 
-        # 2) Clone KV cache for decode
         kv_len = (len(tokens) + max_tokens) if max_tokens is not None else seq_len
         kv_decode = KVCache(
             batch_size=num_samples,

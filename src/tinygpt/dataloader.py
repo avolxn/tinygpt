@@ -93,7 +93,7 @@ def tokenizing_distributed_data_loader_bestfit(
     bos_token = tokenizer.get_bos_token_id()
     doc_buffer: list[list[int]] = []
 
-    row_capacity = T + 1  # T inputs + 1 target requires T+1 tokens per row
+    row_capacity = T + 1
     use_cuda = str(device) == "cuda"
 
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
@@ -108,7 +108,6 @@ def tokenizing_distributed_data_loader_bestfit(
         doc_batch, _ = next(batches)
         token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
         if isinstance(token_lists[0], int):
-            # encode returned a flat list (single string) — wrap it
             token_lists = [token_lists]
         doc_buffer.extend(token_lists)
 
@@ -121,7 +120,6 @@ def tokenizing_distributed_data_loader_bestfit(
 
                 remaining = row_capacity - pos
 
-                # Find largest document that fits entirely (best-fit)
                 best_idx = -1
                 best_len = 0
                 for i, doc in enumerate(doc_buffer):
@@ -136,7 +134,6 @@ def tokenizing_distributed_data_loader_bestfit(
                     row_buffer[row_idx, pos : pos + doc_len] = torch.tensor(doc, dtype=torch.long)
                     pos += doc_len
                 else:
-                    # Nothing fits — crop shortest document to fill remaining space
                     shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
                     doc = doc_buffer.pop(shortest_idx)
                     row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
@@ -173,7 +170,6 @@ def sft_data_loader(
     """
     _, rank, _, world_size = get_dist_info()
     n = len(task)
-    # Each rank processes a disjoint slice of the dataset
     indices = list(range(rank, n, world_size))
 
     bos_token = tokenizer.get_bos_token_id()
@@ -220,7 +216,6 @@ def sft_data_loader(
                     )
                     pos += length
                 else:
-                    # Crop
                     doc_deque[0] = (ids[:remaining], mask[:remaining])
                     length = remaining
                     row_buffer[row_idx, pos : pos + length] = torch.tensor(ids[:remaining], dtype=torch.long)

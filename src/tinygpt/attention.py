@@ -34,7 +34,6 @@ except ImportError:
 
 flash_attn_available = flash_attn is not None
 
-# Default backend choice based on hardware/dtype at load time
 use_flash_attn = flash_attn is not None and compute_dtype == torch.bfloat16
 
 
@@ -147,7 +146,6 @@ def flash_attn_with_kvcache(
             window_size=window_size,
         )
 
-    # SDPA fallback: manually manage cache
     B, T_new, H, D = q.shape
     pos: int = int(cache_seqlens[0].item())  # type: ignore[index]
 
