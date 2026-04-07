@@ -12,6 +12,7 @@ Replaces nanochat's pyarrow + manual parquet downloader with:
 """
 
 import logging
+from collections import deque
 from collections.abc import Iterator
 from typing import Any
 
@@ -189,13 +190,13 @@ def sft_data_loader(
     cpu_inputs = cpu_inputs_buf[: B * T].view(B, T)
     cpu_targets = cpu_targets_buf[: B * T].view(B, T)
 
-    doc_buffer: list[tuple[list[int], list[int]]] = []  # (ids, mask) pairs
+    doc_deque: deque[tuple[list[int], list[int]]] = deque()  # (ids, mask) pairs
 
     def refill() -> None:
         for idx in indices:
             conv = task[idx % n]
             ids, mask = tokenizer.render_conversation(conv, max_tokens=T + 1)
-            doc_buffer.append((ids, mask))
+            doc_deque.append((ids, mask))
 
     while True:
         for row_idx in range(B):
@@ -204,14 +205,14 @@ def sft_data_loader(
             target_buffer[row_idx].fill_(-1)
 
             while pos < row_capacity:
-                if not doc_buffer:
+                if not doc_deque:
                     refill()
 
                 remaining = row_capacity - pos
-                ids, mask = doc_buffer[0]
+                ids, mask = doc_deque[0]
 
                 if len(ids) <= remaining:
-                    doc_buffer.pop(0)
+                    doc_deque.popleft()
                     length = len(ids)
                     row_buffer[row_idx, pos : pos + length] = torch.tensor(ids, dtype=torch.long)
                     target_buffer[row_idx, pos : pos + length] = torch.tensor(
@@ -220,7 +221,7 @@ def sft_data_loader(
                     pos += length
                 else:
                     # Crop
-                    doc_buffer[0] = (ids[:remaining], mask[:remaining])
+                    doc_deque[0] = (ids[:remaining], mask[:remaining])
                     length = remaining
                     row_buffer[row_idx, pos : pos + length] = torch.tensor(ids[:remaining], dtype=torch.long)
                     target_buffer[row_idx, pos : pos + length] = torch.tensor(
