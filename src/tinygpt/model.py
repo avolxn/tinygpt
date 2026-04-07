@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -32,13 +32,11 @@ import torch.nn.functional as F
 
 from tinygpt.attention import flash_attn_func, flash_attn_with_kvcache
 from tinygpt.config import GPTConfig
+from tinygpt.kvcache import KVCache
 from tinygpt.utils import compute_dtype, print0
 
-if TYPE_CHECKING:
-    from tinygpt.kvcache import KVCache
-
-qk_scale = 1.2  # post-QK-norm scale applied to queries and keys
-softcap = 15.0  # logit soft-cap to prevent outlier logits
+qk_scale = 1.2
+softcap = 15.0
 
 
 def norm(x: torch.Tensor) -> torch.Tensor:
@@ -304,6 +302,12 @@ class GPT(nn.Module):
                 if has_ve(i, config.n_layer)
             }
         )
+        self._ve_list: list[nn.Embedding | None] = [
+            cast(nn.Embedding, self.value_embeds[str(i)]) if str(i) in self.value_embeds else None
+            for i in range(config.n_layer)
+        ]
+        self.backout_layer: int = config.n_layer // 2
+        self._smear_ch: int = self.smear_gate.in_features
 
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -395,7 +399,7 @@ class GPT(nn.Module):
         short_window = math.ceil(long_window / 4 / 128) * 128
         char_to_window = {"L": (long_window, 0), "S": (short_window, 0)}
         sizes = [char_to_window[pattern[i % len(pattern)]] for i in range(config.n_layer)]
-        sizes[-1] = (long_window, 0)  # final layer always full context
+        sizes[-1] = (long_window, 0)
         return sizes
 
     def get_device(self) -> torch.device:
@@ -469,37 +473,31 @@ class GPT(nn.Module):
         x = x.to(compute_dtype)
         x = norm(x)
 
-        # Smear: mix previous token's embedding into current position
         smear = self.smear_lambda.to(x.dtype)
-        smear_ch = self.smear_gate.in_features
         if kv_cache is None:
             if T <= 1:
                 raise ValueError("Training forward pass requires T > 1")
-            gate = smear * torch.sigmoid(self.smear_gate(x[:, 1:, :smear_ch]))
+            gate = smear * torch.sigmoid(self.smear_gate(x[:, 1:, : self._smear_ch]))
             x = torch.cat([x[:, :1], x[:, 1:] + gate * x[:, :-1]], dim=1)
         else:
             x_pre_smear = kv_cache.prev_embedding
             kv_cache.prev_embedding = x[:, -1:, :]
             if T > 1:
-                gate = smear * torch.sigmoid(self.smear_gate(x[:, 1:, :smear_ch]))
+                gate = smear * torch.sigmoid(self.smear_gate(x[:, 1:, : self._smear_ch]))
                 x = torch.cat([x[:, :1], x[:, 1:] + gate * x[:, :-1]], dim=1)
             elif x_pre_smear is not None:
-                gate = smear * torch.sigmoid(self.smear_gate(x[:, :, :smear_ch]))
+                gate = smear * torch.sigmoid(self.smear_gate(x[:, :, : self._smear_ch]))
                 x = x + gate * x_pre_smear
 
         x0 = x
-        n_layer = self.config.n_layer
-        backout_layer = n_layer // 2
         x_backout = None
         for i, block_mod in enumerate(self.h):
             block = cast(Block, block_mod)
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            if str(i) in self.value_embeds:
-                ve = cast(nn.Embedding, self.value_embeds[str(i)])(idx).to(x.dtype)
-            else:
-                ve = None
+            ve_embed = self._ve_list[i]
+            ve = ve_embed(idx).to(x.dtype) if ve_embed is not None else None
             x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
-            if i == backout_layer:
+            if i == self.backout_layer:
                 x_backout = x
 
         if x_backout is not None:

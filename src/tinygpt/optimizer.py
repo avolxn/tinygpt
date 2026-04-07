@@ -59,12 +59,10 @@ def make_param_groups(
             continue
         seen.add(id(param))
 
-        # Embedding tables (token + value embeddings)
         if "wte" in name or "value_embeds" in name:
             embedding_params.append(param)
         elif "lm_head" in name:
             lm_head_params.append(param)
-        # Scalar / 1-D params: lambdas, bias-like things, ve_gate
         elif param.dim() < 2 or "smear" in name or "lambda" in name or "ve_gate" in name:
             scalar_params.append(param)
         else:
@@ -92,7 +90,6 @@ def make_param_groups(
             "weight_decay": 0.0,
         },
     ]
-    # Filter out empty groups to avoid AdamW complaints
     return [g for g in groups if len(g["params"]) > 0]  # type: ignore[arg-type]
 
 
@@ -130,7 +127,6 @@ def make_optimizer(
         weight_decay=weight_decay,
     )
     optimizer = torch.optim.AdamW(param_groups, betas=betas, eps=eps, fused=use_fused)
-    # Store initial_lr so the scheduler can always compute the absolute LR
     for group in optimizer.param_groups:
         group["initial_lr"] = group["lr"]
     return optimizer
