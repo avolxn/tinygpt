@@ -20,8 +20,11 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import Trainer, TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
+from tinygpt.checkpoint import save_checkpoint
+from tinygpt.inference import Engine
 from tinygpt.optimizer import make_optimizer
 from tinygpt.scheduler import get_lr_multiplier
+from tinygpt.utils import print0
 
 
 class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
@@ -202,7 +205,6 @@ class TinyGPTTrainer(Trainer):
                 self.args.output_dir.
             _internal_call: Ignored; present for API compatibility.
         """
-        from tinygpt.checkpoint import save_checkpoint  # noqa: PLC0415
 
         if output_dir is None:
             output_dir = self.args.output_dir
@@ -271,9 +273,6 @@ class SamplerCallback(TrainerCallback):
             return
         if state.global_step % self._sample_every != 0:
             return
-        from tinygpt.inference import Engine  # noqa: PLC0415
-        from tinygpt.utils import print0  # noqa: PLC0415
-
         model.eval()
         engine = Engine(model, self._tokenizer)
         for prompt in self._prompts:

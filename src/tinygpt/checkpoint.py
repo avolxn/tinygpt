@@ -12,6 +12,7 @@ import glob
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import torch
@@ -22,6 +23,8 @@ from tinygpt.config import GPTConfig
 from tinygpt.model import GPT
 
 logger = logging.getLogger(__name__)
+
+_CKPT_RE = re.compile(r"model_(\d+)\.pt$")
 
 
 def is_fsdp(model: torch.nn.Module) -> bool:
@@ -78,7 +81,10 @@ def find_last_step(checkpoint_dir: str) -> int:
     checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "model_*.pt"))
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
-    return max(int(os.path.basename(f).split("_")[1].split(".")[0]) for f in checkpoint_files)
+    steps = [int(m.group(1)) for f in checkpoint_files if (m := _CKPT_RE.search(os.path.basename(f)))]
+    if not steps:
+        raise FileNotFoundError(f"No valid checkpoints found in {checkpoint_dir}")
+    return max(steps)
 
 
 def save_checkpoint(
