@@ -543,9 +543,6 @@ class GPT(nn.Module):
 
         Yields:
             Integer token ids, one per generation step.
-
-        Raises:
-            TypeError: If tokens is not a list.
         """
         device = self.get_device()
         rng = None
