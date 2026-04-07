@@ -93,12 +93,9 @@ def save_checkpoint(
     if is_fsdp(model):
         with fsdp_full_state_dict_ctx(model):
             state_dict = model.state_dict()
-    else:
-        state_dict = model.state_dict()
-
-    if is_fsdp(model):
         optim_state = FSDP.full_optim_state_dict(model, optimizer, rank0_only=True)
     else:
+        state_dict = model.state_dict()
         optim_state = optimizer.state_dict()
 
     if rank == 0:
@@ -155,12 +152,6 @@ def load_checkpoint(
     if os.path.exists(args_path):
         with open(args_path, encoding="utf-8") as f:
             training_args = json.load(f)
-    else:
-        # Fallback for old format (meta.json)
-        meta_path = os.path.join(checkpoint_dir, "meta.json")
-        if os.path.exists(meta_path):
-            with open(meta_path, encoding="utf-8") as f:
-                training_args = json.load(f)
 
     # Load model weights
     model_path = os.path.join(checkpoint_dir, model_filename)
@@ -208,18 +199,10 @@ def build_model_from_checkpoint(
     """
     # Load config
     config_path = os.path.join(checkpoint_dir, config_filename)
-    if os.path.exists(config_path):
-        with open(config_path, encoding="utf-8") as f:
-            config_kwargs = json.load(f)
-    else:
-        # Fallback for old format
-        meta_path = os.path.join(checkpoint_dir, "meta.json")
-        if os.path.exists(meta_path):
-            with open(meta_path, encoding="utf-8") as f:
-                meta = json.load(f)
-                config_kwargs = meta["model_config"]
-        else:
-            raise FileNotFoundError(f"No config found in {checkpoint_dir}")
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"No config found in {checkpoint_dir}")
+    with open(config_path, encoding="utf-8") as f:
+        config_kwargs = json.load(f)
 
     config = GPTConfig(**config_kwargs)
 
