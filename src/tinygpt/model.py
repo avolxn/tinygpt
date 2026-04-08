@@ -1,7 +1,7 @@
 """
 GPT model architecture (from scratch).
 
-Architecture mirrors nanochat exactly:
+Architecture summary:
 - RoPE (no positional embeddings)
 - QK norm
 - Untied embedding / lm_head weights
@@ -14,10 +14,6 @@ Architecture mirrors nanochat exactly:
 - Smear gate (bigram info)
 - Per-layer resid/x0 scalars
 - Backout (mid-layer residual subtraction)
-
-Differences from nanochat gpt.py:
-- setup_optimizer() removed (optimizer created in training script after FSDP wrap)
-- Imports from tinygpt.* instead of nanochat.*
 """
 
 from __future__ import annotations

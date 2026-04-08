@@ -1,8 +1,7 @@
 """
 Inference engine for token generation with utilities.
 
-Taken from nanochat/engine.py as-is (no FSDP dependency — inference is always
-single-GPU / single-process).
+Inference is always single-GPU / single-process.
 """
 
 import signal

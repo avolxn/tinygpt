@@ -6,9 +6,6 @@ BOS-aligned bestfit packing:
   - Documents packed with best-fit algorithm to minimise cropping
   - When no document fits, crops a document to fill remaining space exactly
   - 100% utilisation (no padding), ~35% tokens cropped at T=2048
-
-Replaces nanochat's pyarrow + manual parquet downloader with:
-  datasets.load_dataset(name, streaming=True) → dataset.shard(world_size, rank)
 """
 
 import logging

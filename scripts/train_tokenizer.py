@@ -25,6 +25,7 @@ import os
 import time
 
 import torch
+from datasets import load_dataset
 
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
@@ -64,8 +65,6 @@ def text_iterator():
                 if nchars >= args.max_chars:
                     return
     else:
-        from datasets import load_dataset  # noqa: PLC0415
-
         print(f"Streaming from HF dataset: {args.dataset} / {args.split}")
         ds = load_dataset(args.dataset, split=args.split, streaming=True, trust_remote_code=True)
         for row in ds:

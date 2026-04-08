@@ -1,7 +1,7 @@
 """
 Sandboxed Python execution for evaluating LLM-generated code.
 
-Adapted from nanochat/execution.py and OpenAI's human-eval execution.py.
+Adapted from OpenAI's human-eval execution approach.
 
 Protections:
 - Runs in a separate process (killable on hang/crash)
