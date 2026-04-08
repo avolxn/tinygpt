@@ -2,10 +2,12 @@
 Supervised fine-tuning (SFT) via HuggingFace Trainer.
 
 Loss is computed on assistant tokens only (mask = 1).
+Optionally mixes in online KL distillation from a teacher model.
 
 Usage:
     python -m scripts.finetune --checkpoint out/checkpoints/d12
     torchrun --nproc_per_node=8 -m scripts.finetune --checkpoint out/checkpoints/d12
+    python -m scripts.finetune --checkpoint out/checkpoints/d12 --distill-alpha 0.5
 """
 
 import os
@@ -16,11 +18,20 @@ import argparse
 from functools import partial
 
 import torch
+from tasks.base import TaskMixture
+from tasks.customjson import CustomJSON
+from tasks.gsm8k import GSM8K
+from tasks.mmlu import MMLU
+from tasks.smoltalk import SmolTalk
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import ShardingStrategy
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir
 from tinygpt.dataloader import sft_data_loader
+from tinygpt.distillation import load_teacher_model, validate_teacher_tokenizer_compatibility
 from tinygpt.model import Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.train import TinyGPTTrainer
@@ -35,7 +46,12 @@ from tinygpt.utils import (
 )
 
 parser = argparse.ArgumentParser(description="Supervised fine-tuning")
-parser.add_argument("--checkpoint", type=str, required=True, help="Pre-trained checkpoint directory")
+parser.add_argument(
+    "--checkpoint",
+    type=str,
+    required=True,
+    help="Pre-trained model directory or Trainer output directory",
+)
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
 # Logging
 parser.add_argument("--run", type=str, default="dummy")
@@ -64,6 +80,28 @@ parser.add_argument("--eval-every", type=int, default=200)
 # Output
 parser.add_argument("--out-dir", type=str, default="out")
 parser.add_argument("--run-name", type=str, default="sft")
+# Distillation
+parser.add_argument(
+    "--teacher-model",
+    type=str,
+    default="",
+    help="Local directory or Hub repo containing the teacher model in Hugging Face format",
+)
+parser.add_argument(
+    "--teacher-tokenizer",
+    type=str,
+    default="",
+    help="Local directory or Hub repo containing the teacher tokenizer (defaults to --teacher-model)",
+)
+parser.add_argument(
+    "--teacher-device",
+    type=str,
+    default="same",
+    choices=["same", "cuda", "cpu", "mps"],
+    help="Device for the teacher model; 'same' reuses the student device",
+)
+parser.add_argument("--distill-alpha", type=float, default=0.0, help="Teacher KL weight in [0, 1]")
+parser.add_argument("--distill-temperature", type=float, default=1.0, help="Temperature for KL distillation")
 # Task mixture
 parser.add_argument(
     "--tasks",
@@ -94,11 +132,39 @@ model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="train"
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
 sequence_len = args.max_seq_len or meta["model_config"]["sequence_len"]
 
-if device_type == "cuda" and is_dist:
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP  # noqa: PLC0415
-    from torch.distributed.fsdp import ShardingStrategy  # noqa: PLC0415
-    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy  # noqa: PLC0415
+if not 0.0 <= args.distill_alpha <= 1.0:
+    raise ValueError(f"--distill-alpha must be in [0, 1], got {args.distill_alpha}")
+if args.distill_temperature <= 0:
+    raise ValueError(f"--distill-temperature must be > 0, got {args.distill_temperature}")
 
+
+def resolve_teacher_device() -> torch.device:
+    if args.teacher_device == "same":
+        return device
+    if args.teacher_device == "cuda":
+        if device_type != "cuda":
+            raise ValueError("--teacher-device=cuda requires CUDA")
+        return torch.device("cuda", local_rank) if is_dist else torch.device("cuda")
+    return torch.device(args.teacher_device)
+
+
+teacher_model = None
+teacher_meta = None
+if args.distill_alpha > 0:
+    if not args.teacher_model:
+        raise ValueError(
+            "--teacher-model is required when --distill-alpha > 0. "
+            "Convert the teacher artifacts to Hugging Face format first."
+        )
+    teacher_device = resolve_teacher_device()
+    print0(f"Loading teacher model from {args.teacher_model} on {teacher_device}")
+    teacher_model, teacher_meta = load_teacher_model(args.teacher_model, device=teacher_device)
+    teacher_tokenizer_ref = args.teacher_tokenizer or args.teacher_model
+    teacher_tokenizer = HuggingFaceTokenizer.from_reference(teacher_tokenizer_ref)
+    validate_teacher_tokenizer_compatibility(tokenizer, teacher_tokenizer)
+    print0(f"Loaded teacher with vocab size {teacher_meta['model_config']['vocab_size']:,}")
+
+if device_type == "cuda" and is_dist:
     strategy_map = {
         "FULL_SHARD": ShardingStrategy.FULL_SHARD,
         "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
@@ -113,29 +179,19 @@ if device_type == "cuda" and is_dist:
         device_id=local_rank,
     )
 
-from tasks.base import TaskMixture  # noqa: E402, PLC0415
-
 task_names = {t.strip() for t in args.tasks.split(",")}
 task_list = []
 
 if "smoltalk" in task_names:
-    from tasks.smoltalk import SmolTalk  # noqa: PLC0415
-
     task_list.append(SmolTalk(split="train"))
 
 if "identity" in task_names and args.identity_conversations:
-    from tasks.customjson import CustomJSON  # noqa: PLC0415
-
     task_list += [CustomJSON(filepath=args.identity_conversations)] * 2
 
 if "mmlu" in task_names:
-    from tasks.mmlu import MMLU  # noqa: PLC0415
-
     task_list += [MMLU(subset="all", split="auxiliary_train")] * args.mmlu_epochs
 
 if "gsm8k" in task_names:
-    from tasks.gsm8k import GSM8K  # noqa: PLC0415
-
     task_list += [GSM8K(subset="main", split="train")] * args.gsm8k_epochs
 
 if not task_list:
@@ -161,6 +217,15 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
 
 
 checkpoint_dir = get_checkpoint_dir(args.out_dir, args.run_name)
+extra_meta = {"user_config": user_config}
+if teacher_model is not None:
+    extra_meta["distillation"] = {
+        "teacher_model": args.teacher_model,
+        "teacher_tokenizer": args.teacher_tokenizer or args.teacher_model,
+        "teacher_device": str(resolve_teacher_device()),
+        "alpha": args.distill_alpha,
+        "temperature": args.distill_temperature,
+    }
 
 training_args = TrainingArguments(
     output_dir=checkpoint_dir,
@@ -198,6 +263,10 @@ trainer = TinyGPTTrainer(
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
+    teacher_model=teacher_model,
+    distill_alpha=args.distill_alpha,
+    distill_temperature=args.distill_temperature,
+    extra_meta=extra_meta,
 )
 
 trainer.train()

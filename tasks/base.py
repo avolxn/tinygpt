@@ -2,7 +2,6 @@
 Base classes for all Tasks.
 
 A Task is a dataset of conversations with optional evaluation criteria.
-Taken from nanochat/tasks/common.py; renamed to tasks/base.py.
 """
 
 import random

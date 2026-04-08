@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import torch
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -41,7 +42,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description="tinygpt web server")
-parser.add_argument("--checkpoint", type=str, required=True, help="Path to fine-tuned checkpoint directory")
+parser.add_argument(
+    "--checkpoint",
+    type=str,
+    required=True,
+    help="Path to a model directory or Trainer output directory",
+)
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
 parser.add_argument("-n", "--num-gpus", type=int, default=1)
 parser.add_argument("-t", "--temperature", type=float, default=0.8)
@@ -243,6 +249,4 @@ async def chat_completions(request: ChatRequest):
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     uvicorn.run(app, host=args.host, port=args.port)

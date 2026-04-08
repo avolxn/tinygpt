@@ -5,14 +5,13 @@ TinyGPTTrainer subclasses transformers.Trainer to plug in:
 - tinygpt's multi-group AdamW optimizer (make_optimizer)
 - tinygpt's warmup + cosine LR schedule (get_lr_multiplier)
 - Pre-batched infinite iterators as data sources (no re-batching)
-- tinygpt's nanochat checkpoint format (save_checkpoint)
+- tinygpt's Hugging Face style model directory format
 - Pluggable eval_fn for bpb / SFT-loss evaluation
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import asdict
 from typing import Any
 
 import torch
@@ -20,11 +19,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import Trainer, TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
-from tinygpt.checkpoint import save_checkpoint
+from tinygpt.checkpoint import save_model_checkpoint
+from tinygpt.distillation import masked_distillation_loss
 from tinygpt.inference import Engine
 from tinygpt.optimizer import make_optimizer
 from tinygpt.scheduler import get_lr_multiplier
-from tinygpt.utils import print0
+from tinygpt.utils import get_model_device, print0
 
 
 class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
@@ -72,6 +72,10 @@ class TinyGPTTrainer(Trainer):
         final_lr_frac: float = 0.05,
         train_loader: Iterator[tuple[torch.Tensor, torch.Tensor]],
         eval_fn: Callable[[nn.Module, int], dict[str, float]] | None = None,
+        teacher_model: nn.Module | None = None,
+        distill_alpha: float = 0.0,
+        distill_temperature: float = 1.0,
+        extra_meta: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -82,6 +86,10 @@ class TinyGPTTrainer(Trainer):
         self._final_lr_frac = final_lr_frac
         self._train_loader = train_loader
         self._eval_fn = eval_fn
+        self._teacher_model = teacher_model
+        self._distill_alpha = distill_alpha
+        self._distill_temperature = distill_temperature
+        self._extra_meta = extra_meta or {}
 
     def get_train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
         """Return a DataLoader that passes pre-batched items through unchanged.
@@ -119,8 +127,39 @@ class TinyGPTTrainer(Trainer):
         Returns:
             Loss scalar, or (loss, {"loss": loss}) if return_outputs is True.
         """
-        loss = model(inputs["input_ids"], inputs["labels"])
-        return (loss, {"loss": loss}) if return_outputs else loss
+        input_ids = inputs["input_ids"]
+        labels = inputs["labels"]
+
+        if self._teacher_model is None or self._distill_alpha <= 0:
+            loss = model(input_ids, labels)
+            return (loss, {"loss": loss}) if return_outputs else loss
+
+        student_logits = model(input_ids)
+        ce_loss = torch.nn.functional.cross_entropy(
+            student_logits.view(-1, student_logits.size(-1)),
+            labels.view(-1),
+            ignore_index=-1,
+        )
+
+        teacher_device = get_model_device(self._teacher_model)
+        teacher_input_ids = input_ids.to(teacher_device)
+        with torch.inference_mode():
+            teacher_logits = self._teacher_model(teacher_input_ids)
+        teacher_logits = teacher_logits.to(student_logits.device)
+
+        distill_loss = masked_distillation_loss(
+            student_logits,
+            teacher_logits,
+            labels,
+            temperature=self._distill_temperature,
+        )
+        loss = (1.0 - self._distill_alpha) * ce_loss + self._distill_alpha * distill_loss
+        outputs = {
+            "loss": loss,
+            "ce_loss": ce_loss.detach(),
+            "distill_loss": distill_loss.detach(),
+        }
+        return (loss, outputs) if return_outputs else loss
 
     def create_optimizer(self, model: Any = None) -> torch.optim.Optimizer:
         """Create the multi-group AdamW optimizer via make_optimizer.
@@ -198,7 +237,7 @@ class TinyGPTTrainer(Trainer):
         return prefixed
 
     def save_model(self, output_dir: str | None = None, _internal_call: bool = False) -> None:
-        """Save checkpoint in nanochat format (model_*.pt + meta_*.json + optim_*_rank{rank}.pt).
+        """Save model weights and config in a Hugging Face style directory.
 
         Args:
             output_dir: Directory to save the checkpoint. Defaults to
@@ -209,19 +248,12 @@ class TinyGPTTrainer(Trainer):
             output_dir = self.args.output_dir
         assert output_dir is not None
         assert self.model is not None
-        assert self.optimizer is not None
         step = self.state.global_step
-        inner: Any = self.model.module if hasattr(self.model, "module") else self.model
-        config_dict: dict[str, Any] = asdict(inner.config) if hasattr(inner, "config") else {}
-        rank = self.args.local_rank if self.args.local_rank >= 0 else 0
-        save_checkpoint(
-            output_dir,
-            step,
-            self.model.state_dict(),
-            self.optimizer.state_dict(),
-            {"step": step, "model_config": config_dict},
-            rank=rank,
-        )
+        meta = {
+            "step": step,
+            **self._extra_meta,
+        }
+        save_model_checkpoint(output_dir, self.model, extra_meta=meta)
 
 
 class SamplerCallback(TrainerCallback):

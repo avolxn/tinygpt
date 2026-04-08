@@ -79,6 +79,14 @@ def test_save_load_roundtrip(tokenizer: HuggingFaceTokenizer) -> None:
         assert loaded.encode(text) == tokenizer.encode(text)
 
 
+def test_load_tokenizer_from_directory_json(tokenizer: HuggingFaceTokenizer) -> None:
+    with tempfile.TemporaryDirectory() as d:
+        tokenizer.save(d)
+        loaded = HuggingFaceTokenizer.from_directory(d)
+        text = "Hello world!"
+        assert loaded.encode(text) == tokenizer.encode(text)
+
+
 def test_render_conversation_basic(tokenizer: HuggingFaceTokenizer) -> None:
     conv = {
         "messages": [

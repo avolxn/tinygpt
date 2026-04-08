@@ -24,10 +24,13 @@ from dataclasses import asdict
 from functools import partial
 
 import torch
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import ShardingStrategy
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available, use_flash_attn
-from tinygpt.checkpoint import get_checkpoint_dir, load_checkpoint
+from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, resolve_model_directory
 from tinygpt.config import make_config
 from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
@@ -86,7 +89,7 @@ parser.add_argument("--warmup-steps", type=int, default=40)
 parser.add_argument("--warmdown-ratio", type=float, default=0.65)
 parser.add_argument("--final-lr-frac", type=float, default=0.05)
 # Resume
-parser.add_argument("--resume-from", type=str, default="")
+parser.add_argument("--resume-from", type=str, default="", help="Model directory or Trainer output directory to resume from")
 # Evaluation / sampling
 parser.add_argument("--eval-every", type=int, default=250)
 parser.add_argument("--eval-tokens", type=int, default=80 * 524288)
@@ -142,11 +145,16 @@ with torch.device("meta"):
 model.to_empty(device=device)
 model.init_weights()
 
-if device_type == "cuda" and is_dist:
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP  # noqa: PLC0415
-    from torch.distributed.fsdp import ShardingStrategy  # noqa: PLC0415
-    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy  # noqa: PLC0415
+start_step = 0
+if args.resume_from:
+    print0(f"Resuming model weights from {args.resume_from}")
+    resolved_resume_dir = resolve_model_directory(args.resume_from)
+    print0(f"Resolved resume checkpoint: {resolved_resume_dir}")
+    model, resume_meta = build_model_from_checkpoint(resolved_resume_dir, device, phase="train")
+    start_step = int(resume_meta.get("step", 0))
+    print0(f"Resumed at step {start_step}")
 
+if device_type == "cuda" and is_dist:
     strategy_map = {
         "FULL_SHARD": ShardingStrategy.FULL_SHARD,
         "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
@@ -198,13 +206,6 @@ print0(f"num_iterations: {num_iterations:,}")
 print0(f"total_batch_size: {total_batch_size:,}")
 print0(f"grad_accum_steps: {grad_accum_steps}")
 
-start_step = 0
-if args.resume_from:
-    print0(f"Resuming from {args.resume_from}")
-    meta = load_checkpoint(args.resume_from, model, optimizer=None, device=device, rank=rank)
-    start_step = meta.get("step", 0)
-    print0(f"Resumed at step {start_step}")
-
 run_name = args.run_name if args.run_name else f"d{args.depth}"
 checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name)
 
@@ -225,8 +226,6 @@ def make_loader(split: str):
 
 def _txt_loader(tok, path: str, B: int, T: int, dev):
     """Minimal bestfit loader backed by a local text file."""
-    import torch  # noqa: PLC0415
-
     with open(path, encoding="utf-8") as f:
         lines = [ln.strip() for ln in f if ln.strip()]
 
@@ -337,6 +336,7 @@ trainer = TinyGPTTrainer(
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
+    extra_meta={"user_config": user_config},
 )
 
 if start_step > 0:

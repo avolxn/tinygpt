@@ -1,8 +1,6 @@
 """
 Bits-per-byte evaluation metric.
 
-Taken from nanochat/loss_eval.py as-is.
-
 Bits-per-byte (bpb) is a vocab-size-independent loss metric: it normalises the
 sum of cross-entropy nats by the number of UTF-8 bytes the target tokens
 represent, then converts to bits.

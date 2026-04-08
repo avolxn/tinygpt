@@ -1,10 +1,10 @@
 """
-BPE Tokenizer based on HuggingFace `tokenizers` library.
+BPE tokenizers used by tinygpt.
 
-Only HuggingFaceTokenizer is included (no rustbpe / tiktoken).
-Saved as `tokenizer.json` (human-readable JSON, no pickle).
+On-disk runtime format:
+- `tokenizer.json`: HuggingFace tokenizers BPE
 
-Special tokens and GPT-4 split pattern are the same as nanochat.
+Special tokens and the GPT-4 split pattern are fixed by tinygpt.
 """
 
 import copy
@@ -64,6 +64,13 @@ class HuggingFaceTokenizer:
         """
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
         return cls(HFTokenizer.from_file(tokenizer_path))
+
+    @classmethod
+    def from_reference(cls, tokenizer_ref: str) -> "HuggingFaceTokenizer":
+        """Load a tokenizer from either a local directory or a Hub repo."""
+        if os.path.isdir(tokenizer_ref):
+            return cls.from_directory(tokenizer_ref)
+        return cls.from_pretrained(tokenizer_ref)
 
     @classmethod
     def train_from_iterator(cls, text_iterator: Iterator[str], vocab_size: int) -> "HuggingFaceTokenizer":

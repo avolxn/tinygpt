@@ -14,7 +14,12 @@ from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.utils import autodetect_device_type, compute_init
 
 parser = argparse.ArgumentParser(description="Chat with tinygpt")
-parser.add_argument("--checkpoint", type=str, required=True, help="Path to fine-tuned checkpoint directory")
+parser.add_argument(
+    "--checkpoint",
+    type=str,
+    required=True,
+    help="Path to a model directory or Trainer output directory",
+)
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
 parser.add_argument("--prompt", type=str, default="", help="Single-turn prompt (interactive mode if empty)")
 parser.add_argument("--temperature", type=float, default=0.6)

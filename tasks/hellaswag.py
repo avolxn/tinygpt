@@ -3,7 +3,7 @@ HellaSwag commonsense NLI task.
 https://huggingface.co/datasets/Rowan/hellaswag
 
 Given an activity/situation description, the model must choose the most
-plausible continuation from 4 options.  Adapted from nanochat's arc.py.
+plausible continuation from 4 options.
 """
 
 from datasets import load_dataset

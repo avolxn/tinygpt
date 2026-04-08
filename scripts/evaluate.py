@@ -18,16 +18,31 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+from tasks.arc import ARC
+from tasks.gsm8k import GSM8K
+from tasks.humaneval import HumanEval
+from tasks.mmlu import MMLU
 
 from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
 from tinygpt.inference import Engine
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.utils import autodetect_device_type, compute_cleanup, compute_init, get_dist_info, print0
+from tinygpt.utils import (
+    autodetect_device_type,
+    compute_cleanup,
+    compute_init,
+    get_dist_info,
+    print0,
+)
 
 parser = argparse.ArgumentParser(description="Evaluate tinygpt model")
-parser.add_argument("--checkpoint", type=str, required=True, help="Path to checkpoint directory")
+parser.add_argument(
+    "--checkpoint",
+    type=str,
+    required=True,
+    help="Path to a model directory or Trainer output directory",
+)
 parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
 parser.add_argument("--eval", type=str, default="bpb,sample", help="Comma-separated modes: bpb,sample,chat")
 parser.add_argument("--tasks", type=str, default="", help="Tasks for chat eval, pipe-separated. Default = all.")
@@ -215,11 +230,6 @@ def run_categorical_eval(task_object: Any, batch_size: int, max_problems: int | 
 
 
 if "chat" in eval_modes:
-    from tasks.arc import ARC  # noqa: PLC0415
-    from tasks.gsm8k import GSM8K  # noqa: PLC0415
-    from tasks.humaneval import HumanEval  # noqa: PLC0415
-    from tasks.mmlu import MMLU  # noqa: PLC0415
-
     ALL_TASKS: dict[str, Any] = {
         "ARC-Easy": partial(ARC, subset="ARC-Easy", split="test"),
         "ARC-Challenge": partial(ARC, subset="ARC-Challenge", split="test"),
@@ -259,7 +269,7 @@ if "chat" in eval_modes:
         results[task_name] = acc
         print0(f"{task_name}: {100 * acc:.2f}%")
 
-    # ChatCORE metric (mean centered accuracy, analogous to nanochat's metric)
+    # ChatCORE metric (mean-centered accuracy over baseline chance levels)
     if all(t in results for t in ALL_TASKS):
         centered = [(results[t] - BASELINES[t]) / (1.0 - BASELINES[t]) for t in ALL_TASKS]
         chatcore = sum(centered) / len(centered)
