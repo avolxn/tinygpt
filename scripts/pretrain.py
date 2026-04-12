@@ -68,7 +68,7 @@ parser.add_argument("--window-pattern", type=str, default="SSSL")
 parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
 parser.add_argument("--txt", type=str, default="", help="Local .txt file (overrides --dataset)")
 parser.add_argument("--text-field", type=str, default="text")
-parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
+parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 # Training horizon
 parser.add_argument("--num-iterations", type=int, default=-1)
 parser.add_argument("--target-param-data-ratio", type=float, default=12)
@@ -95,7 +95,7 @@ parser.add_argument("--eval-tokens", type=int, default=80 * 524288)
 parser.add_argument("--sample-every", type=int, default=2000)
 parser.add_argument("--save-every", type=int, default=-1)
 # Output
-parser.add_argument("--out-dir", type=str, default="out")
+parser.add_argument("--out-dir", type=str, default="data")
 parser.add_argument("--run-name", type=str, default="")
 args = parser.parse_args()
 

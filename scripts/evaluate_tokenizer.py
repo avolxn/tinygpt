@@ -5,8 +5,8 @@ Compares our tokenizer against GPT-2 and GPT-4 baselines on several
 text types (news, code, math, Korean, science).
 
 Usage:
-    python -m scripts.eval_tokenizer
-    python -m scripts.eval_tokenizer --tokenizer-dir out/tokenizer
+    python -m scripts.evaluate_tokenizer
+    python -m scripts.evaluate_tokenizer --tokenizer-dir data/tokenizer
 """
 
 import argparse
@@ -15,7 +15,7 @@ import os
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 parser = argparse.ArgumentParser(description="Evaluate tokenizer compression")
-parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer", help="Directory containing tokenizer.json")
+parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer", help="Directory containing tokenizer.json")
 args = parser.parse_args()
 
 news_text = """

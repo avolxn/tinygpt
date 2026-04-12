@@ -7,9 +7,9 @@ Supported modes (comma-separated via --eval):
   chat    : task accuracy on chat benchmarks (categorical + generative)
 
 Usage:
-    python -m scripts.evaluate --checkpoint out/checkpoints/run
-    python -m scripts.evaluate --checkpoint out/checkpoints/run --eval chat --tasks MMLU
-    torchrun --nproc_per_node=4 -m scripts.evaluate --checkpoint out/checkpoints/run --eval chat
+    python -m scripts.evaluate_model --checkpoint data/pretrain_checkpoints/from_scratch
+    python -m scripts.evaluate_model --checkpoint data/pretrain_checkpoints/from_scratch --eval chat --tasks MMLU
+    torchrun --nproc_per_node=4 -m scripts.evaluate_model --checkpoint data/pretrain_checkpoints/from_scratch --eval chat
 """
 
 import argparse
@@ -38,7 +38,7 @@ parser.add_argument(
     required=True,
     help="Path to a model directory or Trainer output directory",
 )
-parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
+parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 parser.add_argument("--eval", type=str, default="bpb,sample", help="Comma-separated modes: bpb,sample,chat")
 parser.add_argument("--tasks", type=str, default="", help="Tasks for chat eval, pipe-separated. Default = all.")
 parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
