@@ -1,0 +1,5 @@
+TinyGPT smoke test.
+The sky is blue because shorter wavelengths scatter more strongly.
+Paris is the capital of France.
+Two plus two equals four.
+Writing small tests catches obvious integration issues early.

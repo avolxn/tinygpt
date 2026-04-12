@@ -8,13 +8,12 @@ set -euo pipefail
 # 4. issue one chat prompt
 #
 # From repo root:
-#   bash runs/runcpu.sh
+#   bash runs/smoke.sh
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-export TINYGPT_BASE_DIR="${TINYGPT_BASE_DIR:-$HOME/.cache/tinygpt}"
-mkdir -p "$TINYGPT_BASE_DIR"
+mkdir -p data
 
 command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
@@ -27,7 +26,7 @@ if [ -z "${WANDB_RUN:-}" ]; then
 fi
 DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
 
-CORPUS="$TINYGPT_BASE_DIR/smoke_corpus.txt"
+CORPUS="data/smoke_corpus.txt"
 cat >"$CORPUS" <<'EOF'
 TinyGPT smoke test.
 The sky is blue because shorter wavelengths scatter more strongly.
@@ -36,7 +35,7 @@ Two plus two equals four.
 Writing small tests catches obvious integration issues early.
 EOF
 
-IDENTITY_JSONL="$TINYGPT_BASE_DIR/smoke_identity.jsonl"
+IDENTITY_JSONL="data/smoke_identity.jsonl"
 cat >"$IDENTITY_JSONL" <<'EOF'
 [{"role":"user","content":"Say hello in one sentence."},{"role":"assistant","content":"Hello from TinyGPT."}]
 [{"role":"user","content":"What is 2 + 2?"},{"role":"assistant","content":"2 + 2 = 4."}]
@@ -48,7 +47,7 @@ python -m scripts.train_tokenizer \
   --txt "$CORPUS" \
   --max-chars 200000 \
   --vocab-size 2048 \
-  --out-dir out/tokenizer_smoke
+  --out-dir data/tokenizer_smoke
 
 echo "==> Tiny local pretrain"
 python -m scripts.pretrain \
@@ -66,28 +65,30 @@ python -m scripts.pretrain \
   --sample-every -1 \
   --dataset "" \
   --txt "$CORPUS" \
-  --tokenizer-dir out/tokenizer_smoke \
+  --tokenizer-dir data/tokenizer_smoke \
   --run "$WANDB_RUN" \
-  --run-name smoke_test
+  --run-name smoke \
+  --out-dir data
 
 echo "==> Tiny local SFT"
 python -m scripts.finetune \
   --device-type "$DEVICE_TYPE" \
-  --checkpoint out/pretrain_checkpoints/smoke_test \
-  --tokenizer-dir out/tokenizer_smoke \
+  --checkpoint data/pretrain_checkpoints/smoke \
+  --tokenizer-dir data/tokenizer_smoke \
   --device-batch-size 1 \
   --num-iterations 20 \
   --eval-every 10 \
   --tasks identity \
   --identity-conversations "$IDENTITY_JSONL" \
   --run "$WANDB_RUN" \
-  --run-name smoke_test
+  --run-name smoke \
+  --out-dir data
 
 echo "==> One chat prompt"
 python -m scripts.chat \
   --device-type "$DEVICE_TYPE" \
-  --checkpoint out/sft_checkpoints/smoke_test \
-  --tokenizer-dir out/tokenizer_smoke \
+  --checkpoint data/sft_checkpoints/smoke \
+  --tokenizer-dir data/tokenizer_smoke \
   --prompt "Say hello in one short sentence." \
   --temperature 0.0 \
   --max-tokens 24

@@ -11,14 +11,13 @@ set -euo pipefail
 # runs/train_100usd_nanochat_tokenizer.sh.
 #
 # From repo root:
-#   bash runs/distill_1000usd.sh
+#   bash runs/distill_from_nanochat_d32.sh
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 export OMP_NUM_THREADS=1
-export TINYGPT_BASE_DIR="${TINYGPT_BASE_DIR:-$HOME/.cache/tinygpt}"
-mkdir -p "$TINYGPT_BASE_DIR"
+mkdir -p data
 
 command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
@@ -32,32 +31,32 @@ fi
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
 
-if [ ! -d "out/pretrain_checkpoints/100usd_nanochat_tokenizer" ]; then
-  echo "Student checkpoint not found: out/pretrain_checkpoints/100usd_nanochat_tokenizer"
-  echo "Run bash runs/train_100usd_nanochat_tokenizer.sh first."
+if [ ! -d "data/pretrain_checkpoints/pretrain_with_nanochat_d32" ]; then
+  echo "Student checkpoint not found: data/pretrain_checkpoints/pretrain_with_nanochat_d32"
+  echo "Run bash runs/pretrain_with_nanochat_d32.sh first."
   exit 1
 fi
 
-if [ ! -f "out/nanochat_d32/config.json" ] || [ ! -f "out/nanochat_d32/model.safetensors" ]; then
+if [ ! -f "data/teacher_nanochat_d32/config.json" ] || [ ! -f "data/teacher_nanochat_d32/model.safetensors" ]; then
   echo "==> Converting nanochat teacher"
   python -m scripts.convert \
     --input karpathy/nanochat-d32 \
-    --out-dir out/nanochat_d32
+    --out-dir data/teacher_nanochat_d32
 else
-  echo "==> Reusing converted teacher at out/nanochat_d32"
+  echo "==> Reusing converted teacher at data/teacher_nanochat_d32"
 fi
 
-if [ ! -f "$TINYGPT_BASE_DIR/identity_conversations.jsonl" ]; then
-  curl -fsSL -o "$TINYGPT_BASE_DIR/identity_conversations.jsonl" \
+if [ ! -f "data/identity_conversations.jsonl" ]; then
+  curl -fsSL -o "data/identity_conversations.jsonl" \
     https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 fi
 
-echo "==> Distilling out/pretrain_checkpoints/100usd_nanochat_tokenizer from out/nanochat_d32"
+echo "==> Distilling data/pretrain_checkpoints/pretrain_with_nanochat_d32 from data/teacher_nanochat_d32"
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.distill \
-  --checkpoint out/pretrain_checkpoints/100usd_nanochat_tokenizer \
-  --tokenizer-dir out/nanochat_d32 \
-  --teacher-model out/nanochat_d32 \
-  --teacher-tokenizer out/nanochat_d32 \
+  --checkpoint data/pretrain_checkpoints/pretrain_with_nanochat_d32 \
+  --tokenizer-dir data/tokenizer_nanochat_d32 \
+  --teacher-model data/teacher_nanochat_d32 \
+  --teacher-tokenizer data/teacher_nanochat_d32 \
   --teacher-device "$TEACHER_DEVICE" \
   --device-batch-size 4 \
   --num-iterations 12000 \
@@ -65,14 +64,15 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.distill \
   --distill-alpha 0.75 \
   --distill-temperature 1.5 \
   --tasks smoltalk,mmlu,gsm8k,identity \
-  --identity-conversations "$TINYGPT_BASE_DIR/identity_conversations.jsonl" \
+  --identity-conversations data/identity_conversations.jsonl \
   --run "$WANDB_RUN" \
-  --run-name 1000usd_distill
+  --run-name distill_from_nanochat_d32 \
+  --out-dir data
 
-echo "==> Evaluating distilled checkpoint out/distill_checkpoints/1000usd_distill"
+echo "==> Evaluating distilled checkpoint data/distill_checkpoints/distill_from_nanochat_d32"
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate \
-  --checkpoint out/distill_checkpoints/1000usd_distill \
-  --tokenizer-dir out/nanochat_d32 \
+  --checkpoint data/distill_checkpoints/distill_from_nanochat_d32 \
+  --tokenizer-dir data/tokenizer_nanochat_d32 \
   --eval chat \
   --device-batch-size 4 \
   --max-problems 64

@@ -1,0 +1,9 @@
+{
+  "sequence_len": 128,
+  "vocab_size": 387,
+  "n_layer": 4,
+  "n_head": 4,
+  "n_kv_head": 4,
+  "n_embd": 128,
+  "window_pattern": "L"
+}

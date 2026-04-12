@@ -33,7 +33,6 @@ bash runs/smoke.sh
 
 - `WANDB_RUN` для имени run в Weights & Biases. По умолчанию используется `dummy`.
 - `NPROC_PER_NODE` для числа GPU-процессов в GPU-скриптах.
-- `TINYGPT_BASE_DIR` для кэшей и вспомогательных файлов.
 - `DEVICE_TYPE` и `TEACHER_DEVICE` там, где это действительно нужно.
 
 Примеры:
@@ -43,6 +42,8 @@ WANDB_RUN=my_student bash runs/pretrain_with_nanochat_d32.sh
 WANDB_RUN=my_distill TEACHER_DEVICE=cpu bash runs/distill_from_nanochat_d32.sh
 DEVICE_TYPE=cpu bash runs/smoke.sh
 ```
+
+Артефакты и вспомогательные файлы сохраняются в `data/`, а не в `out/`.
 
 ## Примечания по budget-лейблам
 
