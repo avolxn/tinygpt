@@ -21,10 +21,11 @@ from transformers import Trainer, TrainerCallback, TrainerControl, TrainerState,
 
 from tinygpt.checkpoint import save_model_checkpoint
 from tinygpt.distillation import masked_distillation_loss
+from tinygpt.distributed import print0
 from tinygpt.inference import Engine
 from tinygpt.optimizer import make_optimizer
 from tinygpt.scheduler import get_lr_multiplier
-from tinygpt.utils import get_model_device, print0
+from tinygpt.utils import get_model_device
 
 
 class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):

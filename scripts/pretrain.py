@@ -33,20 +33,17 @@ from tinygpt.attention import flash_attn_available, use_flash_attn
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, resolve_model_directory
 from tinygpt.config import make_config
 from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
+from tinygpt.distributed import (
+    compute_cleanup,
+    compute_init,
+    make_fsdp_mixed_precision,
+    print0,
+)
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import GPT, Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.train import SamplerCallback, TinyGPTTrainer
-from tinygpt.utils import (
-    autodetect_device_type,
-    compute_cleanup,
-    compute_dtype,
-    compute_dtype_reason,
-    compute_init,
-    get_peak_flops,
-    make_fsdp_mixed_precision,
-    print0,
-)
+from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
 # Logging
