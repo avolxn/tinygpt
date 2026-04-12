@@ -53,9 +53,11 @@ class TinyGPTTrainer(Trainer):
     """Trainer subclass tailored for tinygpt.
 
     Args:
-        matrix_lr: Learning rate for transformer block weight matrices.
-        embedding_lr: Learning rate for embedding parameters.
-        scalar_lr: Learning rate for scalar/1-D parameters.
+        matrix_lr: Learning rate for transformer block weight matrices (Muon).
+        embedding_lr: Learning rate for embedding parameters (AdamW).
+        scalar_lr: Learning rate for scalar/1-D parameters (AdamW).
+        muon_momentum: Momentum for the Muon optimizer (default 0.95).
+        muon_ns_steps: Newton-Schulz iteration steps for Muon (default 5).
         warmdown_ratio: Fraction of total steps used for cosine decay.
         final_lr_frac: LR at the end as a fraction of peak LR.
         train_loader: Infinite iterator yielding (inputs, targets) batches.
@@ -69,6 +71,8 @@ class TinyGPTTrainer(Trainer):
         matrix_lr: float,
         embedding_lr: float,
         scalar_lr: float,
+        muon_momentum: float = 0.95,
+        muon_ns_steps: int = 5,
         warmdown_ratio: float = 0.65,
         final_lr_frac: float = 0.05,
         train_loader: Iterator[tuple[torch.Tensor, torch.Tensor]],
@@ -82,6 +86,8 @@ class TinyGPTTrainer(Trainer):
         self._matrix_lr = matrix_lr
         self._embedding_lr = embedding_lr
         self._scalar_lr = scalar_lr
+        self._muon_momentum = muon_momentum
+        self._muon_ns_steps = muon_ns_steps
         self._warmdown_ratio = warmdown_ratio
         self._final_lr_frac = final_lr_frac
         self._train_loader = train_loader
@@ -161,13 +167,13 @@ class TinyGPTTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     def create_optimizer(self, model: Any = None) -> torch.optim.Optimizer:
-        """Create the multi-group AdamW optimizer via make_optimizer.
+        """Create the MuonAdamW optimizer via make_optimizer.
 
         Args:
             model: Ignored; uses self.model.
 
         Returns:
-            Configured AdamW optimizer with per-group learning rates.
+            MuonAdamW optimizer with Muon for matrix params and AdamW for rest.
         """
         assert self.model is not None
         self.optimizer = make_optimizer(
@@ -176,6 +182,8 @@ class TinyGPTTrainer(Trainer):
             embedding_lr=self._embedding_lr,
             scalar_lr=self._scalar_lr,
             weight_decay=self.args.weight_decay,
+            muon_momentum=self._muon_momentum,
+            muon_ns_steps=self._muon_ns_steps,
         )
         return self.optimizer
 

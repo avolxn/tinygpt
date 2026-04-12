@@ -1,9 +1,13 @@
 """
-Optimizer utilities for tinygpt.
+Combined MuonAdamW optimizer for tinygpt.
 
-Provides parameter group construction (with weight-decay exclusions) for a GPT
-model.  The actual AdamW optimizer is created by the caller, after FSDP
-wrapping, so parameter identity is correct.
+Uses torch.optim.Muon for 2D transformer block weight matrices, and
+torch.optim.AdamW for embeddings, lm_head, and scalar parameters.
+
+NOTE: torch.optim.Muon requires full (unsharded) parameter matrices for
+Newton-Schulz orthogonalization to be correct. When training with FSDP,
+use ShardingStrategy.NO_SHARD (equivalent to DDP). FULL_SHARD / SHARD_GRAD_OP
+shard matrices along the first dimension, which breaks NS orthogonalization.
 """
 
 from typing import Any
@@ -15,34 +19,27 @@ import torch.nn as nn
 def make_param_groups(
     model: nn.Module,
     *,
-    matrix_lr: float = 0.001,
-    embedding_lr: float = 0.01,
-    scalar_lr: float = 0.1,
+    matrix_lr: float = 0.02,
+    embedding_lr: float = 0.3,
+    scalar_lr: float = 0.5,
     lm_head_lr: float | None = None,
     weight_decay: float = 0.1,
+    muon_momentum: float = 0.95,
+    muon_ns_steps: int = 5,
+    adamw_betas: tuple[float, float] = (0.9, 0.95),
+    adamw_eps: float = 1e-8,
 ) -> list[dict[str, Any]]:
     """
-    Split model parameters into AdamW-friendly groups.
+    Split model parameters into MuonAdamW-friendly groups.
 
     Groups:
-      - matrix_params   : all 2-D weight matrices in transformer blocks  → weight decay
-      - lm_head_params  : lm_head weight                                 → weight decay
-      - embedding_params: wte + value_embeds                              → no decay
-      - scalar_params   : 1-D params (lambdas, biases)                   → no decay
+      - matrix_params   : 2-D transformer block weights → Muon (weight decay)
+      - lm_head_params  : lm_head weight                → AdamW (weight decay)
+      - embedding_params: wte + value_embeds            → AdamW (no decay)
+      - scalar_params   : 1-D params (biases, lambdas)  → AdamW (no decay)
 
-    Works with both unwrapped and FSDP-wrapped models because we filter by
-    parameter name rather than module reference.
-
-    Args:
-        model: unwrapped or FSDP-wrapped GPT
-        matrix_lr: LR for transformer block weight matrices
-        embedding_lr: LR for embedding parameters
-        scalar_lr: LR for scalar parameters
-        lm_head_lr: LR for lm_head (defaults to matrix_lr)
-        weight_decay: weight decay coefficient for matrix and lm_head params
-
-    Returns:
-        list of param-group dicts suitable for torch.optim.AdamW
+    Works with both unwrapped and FSDP-wrapped models because filtering is
+    done by parameter name rather than module reference.
     """
     if lm_head_lr is None:
         lm_head_lr = matrix_lr
@@ -53,7 +50,6 @@ def make_param_groups(
     scalar_params: list[nn.Parameter] = []
 
     seen: set[int] = set()
-
     for name, param in model.named_parameters():
         if id(param) in seen:
             continue
@@ -68,56 +64,132 @@ def make_param_groups(
         else:
             matrix_params.append(param)
 
-    groups = [
-        {
+    groups: list[dict[str, Any]] = []
+
+    if matrix_params:
+        groups.append({
+            "kind": "muon",
             "params": matrix_params,
             "lr": matrix_lr,
             "weight_decay": weight_decay,
-        },
-        {
+            "momentum": muon_momentum,
+            "ns_steps": muon_ns_steps,
+        })
+    if lm_head_params:
+        groups.append({
+            "kind": "adamw",
             "params": lm_head_params,
             "lr": lm_head_lr,
             "weight_decay": weight_decay,
-        },
-        {
+            "betas": adamw_betas,
+            "eps": adamw_eps,
+        })
+    if embedding_params:
+        groups.append({
+            "kind": "adamw",
             "params": embedding_params,
             "lr": embedding_lr,
             "weight_decay": 0.0,
-        },
-        {
+            "betas": adamw_betas,
+            "eps": adamw_eps,
+        })
+    if scalar_params:
+        groups.append({
+            "kind": "adamw",
             "params": scalar_params,
             "lr": scalar_lr,
             "weight_decay": 0.0,
-        },
-    ]
-    return [g for g in groups if len(g["params"]) > 0]  # type: ignore[arg-type]
+            "betas": adamw_betas,
+            "eps": adamw_eps,
+        })
+
+    return groups
+
+
+class MuonAdamW(torch.optim.Optimizer):
+    """
+    Combined optimizer: torch.optim.Muon for 2D matrix params, AdamW for rest.
+
+    Wraps torch.optim.Muon and torch.optim.AdamW as sub-optimizers.
+    Gradient synchronization is handled externally (FSDP with NO_SHARD or DDP)
+    before step() is called — this class does no distributed communication.
+
+    The combined param_groups list exposes both sub-optimizers' groups so that
+    standard LambdaLR schedulers work transparently: modifying group['lr'] in
+    the combined list propagates to the actual sub-optimizer param groups via
+    shared dict references.
+
+    Args:
+        param_groups: List of dicts with 'kind' key ('muon' or 'adamw').
+            Muon groups: params, lr, weight_decay, momentum, ns_steps.
+            AdamW groups: params, lr, weight_decay, betas, eps.
+    """
+
+    def __init__(self, param_groups: list[dict[str, Any]]) -> None:
+        muon_groups = [
+            {k: v for k, v in g.items() if k not in ("kind", "betas", "eps")}
+            for g in param_groups if g["kind"] == "muon"
+        ]
+        adamw_groups = [
+            {k: v for k, v in g.items() if k not in ("kind", "momentum", "ns_steps")}
+            for g in param_groups if g["kind"] == "adamw"
+        ]
+
+        if not muon_groups:
+            raise ValueError("MuonAdamW requires at least one 'muon' param group")
+        if not adamw_groups:
+            raise ValueError("MuonAdamW requires at least one 'adamw' param group")
+
+        self._muon = torch.optim.Muon(muon_groups)
+        self._adamw = torch.optim.AdamW(adamw_groups)
+
+        # Initialise base Optimizer for isinstance compatibility (LambdaLR, etc.).
+        # All params in one flat group; param_groups is replaced immediately after.
+        all_params = [p for g in param_groups for p in g["params"]]
+        super().__init__([{"params": all_params}], defaults={})
+
+        # Replace base class param_groups with the sub-optimizers' actual groups.
+        # The dicts are shared references, so LambdaLR can set group['lr'] and
+        # it will take effect inside the sub-optimizers.
+        self.param_groups = self._muon.param_groups + self._adamw.param_groups  # type: ignore[assignment]
+
+    @torch.no_grad()
+    def step(self, closure: Any = None) -> None:  # type: ignore[override]
+        self._muon.step(closure)
+        self._adamw.step(closure)
+
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        self._muon.zero_grad(set_to_none=set_to_none)
+        self._adamw.zero_grad(set_to_none=set_to_none)
+
+    def state_dict(self) -> dict[str, Any]:  # type: ignore[override]
+        return {"muon": self._muon.state_dict(), "adamw": self._adamw.state_dict()}
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:  # type: ignore[override]
+        self._muon.load_state_dict(state_dict["muon"])
+        self._adamw.load_state_dict(state_dict["adamw"])
 
 
 def make_optimizer(
     model: nn.Module,
     *,
-    matrix_lr: float = 0.001,
-    embedding_lr: float = 0.01,
-    scalar_lr: float = 0.1,
+    matrix_lr: float = 0.02,
+    embedding_lr: float = 0.3,
+    scalar_lr: float = 0.5,
     lm_head_lr: float | None = None,
     weight_decay: float = 0.1,
-    betas: tuple[float, float] = (0.9, 0.95),
-    eps: float = 1e-8,
-    fused: bool = True,
-) -> torch.optim.AdamW:
+    muon_momentum: float = 0.95,
+    muon_ns_steps: int = 5,
+    adamw_betas: tuple[float, float] = (0.9, 0.95),
+    adamw_eps: float = 1e-8,
+) -> MuonAdamW:
     """
-    Create an AdamW optimizer with per-group learning rates and weight decay.
+    Create a MuonAdamW optimizer with per-group learning rates.
 
-    Call this AFTER FSDP wrapping so parameter objects are the sharded ones.
-
-    Args:
-        model: FSDP-wrapped (or plain) GPT
-        fused: use fused AdamW kernel (CUDA only; ignored on CPU/MPS)
-
-    Returns:
-        Configured AdamW optimizer
+    Call this AFTER FSDP wrapping so parameter objects are the correct ones.
+    Requires FSDP ShardingStrategy.NO_SHARD for multi-GPU correctness —
+    Muon's Newton-Schulz step needs full unsharded matrices.
     """
-    use_fused = fused and torch.cuda.is_available()
     param_groups = make_param_groups(
         model,
         matrix_lr=matrix_lr,
@@ -125,8 +197,12 @@ def make_optimizer(
         scalar_lr=scalar_lr,
         lm_head_lr=lm_head_lr,
         weight_decay=weight_decay,
+        muon_momentum=muon_momentum,
+        muon_ns_steps=muon_ns_steps,
+        adamw_betas=adamw_betas,
+        adamw_eps=adamw_eps,
     )
-    optimizer = torch.optim.AdamW(param_groups, betas=betas, eps=eps, fused=use_fused)
+    optimizer = MuonAdamW(param_groups)
     for group in optimizer.param_groups:
         group["initial_lr"] = group["lr"]
     return optimizer

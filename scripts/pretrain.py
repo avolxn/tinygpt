@@ -75,12 +75,14 @@ parser.add_argument("--target-param-data-ratio", type=float, default=12)
 # Batch sizes
 parser.add_argument("--device-batch-size", type=int, default=32)
 parser.add_argument("--total-batch-size", type=int, default=-1)
-# Optimizer
-parser.add_argument("--matrix-lr", type=float, default=0.001)
-parser.add_argument("--embedding-lr", type=float, default=0.01)
-parser.add_argument("--scalar-lr", type=float, default=0.1)
+# Optimizer (MuonAdamW: Muon for matrix params, AdamW for embeddings/scalars)
+parser.add_argument("--matrix-lr", type=float, default=0.02, help="LR for transformer matrix weights (Muon)")
+parser.add_argument("--embedding-lr", type=float, default=0.3, help="LR for embedding parameters (AdamW)")
+parser.add_argument("--scalar-lr", type=float, default=0.5, help="LR for scalar/1-D parameters (AdamW)")
 parser.add_argument("--weight-decay", type=float, default=0.1)
 parser.add_argument("--grad-clip", type=float, default=1.0)
+parser.add_argument("--muon-momentum", type=float, default=0.95, help="Momentum for Muon optimizer")
+parser.add_argument("--muon-ns-steps", type=int, default=5, help="Newton-Schulz iterations for Muon")
 # LR schedule
 parser.add_argument("--warmup-steps", type=int, default=40)
 parser.add_argument("--warmdown-ratio", type=float, default=0.65)
@@ -151,6 +153,13 @@ if args.resume_from:
     print0(f"Resumed at step {start_step}")
 
 if device_type == "cuda" and is_dist:
+    if args.sharding_strategy != "NO_SHARD":
+        print0("!" * 70)
+        print0(f"WARNING: sharding_strategy={args.sharding_strategy} shards parameters along")
+        print0("         the first dimension. Muon's Newton-Schulz orthogonalization")
+        print0("         requires full matrices — results will be INCORRECT with sharding.")
+        print0("         Use --sharding-strategy NO_SHARD for correct Muon behavior.")
+        print0("!" * 70)
     strategy_map = {
         "FULL_SHARD": ShardingStrategy.FULL_SHARD,
         "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
@@ -328,6 +337,8 @@ trainer = TinyGPTTrainer(
     matrix_lr=args.matrix_lr,
     embedding_lr=args.embedding_lr,
     scalar_lr=args.scalar_lr,
+    muon_momentum=args.muon_momentum,
+    muon_ns_steps=args.muon_ns_steps,
     warmdown_ratio=args.warmdown_ratio,
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,
