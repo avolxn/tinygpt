@@ -13,7 +13,7 @@ import torch
 class KVCache:
     """Pre-allocated KV cache for flash attention (B, T, H, D) layout.
 
-    Compatible with both FA2 and SDPA backends.
+    Compatible with both FA3 and SDPA backends.
     """
 
     def __init__(

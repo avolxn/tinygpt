@@ -29,7 +29,7 @@ from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from transformers import TrainingArguments
 
-from tinygpt.attention import flash_attn_available, use_flash_attn
+from tinygpt.attention import flash_attn_available, flash_attn_backend, use_flash_attn
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, resolve_model_directory
 from tinygpt.config import make_config
 from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
@@ -113,13 +113,13 @@ else:
 print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
 
 if use_flash_attn:
-    print0("Using Flash Attention 2 (Ampere+ GPU detected).")
+    print0(f"Using {flash_attn_backend}.")
 else:
     print0("!" * 70)
     if flash_attn_available and compute_dtype != torch.bfloat16:
-        print0(f"WARNING: FA2 only supports bf16, compute_dtype={compute_dtype}. Using SDPA.")
+        print0(f"WARNING: flash-attn available but requires bf16, compute_dtype={compute_dtype}. Using SDPA.")
     else:
-        print0("WARNING: Flash Attention 2 not available, using PyTorch SDPA fallback.")
+        print0("WARNING: flash-attn not available (install flash-attn-4 / kernels / flash-attn). Using SDPA fallback.")
     print0("!" * 70)
 
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
@@ -151,6 +151,7 @@ if args.resume_from:
     model, resume_meta = build_model_from_checkpoint(resolved_resume_dir, device, phase="train")
     start_step = int(resume_meta.get("step", 0))
     print0(f"Resumed at step {start_step}")
+
 
 if device_type == "cuda" and is_dist:
     if args.sharding_strategy != "NO_SHARD":
