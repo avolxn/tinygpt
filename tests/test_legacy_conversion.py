@@ -28,17 +28,11 @@ def test_convert_legacy_model_to_hf_patches_missing_keys() -> None:
     model.init_weights()
 
     legacy_state = {
-        key: value
-        for key, value in model.state_dict().items()
-        if key not in {"resid_lambdas", "x0_lambdas"}
+        key: value for key, value in model.state_dict().items() if key not in {"resid_lambdas", "x0_lambdas"}
     }
     legacy_meta = {
         "step": 123,
-        "model_config": {
-            key: value
-            for key, value in asdict(config).items()
-            if key != "window_pattern"
-        },
+        "model_config": {key: value for key, value in asdict(config).items() if key != "window_pattern"},
         "tag": "legacy",
     }
 

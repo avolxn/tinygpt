@@ -17,6 +17,7 @@ Installation:
     FA2: pip install flash-attn --no-build-isolation
 """
 
+import importlib
 import logging
 from typing import Any
 
@@ -36,20 +37,21 @@ if torch.cuda.is_available():
 
     if _sm_major >= 9:
         try:
-            import flash_attn.cute as _fa4  # type: ignore[import]
+            _fa4 = importlib.import_module("flash_attn.cute")
         except Exception:
             pass
 
     if _sm_major == 9:
         try:
-            from kernels import get_kernel  # type: ignore[import]
+            from kernels import get_kernel
+
             _fa3 = get_kernel("kernels-community/flash-attn3", version=1)
         except Exception:
             pass
 
     if _sm_major >= 8:
         try:
-            import flash_attn as _fa2  # type: ignore[import]
+            _fa2 = importlib.import_module("flash_attn")
         except ImportError:
             pass
 

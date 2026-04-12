@@ -10,7 +10,7 @@ use ShardingStrategy.NO_SHARD (equivalent to DDP). FULL_SHARD / SHARD_GRAD_OP
 shard matrices along the first dimension, which breaks NS orthogonalization.
 """
 
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn as nn
@@ -67,41 +67,49 @@ def make_param_groups(
     groups: list[dict[str, Any]] = []
 
     if matrix_params:
-        groups.append({
-            "kind": "muon",
-            "params": matrix_params,
-            "lr": matrix_lr,
-            "weight_decay": weight_decay,
-            "momentum": muon_momentum,
-            "ns_steps": muon_ns_steps,
-        })
+        groups.append(
+            {
+                "kind": "muon",
+                "params": matrix_params,
+                "lr": matrix_lr,
+                "weight_decay": weight_decay,
+                "momentum": muon_momentum,
+                "ns_steps": muon_ns_steps,
+            }
+        )
     if lm_head_params:
-        groups.append({
-            "kind": "adamw",
-            "params": lm_head_params,
-            "lr": lm_head_lr,
-            "weight_decay": weight_decay,
-            "betas": adamw_betas,
-            "eps": adamw_eps,
-        })
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": lm_head_params,
+                "lr": lm_head_lr,
+                "weight_decay": weight_decay,
+                "betas": adamw_betas,
+                "eps": adamw_eps,
+            }
+        )
     if embedding_params:
-        groups.append({
-            "kind": "adamw",
-            "params": embedding_params,
-            "lr": embedding_lr,
-            "weight_decay": 0.0,
-            "betas": adamw_betas,
-            "eps": adamw_eps,
-        })
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": embedding_params,
+                "lr": embedding_lr,
+                "weight_decay": 0.0,
+                "betas": adamw_betas,
+                "eps": adamw_eps,
+            }
+        )
     if scalar_params:
-        groups.append({
-            "kind": "adamw",
-            "params": scalar_params,
-            "lr": scalar_lr,
-            "weight_decay": 0.0,
-            "betas": adamw_betas,
-            "eps": adamw_eps,
-        })
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": scalar_params,
+                "lr": scalar_lr,
+                "weight_decay": 0.0,
+                "betas": adamw_betas,
+                "eps": adamw_eps,
+            }
+        )
 
     return groups
 
@@ -128,11 +136,13 @@ class MuonAdamW(torch.optim.Optimizer):
     def __init__(self, param_groups: list[dict[str, Any]]) -> None:
         muon_groups = [
             {k: v for k, v in g.items() if k not in ("kind", "betas", "eps")}
-            for g in param_groups if g["kind"] == "muon"
+            for g in param_groups
+            if g["kind"] == "muon"
         ]
         adamw_groups = [
             {k: v for k, v in g.items() if k not in ("kind", "momentum", "ns_steps")}
-            for g in param_groups if g["kind"] == "adamw"
+            for g in param_groups
+            if g["kind"] == "adamw"
         ]
 
         if not muon_groups:
@@ -151,21 +161,22 @@ class MuonAdamW(torch.optim.Optimizer):
         # Replace base class param_groups with the sub-optimizers' actual groups.
         # The dicts are shared references, so LambdaLR can set group['lr'] and
         # it will take effect inside the sub-optimizers.
-        self.param_groups = self._muon.param_groups + self._adamw.param_groups  # type: ignore[assignment]
+        self.param_groups = self._muon.param_groups + self._adamw.param_groups
 
     @torch.no_grad()
     def step(self, closure: Any = None) -> None:  # type: ignore[override]
-        self._muon.step(closure)
+        # torch.optim.Muon currently exposes an untyped step() to mypy.
+        cast(Any, self._muon).step(closure)
         self._adamw.step(closure)
 
     def zero_grad(self, set_to_none: bool = True) -> None:
         self._muon.zero_grad(set_to_none=set_to_none)
         self._adamw.zero_grad(set_to_none=set_to_none)
 
-    def state_dict(self) -> dict[str, Any]:  # type: ignore[override]
+    def state_dict(self) -> dict[str, Any]:
         return {"muon": self._muon.state_dict(), "adamw": self._adamw.state_dict()}
 
-    def load_state_dict(self, state_dict: dict[str, Any]) -> None:  # type: ignore[override]
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self._muon.load_state_dict(state_dict["muon"])
         self._adamw.load_state_dict(state_dict["adamw"])
 

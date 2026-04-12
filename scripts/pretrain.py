@@ -88,7 +88,9 @@ parser.add_argument("--warmup-steps", type=int, default=40)
 parser.add_argument("--warmdown-ratio", type=float, default=0.65)
 parser.add_argument("--final-lr-frac", type=float, default=0.05)
 # Resume
-parser.add_argument("--resume-from", type=str, default="", help="Model directory or Trainer output directory to resume from")
+parser.add_argument(
+    "--resume-from", type=str, default="", help="Model directory or Trainer output directory to resume from"
+)
 # Evaluation / sampling
 parser.add_argument("--eval-every", type=int, default=250)
 parser.add_argument("--eval-tokens", type=int, default=80 * 524288)
