@@ -2,10 +2,10 @@
 Train a BPE tokenizer in GPT-4 style.
 
 Streams text from an HF dataset (or a local .txt file) and trains a BPE
-tokenizer using HuggingFace `tokenizers`.  The result is saved as
-out/tokenizer/tokenizer.json.
+tokenizer using HuggingFace `tokenizers`. The result is saved as
+data/tokenizer/tokenizer.json.
 
-Also writes out/tokenizer/token_bytes.pt: a 1-D int32 tensor mapping each
+Also writes data/tokenizer/token_bytes.pt: a 1-D int32 tensor mapping each
 token id to its UTF-8 byte length (0 for special tokens) — used by the
 bits-per-byte evaluator.
 
@@ -40,7 +40,7 @@ parser.add_argument("--max-chars", type=int, default=2_000_000_000, help="Maximu
 parser.add_argument("--doc-cap", type=int, default=10_000, help="Maximum characters per document (default: 10k)")
 parser.add_argument("--vocab-size", type=int, default=32768, help="Vocabulary size (default: 32768 = 2^15)")
 parser.add_argument(
-    "--out-dir", type=str, default="out/tokenizer", help="Output directory for tokenizer.json and token_bytes.pt"
+    "--out-dir", type=str, default="data/tokenizer", help="Output directory for tokenizer.json and token_bytes.pt"
 )
 args = parser.parse_args()
 

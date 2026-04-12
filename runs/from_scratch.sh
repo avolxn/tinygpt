@@ -31,7 +31,7 @@ python -m scripts.train_tokenizer \
   --out-dir data/tokenizer_from_scratch
 
 echo "Evaluating tokenizer data/tokenizer_from_scratch"
-python -m scripts.eval_tokenizer --tokenizer-dir data/tokenizer_from_scratch
+python -m scripts.evaluate_tokenizer --tokenizer-dir data/tokenizer_from_scratch
 
 echo "Pretraining student"
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
@@ -44,7 +44,7 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
   --out-dir data
 
 echo "Evaluating base checkpoint data/pretrain_checkpoints/from_scratch"
-torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate \
+torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate_model \
   --checkpoint data/pretrain_checkpoints/from_scratch \
   --tokenizer-dir data/tokenizer_from_scratch \
   --device-batch-size 16
@@ -66,7 +66,7 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.finetune \
   --out-dir data
 
 echo "Evaluating chat checkpoint data/sft_checkpoints/from_scratch"
-torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate \
+torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate_model \
   --checkpoint data/sft_checkpoints/from_scratch \
   --tokenizer-dir data/tokenizer_from_scratch \
   --eval chat \

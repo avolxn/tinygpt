@@ -4,8 +4,8 @@ Supervised fine-tuning (SFT) via HuggingFace Trainer.
 Loss is computed on assistant tokens only (mask = 1).
 
 Usage:
-    python -m scripts.finetune --checkpoint out/checkpoints/d12
-    torchrun --nproc_per_node=8 -m scripts.finetune --checkpoint out/checkpoints/d12
+    python -m scripts.finetune --checkpoint data/pretrain_checkpoints/from_scratch
+    torchrun --nproc_per_node=8 -m scripts.finetune --checkpoint data/pretrain_checkpoints/from_scratch
 """
 
 import os
@@ -47,7 +47,7 @@ parser.add_argument(
     required=True,
     help="Pre-trained model directory or Trainer output directory",
 )
-parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
+parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 # Logging
 parser.add_argument("--run", type=str, default="dummy")
 # Runtime
@@ -73,7 +73,7 @@ parser.add_argument("--final-lr-frac", type=float, default=0.0)
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=200)
 # Output
-parser.add_argument("--out-dir", type=str, default="out")
+parser.add_argument("--out-dir", type=str, default="data")
 parser.add_argument("--run-name", type=str, default="")
 # Task mixture
 parser.add_argument(

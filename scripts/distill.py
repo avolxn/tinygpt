@@ -5,8 +5,8 @@ Loss is computed on assistant tokens only (mask = 1) and combines
 supervised CE with online KL distillation from a teacher model.
 
 Usage:
-    python -m scripts.distill --checkpoint out/checkpoints/d12 --teacher-model out/teacher_hf
-    torchrun --nproc_per_node=8 -m scripts.distill --checkpoint out/checkpoints/d12 --teacher-model out/teacher_hf
+    python -m scripts.distill --checkpoint data/pretrain_checkpoints/pretrain_with_nanochat_d32 --teacher-model data/teacher_nanochat_d32
+    torchrun --nproc_per_node=8 -m scripts.distill --checkpoint data/pretrain_checkpoints/pretrain_with_nanochat_d32 --teacher-model data/teacher_nanochat_d32
 """
 
 import os
@@ -49,7 +49,7 @@ parser.add_argument(
     required=True,
     help="Student model directory or Trainer output directory",
 )
-parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
+parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 # Logging
 parser.add_argument("--run", type=str, default="dummy")
 # Runtime
@@ -75,7 +75,7 @@ parser.add_argument("--final-lr-frac", type=float, default=0.0)
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=200)
 # Output
-parser.add_argument("--out-dir", type=str, default="out")
+parser.add_argument("--out-dir", type=str, default="data")
 parser.add_argument("--run-name", type=str, default="")
 # Distillation
 parser.add_argument(

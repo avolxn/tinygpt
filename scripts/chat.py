@@ -2,8 +2,8 @@
 Interactive CLI chat with a fine-tuned tinygpt model.
 
 Usage:
-    python -m scripts.chat --checkpoint out/checkpoints/sft
-    python -m scripts.chat --checkpoint out/checkpoints/sft --prompt "What is 2+2?"
+    python -m scripts.chat --checkpoint data/sft_checkpoints/from_scratch
+    python -m scripts.chat --checkpoint data/sft_checkpoints/from_scratch --prompt "What is 2+2?"
 """
 
 import argparse
@@ -21,7 +21,7 @@ parser.add_argument(
     required=True,
     help="Path to a model directory or Trainer output directory",
 )
-parser.add_argument("--tokenizer-dir", type=str, default="out/tokenizer")
+parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 parser.add_argument("--prompt", type=str, default="", help="Single-turn prompt (interactive mode if empty)")
 parser.add_argument("--temperature", type=float, default=0.6)
 parser.add_argument("--top-k", type=int, default=50)

@@ -70,7 +70,7 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.distill \
   --out-dir data
 
 echo "==> Evaluating distilled checkpoint data/distill_checkpoints/distill_from_nanochat_d32"
-torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate \
+torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate_model \
   --checkpoint data/distill_checkpoints/distill_from_nanochat_d32 \
   --tokenizer-dir data/tokenizer_nanochat_d32 \
   --eval chat \

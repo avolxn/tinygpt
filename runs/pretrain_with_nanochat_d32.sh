@@ -37,7 +37,7 @@ else
   echo "==> Reusing tokenizer at data/tokenizer_nanochat_d32"
 fi
 
-python -m scripts.eval_tokenizer --tokenizer-dir data/tokenizer_nanochat_d32
+python -m scripts.evaluate_tokenizer --tokenizer-dir data/tokenizer_nanochat_d32
 
 echo "==> Pretraining student with nanochat tokenizer"
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
@@ -50,7 +50,7 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
   --out-dir data
 
 echo "==> Evaluating base checkpoint data/pretrain_checkpoints/pretrain_with_nanochat_d32"
-torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate \
+torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate_model \
   --checkpoint data/pretrain_checkpoints/pretrain_with_nanochat_d32 \
   --tokenizer-dir data/tokenizer_nanochat_d32 \
   --device-batch-size 16
