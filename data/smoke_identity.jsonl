@@ -1,0 +1,3 @@
+[{"role":"user","content":"Say hello in one sentence."},{"role":"assistant","content":"Hello from TinyGPT."}]
+[{"role":"user","content":"What is 2 + 2?"},{"role":"assistant","content":"2 + 2 = 4."}]
+[{"role":"user","content":"What color is the daytime sky?"},{"role":"assistant","content":"The daytime sky usually looks blue."}]
