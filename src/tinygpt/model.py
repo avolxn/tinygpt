@@ -28,8 +28,9 @@ import torch.nn.functional as F
 
 from tinygpt.attention import flash_attn_func, flash_attn_with_kvcache
 from tinygpt.config import GPTConfig
+from tinygpt.distributed import print0
 from tinygpt.kvcache import KVCache
-from tinygpt.utils import compute_dtype, print0
+from tinygpt.utils import compute_dtype
 
 qk_scale = 1.2
 softcap = 15.0

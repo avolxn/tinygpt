@@ -31,18 +31,16 @@ from tinygpt.attention import flash_attn_available
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir
 from tinygpt.dataloader import sft_data_loader
 from tinygpt.distillation import load_teacher_model, validate_teacher_tokenizer_compatibility
-from tinygpt.model import Block
-from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.train import TinyGPTTrainer
-from tinygpt.utils import (
-    autodetect_device_type,
+from tinygpt.distributed import (
     compute_cleanup,
-    compute_dtype,
-    compute_dtype_reason,
     compute_init,
     make_fsdp_mixed_precision,
     print0,
 )
+from tinygpt.model import Block
+from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.train import TinyGPTTrainer
+from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
 
 parser = argparse.ArgumentParser(description="Student-teacher distillation")
 parser.add_argument(

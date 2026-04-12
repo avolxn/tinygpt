@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from dataclasses import asdict
-from typing import Any
+from typing import Any, cast
 
 import torch
 from safetensors.torch import load_file as safe_load_file
@@ -44,9 +44,9 @@ def resolve_model_directory(model_ref: str) -> str:
     """Resolve a local model directory or Trainer output directory."""
     if _has_model_files(model_ref):
         return model_ref
-    last_checkpoint = get_last_checkpoint(model_ref)
+    last_checkpoint = get_last_checkpoint(model_ref)  # type: ignore[no-untyped-call]
     if last_checkpoint is not None:
-        return last_checkpoint
+        return cast(str, last_checkpoint)
     raise FileNotFoundError(
         f"Could not find {CONFIG_NAME} and {SAFE_WEIGHTS_NAME}, or a checkpoint-* directory, in {model_ref}"
     )
@@ -54,7 +54,7 @@ def resolve_model_directory(model_ref: str) -> str:
 
 def _load_json(path: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        return cast(dict[str, Any], json.load(f))
 
 
 def _load_optional_json(path: str) -> dict[str, Any]:
