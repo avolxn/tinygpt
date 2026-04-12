@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Approximate "$1000" distillation run:
+# Distillation run:
 # 1. convert the nanochat-d32 teacher locally
-# 2. load the $100 student trained with the same tokenizer
+# 2. load the student trained with the same tokenizer
 # 3. run online KL + CE distillation on chat tasks
 # 4. run a chat eval pass
 #
 # Important: the student checkpoint should come from
-# runs/train_100usd_nanochat_tokenizer.sh.
+# runs/pretrain_with_nanochat_d32.sh.
 #
 # From repo root:
 #   bash runs/distill_from_nanochat_d32.sh

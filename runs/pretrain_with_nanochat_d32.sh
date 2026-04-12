@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Approximate "$100" pretraining run using the tokenizer from:
+# Pretraining run using the tokenizer from:
 #   https://huggingface.co/karpathy/nanochat-d32
 #
 # This is the student you should use later with runs/distill_from_nanochat_d32.sh,
