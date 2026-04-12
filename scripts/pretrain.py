@@ -315,7 +315,7 @@ training_args = TrainingArguments(
     run_name=args.run if args.run != "dummy" else None,
     label_names=["labels"],
     fsdp="",  # We pre-wrap with FSDP above
-    no_cuda=(device_type != "cuda"),
+    use_cpu=(device_type == "cpu"),
     bf16=(compute_dtype == torch.bfloat16 and device_type == "cuda"),
     fp16=False,
     prediction_loss_only=True,
@@ -335,6 +335,7 @@ trainer = TinyGPTTrainer(
     model=model,
     args=training_args,
     callbacks=callbacks,
+    eval_dataset=[0] if args.eval_every > 0 else None,
     matrix_lr=args.matrix_lr,
     embedding_lr=args.embedding_lr,
     scalar_lr=args.scalar_lr,
