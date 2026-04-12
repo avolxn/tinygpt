@@ -70,20 +70,14 @@ def _weights_path(model_dir: str) -> str:
 
 def _sanitize_state_dict_for_save(model: torch.nn.Module) -> dict[str, torch.Tensor]:
     state_dict = model.state_dict()
-    return {
-        key.removeprefix("_orig_mod."): value.detach().cpu().contiguous()
-        for key, value in state_dict.items()
-    }
+    return {key.removeprefix("_orig_mod."): value.detach().cpu().contiguous() for key, value in state_dict.items()}
 
 
 def _load_state_dict(weights_path: str, device: torch.device) -> dict[str, torch.Tensor]:
     load_device = str(device) if device.type == "cuda" else "cpu"
     state_dict = safe_load_file(weights_path, device=load_device)
     if device.type in {"cpu", "mps"}:
-        state_dict = {
-            k: v.float() if v.dtype == torch.bfloat16 else v
-            for k, v in state_dict.items()
-        }
+        state_dict = {k: v.float() if v.dtype == torch.bfloat16 else v for k, v in state_dict.items()}
     if device.type == "mps":
         state_dict = {k: v.to(device) for k, v in state_dict.items()}
     return {key.removeprefix("_orig_mod."): value for key, value in state_dict.items()}

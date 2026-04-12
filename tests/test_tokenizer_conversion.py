@@ -20,7 +20,9 @@ def make_toy_encoding() -> tiktoken.Encoding:
         b" ": 5,
     }
     special_tokens = {"<|bos|>": 6, "<|assistant_start|>": 7}
-    return tiktoken.Encoding(name="toy", pat_str=r"\s+|[^\s]+", mergeable_ranks=mergeable_ranks, special_tokens=special_tokens)
+    return tiktoken.Encoding(
+        name="toy", pat_str=r"\s+|[^\s]+", mergeable_ranks=mergeable_ranks, special_tokens=special_tokens
+    )
 
 
 def test_convert_tiktoken_encoding_to_hf_keeps_regular_encoding() -> None:

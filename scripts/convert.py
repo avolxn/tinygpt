@@ -211,10 +211,7 @@ def convert_legacy_model_to_hf(
     _patch_legacy_config_keys(config_dict)
     _patch_legacy_weights(model_data, int(config_dict["n_layer"]))
 
-    state_dict = {
-        key.removeprefix("_orig_mod."): value.contiguous()
-        for key, value in model_data.items()
-    }
+    state_dict = {key.removeprefix("_orig_mod."): value.contiguous() for key, value in model_data.items()}
 
     os.makedirs(out_dir, exist_ok=True)
     config_path = os.path.join(out_dir, CONFIG_NAME)

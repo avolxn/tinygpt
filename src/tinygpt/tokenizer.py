@@ -10,7 +10,7 @@ Special tokens and the GPT-4 split pattern are fixed by tinygpt.
 import copy
 import os
 from collections.abc import Iterator
-from typing import Any, cast
+from typing import Any, cast, overload
 
 from tokenizers import Regex, decoders, pre_tokenizers
 from tokenizers import Tokenizer as HFTokenizer
@@ -189,6 +189,22 @@ class HuggingFaceTokenizer:
                     raise ValueError(f"Unknown special token: {append!r}")
                 ids.append(tok)
         return ids
+
+    @overload
+    def encode(
+        self,
+        text: str,
+        prepend: str | int | None = None,
+        append: str | int | None = None,
+    ) -> list[int]: ...
+
+    @overload
+    def encode(
+        self,
+        text: list[str],
+        prepend: str | int | None = None,
+        append: str | int | None = None,
+    ) -> list[list[int]]: ...
 
     def encode(
         self,

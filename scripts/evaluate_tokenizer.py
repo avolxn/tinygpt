@@ -11,8 +11,15 @@ Usage:
 
 import argparse
 import os
+from typing import TypedDict
 
 from tinygpt.tokenizer import HuggingFaceTokenizer
+
+
+class CompressionMetrics(TypedDict):
+    bytes: int
+    tokens: int
+    ratio: float
 
 parser = argparse.ArgumentParser(description="Evaluate tokenizer compression")
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer", help="Directory containing tokenizer.json")
@@ -90,7 +97,7 @@ GREEN = "\033[92m"
 RED = "\033[91m"
 RESET = "\033[0m"
 
-results: dict[str, dict[str, dict]] = {}
+results: dict[str, dict[str, CompressionMetrics]] = {}
 vocab_sizes: dict[str, int] = {}
 
 for name, tok in tokenizers.items():

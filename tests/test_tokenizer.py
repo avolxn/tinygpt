@@ -11,7 +11,7 @@ import pytest
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
 def tokenizer() -> HuggingFaceTokenizer:
     texts = [
         "Hello world! This is a test.",
