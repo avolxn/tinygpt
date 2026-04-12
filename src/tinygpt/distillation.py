@@ -25,7 +25,7 @@ def load_teacher_model(
     model_ref: str,
     device: torch.device,
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
-    """Load an inference-only teacher model from a local directory or Hub repo."""
+    """Load an inference-only teacher model from a local model directory."""
     model, metadata = build_model_from_checkpoint(model_ref, device=device, phase="eval")
     for param in model.parameters():
         param.requires_grad_(False)

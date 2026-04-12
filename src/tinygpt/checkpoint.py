@@ -3,8 +3,7 @@ Model serialization utilities for tinygpt.
 
 Runtime model directories use a Hugging Face style layout:
 - `config.json`
-- `model.safetensors` (preferred) or `pytorch_model.bin`
-- optional `tinygpt_metadata.json`
+- `model.safetensors`
 
 Trainer outputs may also contain `checkpoint-*` subdirectories with the same
 layout plus optimizer/scheduler state managed by `transformers.Trainer`.
@@ -19,18 +18,16 @@ from dataclasses import asdict
 from typing import Any
 
 import torch
-from huggingface_hub import snapshot_download
 from safetensors.torch import load_file as safe_load_file
 from safetensors.torch import save_file as safe_save_file
 from transformers.trainer_utils import get_last_checkpoint
-from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_NAME, WEIGHTS_NAME
+from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_NAME
 
 from tinygpt.config import GPTConfig
 from tinygpt.model import GPT
 
 logger = logging.getLogger(__name__)
-
-METADATA_NAME = "tinygpt_metadata.json"
+TRAINER_STATE_NAME = "trainer_state.json"
 
 
 def get_checkpoint_dir(out_dir: str, run_name: str) -> str:
@@ -40,38 +37,19 @@ def get_checkpoint_dir(out_dir: str, run_name: str) -> str:
 
 def _has_model_files(model_dir: str) -> bool:
     config_path = os.path.join(model_dir, CONFIG_NAME)
-    return os.path.exists(config_path) and (
-        os.path.exists(os.path.join(model_dir, SAFE_WEIGHTS_NAME))
-        or os.path.exists(os.path.join(model_dir, WEIGHTS_NAME))
-    )
+    return os.path.exists(config_path) and os.path.exists(os.path.join(model_dir, SAFE_WEIGHTS_NAME))
 
 
 def resolve_model_directory(model_ref: str) -> str:
-    """Resolve a local directory or Hub repo to a concrete model directory."""
-    if os.path.isdir(model_ref):
-        if _has_model_files(model_ref):
-            return model_ref
-        last_checkpoint = get_last_checkpoint(model_ref)
-        if last_checkpoint is not None:
-            return last_checkpoint
-        raise FileNotFoundError(
-            f"Could not find {CONFIG_NAME} with model weights or a checkpoint-* directory in {model_ref}"
-        )
-
-    snapshot_dir = snapshot_download(
-        repo_id=model_ref,
-        allow_patterns=[
-            CONFIG_NAME,
-            SAFE_WEIGHTS_NAME,
-            WEIGHTS_NAME,
-            METADATA_NAME,
-        ],
+    """Resolve a local model directory or Trainer output directory."""
+    if _has_model_files(model_ref):
+        return model_ref
+    last_checkpoint = get_last_checkpoint(model_ref)
+    if last_checkpoint is not None:
+        return last_checkpoint
+    raise FileNotFoundError(
+        f"Could not find {CONFIG_NAME} and {SAFE_WEIGHTS_NAME}, or a checkpoint-* directory, in {model_ref}"
     )
-    if not _has_model_files(snapshot_dir):
-        raise FileNotFoundError(
-            f"Could not find {CONFIG_NAME} with model weights in Hub repo {model_ref}"
-        )
-    return snapshot_dir
 
 
 def _load_json(path: str) -> dict[str, Any]:
@@ -84,13 +62,10 @@ def _load_optional_json(path: str) -> dict[str, Any]:
 
 
 def _weights_path(model_dir: str) -> str:
-    safetensors_path = os.path.join(model_dir, SAFE_WEIGHTS_NAME)
-    if os.path.exists(safetensors_path):
-        return safetensors_path
-    pytorch_path = os.path.join(model_dir, WEIGHTS_NAME)
-    if os.path.exists(pytorch_path):
-        return pytorch_path
-    raise FileNotFoundError(f"Could not find {SAFE_WEIGHTS_NAME} or {WEIGHTS_NAME} in {model_dir}")
+    weights_path = os.path.join(model_dir, SAFE_WEIGHTS_NAME)
+    if not os.path.exists(weights_path):
+        raise FileNotFoundError(f"Could not find {SAFE_WEIGHTS_NAME} in {model_dir}")
+    return weights_path
 
 
 def _sanitize_state_dict_for_save(model: torch.nn.Module) -> dict[str, torch.Tensor]:
@@ -102,12 +77,8 @@ def _sanitize_state_dict_for_save(model: torch.nn.Module) -> dict[str, torch.Ten
 
 
 def _load_state_dict(weights_path: str, device: torch.device) -> dict[str, torch.Tensor]:
-    if weights_path.endswith(".safetensors"):
-        load_device = str(device) if device.type == "cuda" else "cpu"
-        state_dict = safe_load_file(weights_path, device=load_device)
-    else:
-        state_dict = torch.load(weights_path, map_location=device, weights_only=True)
-
+    load_device = str(device) if device.type == "cuda" else "cpu"
+    state_dict = safe_load_file(weights_path, device=load_device)
     if device.type in {"cpu", "mps"}:
         state_dict = {
             k: v.float() if v.dtype == torch.bfloat16 else v
@@ -121,7 +92,6 @@ def _load_state_dict(weights_path: str, device: torch.device) -> dict[str, torch
 def save_model_checkpoint(
     output_dir: str,
     model: torch.nn.Module,
-    extra_meta: dict[str, Any] | None = None,
 ) -> None:
     """Save model weights and config in a Hugging Face style directory."""
     os.makedirs(output_dir, exist_ok=True)
@@ -136,12 +106,6 @@ def save_model_checkpoint(
     weights_path = os.path.join(output_dir, SAFE_WEIGHTS_NAME)
     safe_save_file(_sanitize_state_dict_for_save(model), weights_path, metadata={"format": "pt"})
     logger.info("Saved model weights to: %s", weights_path)
-
-    if extra_meta:
-        metadata_path = os.path.join(output_dir, METADATA_NAME)
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(extra_meta, f, indent=2)
-        logger.info("Saved metadata to: %s", metadata_path)
 
 
 def build_model_from_checkpoint(
@@ -165,7 +129,9 @@ def build_model_from_checkpoint(
     else:
         model.train()
 
-    metadata = _load_optional_json(os.path.join(model_dir, METADATA_NAME))
-    metadata.setdefault("model_config", config_dict)
-    metadata.setdefault("model_dir", model_dir)
+    metadata = _load_optional_json(os.path.join(model_dir, TRAINER_STATE_NAME))
+    if "global_step" in metadata and "step" not in metadata:
+        metadata["step"] = metadata["global_step"]
+    metadata["model_config"] = config_dict
+    metadata["model_dir"] = model_dir
     return model, metadata

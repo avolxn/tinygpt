@@ -2,9 +2,9 @@
 Convert nanochat-style checkpoints and tokenizers into Hugging Face format.
 
 Usage:
-    python -m scripts.convert_tokenizer --input karpathy/nanochat-d34 --out-dir out/teacher_hf
-    python -m scripts.convert_tokenizer --input path/to/legacy_dir --out-dir out/model_hf
-    python -m scripts.convert_tokenizer --input path/to/tokenizer.pkl --out-dir out/tokenizer_hf --skip-model
+    python -m scripts.convert --input karpathy/nanochat-d34 --out-dir out/teacher_hf
+    python -m scripts.convert --input path/to/legacy_dir --out-dir out/model_hf
+    python -m scripts.convert --input path/to/tokenizer.pkl --out-dir out/tokenizer_hf --skip-model
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ DEFAULT_PROBES = [
     "Punctuation: ()[]{}.,!?-_'\"",
 ]
 
-METADATA_NAME = "tinygpt_metadata.json"
+TRAINER_STATE_NAME = "trainer_state.json"
 _META_RE = re.compile(r"meta_(\d+)\.json$")
 
 
@@ -224,12 +224,12 @@ def convert_legacy_model_to_hf(
     weights_path = os.path.join(out_dir, SAFE_WEIGHTS_NAME)
     safe_save_file(state_dict, weights_path, metadata={"format": "pt"})
 
-    metadata = {key: value for key, value in meta_data.items() if key != "model_config"}
-    metadata["model_config"] = config_dict
-    metadata["step"] = resolved_step
-    metadata_path = os.path.join(out_dir, METADATA_NAME)
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2)
+    trainer_state = {
+        "global_step": int(meta_data.get("step", resolved_step)),
+    }
+    trainer_state_path = os.path.join(out_dir, TRAINER_STATE_NAME)
+    with open(trainer_state_path, "w", encoding="utf-8") as f:
+        json.dump(trainer_state, f, indent=2)
 
     return weights_path
 

@@ -75,7 +75,6 @@ class TinyGPTTrainer(Trainer):
         teacher_model: nn.Module | None = None,
         distill_alpha: float = 0.0,
         distill_temperature: float = 1.0,
-        extra_meta: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -89,7 +88,6 @@ class TinyGPTTrainer(Trainer):
         self._teacher_model = teacher_model
         self._distill_alpha = distill_alpha
         self._distill_temperature = distill_temperature
-        self._extra_meta = extra_meta or {}
 
     def get_train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
         """Return a DataLoader that passes pre-batched items through unchanged.
@@ -248,12 +246,7 @@ class TinyGPTTrainer(Trainer):
             output_dir = self.args.output_dir
         assert output_dir is not None
         assert self.model is not None
-        step = self.state.global_step
-        meta = {
-            "step": step,
-            **self._extra_meta,
-        }
-        save_model_checkpoint(output_dir, self.model, extra_meta=meta)
+        save_model_checkpoint(output_dir, self.model)
 
 
 class SamplerCallback(TrainerCallback):

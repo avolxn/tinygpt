@@ -6,7 +6,7 @@ import pickle
 import tempfile
 
 import tiktoken
-from scripts.convert_tokenizer import convert_tiktoken_encoding_to_hf, convert_tokenizer_pickle_to_json
+from scripts.convert import convert_tiktoken_encoding_to_hf, convert_tokenizer_pickle_to_json
 from tokenizers import Tokenizer as HFTokenizer
 
 
