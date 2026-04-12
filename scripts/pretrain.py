@@ -213,7 +213,7 @@ print0(f"total_batch_size: {total_batch_size:,}")
 print0(f"grad_accum_steps: {grad_accum_steps}")
 
 run_name = args.run_name if args.run_name else f"d{args.depth}"
-checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name)
+checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="pretrain")
 
 
 def make_loader(split: str):
