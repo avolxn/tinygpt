@@ -1,20 +1,22 @@
 """
-Unified attention backend: FA2 (Ampere+) with SDPA fallback.
+Unified attention backend with automatic FA4/FA3/FA2/SDPA fallback chain.
 
-FA2 is tried first; any GPU below SM80 (or CPU/MPS) falls back to PyTorch SDPA
-automatically.
+Priority per operation:
+    flash_attn_func         : FA4 > FA3 > FA2 > SDPA
+    flash_attn_with_kvcache : FA3 > FA2 > SDPA  (FA4 cute has no kvcache API)
 
-Usage:
-    from tinygpt.attention import flash_attn_func, flash_attn_with_kvcache
+GPU / dtype constraints:
+    FA4 (flash_attn.cute)          — Hopper SM90+ or Blackwell SM100+, bf16
+    FA3 (kernels-community/flash-attn3) — Hopper SM90 only, bf16
+    FA2 (flash_attn package)       — Ampere SM80+, bf16 / fp16
+    SDPA                           — any device / dtype
 
-    # Training (no KV cache)
-    y = flash_attn_func(q, k, v, causal=True, window_size=window_size)
-
-    # Inference (with KV cache)
-    y = flash_attn_with_kvcache(q, k_cache, v_cache, k=k, v=v, ...)
+Installation:
+    FA4: pip install flash-attn-4
+    FA3: pip install kernels   (pre-compiled Hopper kernels, no local build needed)
+    FA2: pip install flash-attn --no-build-isolation
 """
 
-import importlib
 import logging
 from typing import Any
 
@@ -25,16 +27,64 @@ from tinygpt.utils import compute_dtype
 
 logger = logging.getLogger(__name__)
 
-flash_attn: Any = None
-try:
-    if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
-        flash_attn = importlib.import_module("flash_attn")
-except ImportError:
-    pass
+_fa4: Any = None  # flash_attn.cute  (FA4 — SM90+)
+_fa3: Any = None  # kernels-community/flash-attn3 (FA3 — SM90 only)
+_fa2: Any = None  # flash_attn package (FA2 — SM80+)
 
-flash_attn_available = flash_attn is not None
+if torch.cuda.is_available():
+    _sm_major, _ = torch.cuda.get_device_capability()
 
-use_flash_attn = flash_attn is not None and compute_dtype == torch.bfloat16
+    if _sm_major >= 9:
+        try:
+            import flash_attn.cute as _fa4  # type: ignore[import]
+        except Exception:
+            pass
+
+    if _sm_major == 9:
+        try:
+            from kernels import get_kernel  # type: ignore[import]
+            _fa3 = get_kernel("kernels-community/flash-attn3", version=1)
+        except Exception:
+            pass
+
+    if _sm_major >= 8:
+        try:
+            import flash_attn as _fa2  # type: ignore[import]
+        except ImportError:
+            pass
+
+_bf16 = compute_dtype == torch.bfloat16
+_fp16 = compute_dtype == torch.float16
+
+# flash_attn_func: FA4 > FA3 > FA2 > SDPA
+if _fa4 is not None and _bf16:
+    _fwd, _fwd_ver = _fa4, 4
+elif _fa3 is not None and _bf16:
+    _fwd, _fwd_ver = _fa3, 3
+elif _fa2 is not None and (_bf16 or _fp16):
+    _fwd, _fwd_ver = _fa2, 2
+else:
+    _fwd, _fwd_ver = None, 0
+
+# flash_attn_with_kvcache: FA3 > FA2 > SDPA  (FA4 cute has no kvcache API)
+if _fa3 is not None and _bf16:
+    _kvc, _kvc_ver = _fa3, 3
+elif _fa2 is not None and (_bf16 or _fp16):
+    _kvc, _kvc_ver = _fa2, 2
+else:
+    _kvc, _kvc_ver = None, 0
+
+flash_attn_available: bool = _fwd is not None
+use_flash_attn: bool = _fwd is not None
+flash_attn_backend: str | None = f"FA{_fwd_ver}" if _fwd_ver else None
+
+
+def _to_fa4_window(
+    window_size: tuple[int, int],
+) -> tuple[int | None, int | None]:
+    """Convert FA2/FA3 window convention (-1 = unlimited) to FA4 (None = unlimited)."""
+    left, right = window_size
+    return (None if left == -1 else left, None if right == -1 else right)
 
 
 def sdpa_attention(
@@ -44,18 +94,7 @@ def sdpa_attention(
     window_size: tuple[int, int],
     enable_gqa: bool,
 ) -> torch.Tensor:
-    """SDPA attention with optional sliding window.
-
-    Args:
-        q: Query tensor of shape (B, H, T, D).
-        k: Key tensor of shape (B, H, T, D).
-        v: Value tensor of shape (B, H, T, D).
-        window_size: (left, right) sliding window; left=-1 means unlimited.
-        enable_gqa: Whether to enable grouped-query attention.
-
-    Returns:
-        Output tensor of shape (B, H, T, D).
-    """
+    """SDPA with optional causal sliding window. Inputs in (B, H, T, D) layout."""
     Tq = q.size(2)
     Tk = k.size(2)
     window = window_size[0]
@@ -91,14 +130,21 @@ def flash_attn_func(
 
     Args:
         q, k, v: (B, T, H, D)
-        causal: use causal masking
+        causal: causal masking
         window_size: (left, right) sliding window; -1 = unlimited
 
     Returns:
         (B, T, H, D)
     """
-    if use_flash_attn:
-        return flash_attn.flash_attn_func(q, k, v, causal=causal, window_size=window_size)  # type: ignore[no-any-return]
+    if _fwd is not None:
+        if _fwd_ver == 4:
+            return _fwd.flash_attn_func(  # type: ignore[no-any-return]
+                q, k, v, causal=causal, window_size=_to_fa4_window(window_size)
+            )
+        else:
+            return _fwd.flash_attn_func(  # type: ignore[no-any-return]
+                q, k, v, causal=causal, window_size=window_size
+            )
 
     q = q.transpose(1, 2)
     k = k.transpose(1, 2)
@@ -121,7 +167,8 @@ def flash_attn_with_kvcache(
     """
     Flash Attention with KV cache for inference.
 
-    FA2 updates k_cache/v_cache in-place; SDPA fallback does the same.
+    FA3/FA2 update k_cache/v_cache in-place; SDPA fallback does the same.
+    FA4 (cute) has no kvcache API — this function uses FA3 > FA2 > SDPA.
 
     Args:
         q: (B, T_new, H, D)
@@ -129,13 +176,13 @@ def flash_attn_with_kvcache(
         k, v: new keys/values (B, T_new, H_kv, D)
         cache_seqlens: current position per batch element, shape (B,) int32
         causal: causal masking
-        window_size: (left, right) sliding window
+        window_size: (left, right) sliding window; -1 = unlimited
 
     Returns:
         (B, T_new, H, D)
     """
-    if use_flash_attn:
-        return flash_attn.flash_attn_with_kvcache(  # type: ignore[no-any-return]
+    if _kvc is not None:
+        return _kvc.flash_attn_with_kvcache(  # type: ignore[no-any-return]
             q,
             k_cache,
             v_cache,
@@ -146,14 +193,14 @@ def flash_attn_with_kvcache(
             window_size=window_size,
         )
 
-    B, T_new, H, D = q.shape
+    T_new = q.size(1)
     pos: int = int(cache_seqlens[0].item())  # type: ignore[index]
 
     if k is not None and v is not None:
         k_cache[:, pos : pos + T_new, :, :] = k
         v_cache[:, pos : pos + T_new, :, :] = v
 
-    end_pos: int = pos + T_new
+    end_pos = pos + T_new
     k_full = k_cache[:, :end_pos, :, :]
     v_full = v_cache[:, :end_pos, :, :]
 

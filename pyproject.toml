@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "torch>=2.7.0",
+    "kernels>=0.11.7",
     "tokenizers>=0.21.0",
     "datasets>=3.0.0",
     "wandb>=0.18.0",
@@ -20,7 +21,10 @@ dependencies = [
     "tiktoken>=0.9.0",
 ]
 
-# flash-attn requires CUDA + ninja: pip install flash-attn --no-build-isolation
+# Flash Attention (all optional, auto-detected at runtime, best available is used):
+#   FA4 (Hopper/Blackwell SM90+):  pip install flash-attn-4
+#   FA3 (Hopper SM90, pre-built):  pip install kernels  (already a hard dep; loads kernels-community/flash-attn3)
+#   FA2 (Ampere SM80+):            pip install flash-attn --no-build-isolation
 # On CPU/MPS only SDPA is used automatically.
 
 [build-system]
