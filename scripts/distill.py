@@ -76,7 +76,7 @@ parser.add_argument("--final-lr-frac", type=float, default=0.0)
 parser.add_argument("--eval-every", type=int, default=200)
 # Output
 parser.add_argument("--out-dir", type=str, default="out")
-parser.add_argument("--run-name", type=str, default="distill")
+parser.add_argument("--run-name", type=str, default="")
 # Distillation
 parser.add_argument(
     "--teacher-model",
@@ -204,7 +204,8 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
     return {"distill_loss": sft_val_loss}
 
 
-checkpoint_dir = get_checkpoint_dir(args.out_dir, args.run_name)
+run_name = args.run_name if args.run_name else f"d{meta['model_config']['depth']}"
+checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="distill")
 
 training_args = TrainingArguments(
     output_dir=checkpoint_dir,

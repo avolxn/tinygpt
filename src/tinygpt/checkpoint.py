@@ -30,9 +30,9 @@ logger = logging.getLogger(__name__)
 TRAINER_STATE_NAME = "trainer_state.json"
 
 
-def get_checkpoint_dir(out_dir: str, run_name: str) -> str:
+def get_checkpoint_dir(out_dir: str, run_name: str, phase: str = "pretrain") -> str:
     """Return the Trainer output directory for a named run."""
-    return os.path.join(out_dir, "checkpoints", run_name)
+    return os.path.join(out_dir, f"{phase}_checkpoints", run_name)
 
 
 def _has_model_files(model_dir: str) -> bool:
