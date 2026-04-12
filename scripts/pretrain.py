@@ -99,7 +99,6 @@ parser.add_argument("--save-every", type=int, default=-1)
 parser.add_argument("--out-dir", type=str, default="out")
 parser.add_argument("--run-name", type=str, default="")
 args = parser.parse_args()
-user_config = vars(args).copy()
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 is_dist, rank, local_rank, world_size, device = compute_init(device_type)
@@ -336,7 +335,6 @@ trainer = TinyGPTTrainer(
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
-    extra_meta={"user_config": user_config},
 )
 
 if start_step > 0:

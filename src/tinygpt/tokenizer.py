@@ -66,13 +66,6 @@ class HuggingFaceTokenizer:
         return cls(HFTokenizer.from_file(tokenizer_path))
 
     @classmethod
-    def from_reference(cls, tokenizer_ref: str) -> "HuggingFaceTokenizer":
-        """Load a tokenizer from either a local directory or a Hub repo."""
-        if os.path.isdir(tokenizer_ref):
-            return cls.from_directory(tokenizer_ref)
-        return cls.from_pretrained(tokenizer_ref)
-
-    @classmethod
     def train_from_iterator(cls, text_iterator: Iterator[str], vocab_size: int) -> "HuggingFaceTokenizer":
         """Train a BPE tokenizer from a text iterator.
 
