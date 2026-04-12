@@ -1,23 +1,25 @@
 # tinygpt
 
-В репозитории есть четыре готовых run-скрипта под сценарии, которые вы описали:
+`tinygpt` is a compact training and evaluation stack for small GPT-style models.
+The repository is organized around four opinionated workflows:
 
-1. `runs/from_scratch.sh`
-   Полный pipeline обучения: tokenizer, pretrain, SFT, затем eval.
+1. Full training from scratch: tokenizer training, pretraining, SFT, and evaluation.
+2. Pretraining with the `karpathy/nanochat-d32` tokenizer.
+3. Distillation from `karpathy/nanochat-d32` into a student trained with the same tokenizer.
+4. A smoke test for CPU or a small GPU.
 
-2. `runs/pretrain_with_nanochat_d32.sh`
-   `nanochat-d32` tokenizer плюс pretrain, без обучения собственного tokenizer.
+## Repository Workflows
 
-3. `runs/distill_from_nanochat_d32.sh`
-   Дистилляция из `karpathy/nanochat-d32` в student, заранее обученный скриптом `runs/pretrain_with_nanochat_d32.sh`.
-   Это важно: текущая online-KL дистилляция в `tinygpt` требует идентичный tokenizer у teacher и student.
+| Workflow | Script | What it does |
+| --- | --- | --- |
+| From scratch | `runs/from_scratch.sh` | Trains a tokenizer, pretrains a base model, runs SFT, then evaluates the result. |
+| Nanochat tokenizer pretrain | `runs/pretrain_with_nanochat_d32.sh` | Reuses the `karpathy/nanochat-d32` tokenizer and runs pretraining only. |
+| Distillation | `runs/distill_from_nanochat_d32.sh` | Distills from `karpathy/nanochat-d32` into a student checkpoint produced by `pretrain_with_nanochat_d32.sh`. |
+| Smoke test | `runs/smoke.sh` | Runs a minimal end-to-end validation path on CPU or a small GPU. |
 
-4. `runs/smoke.sh`
-   Локальный smoke-test для CPU или дешёвого GPU.
+## Recommended Usage
 
-## Быстрый старт
-
-Из корня `tinygpt`:
+Run commands from the `tinygpt` root:
 
 ```bash
 bash runs/from_scratch.sh
@@ -26,26 +28,71 @@ bash runs/distill_from_nanochat_d32.sh
 bash runs/smoke.sh
 ```
 
-## Общие переменные окружения
+## Storage Layout
 
-Скрипты специально упрощены и почти всё держат прямо в командах.
-Оставлены только несколько override-переменных:
+All generated artifacts and support files are stored under `data/`.
 
-- `WANDB_RUN` для имени run в Weights & Biases. По умолчанию используется `dummy`.
-- `NPROC_PER_NODE` для числа GPU-процессов в GPU-скриптах.
-- `DEVICE_TYPE` и `TEACHER_DEVICE` там, где это действительно нужно.
+Typical outputs:
 
-Примеры:
+- `data/tokenizer_from_scratch`
+- `data/tokenizer_nanochat_d32`
+- `data/teacher_nanochat_d32`
+- `data/tokenizer_smoke`
+- `data/pretrain_checkpoints/from_scratch`
+- `data/pretrain_checkpoints/pretrain_with_nanochat_d32`
+- `data/distill_checkpoints/distill_from_nanochat_d32`
+- `data/sft_checkpoints/from_scratch`
+- `data/sft_checkpoints/smoke`
+- `data/identity_conversations.jsonl`
+
+## Runtime Overrides
+
+The run scripts are intentionally simple. Only a small number of environment overrides are supported:
+
+- `WANDB_RUN`: Weights & Biases run name. If unset, scripts default to `dummy`.
+- `NPROC_PER_NODE`: Number of `torchrun` processes per node for GPU workflows.
+- `DEVICE_TYPE`: Runtime override for `runs/smoke.sh`, typically `cpu`, `cuda`, or `mps`.
+- `TEACHER_DEVICE`: Teacher placement override for `runs/distill_from_nanochat_d32.sh`.
+
+Examples:
 
 ```bash
-WANDB_RUN=my_student bash runs/pretrain_with_nanochat_d32.sh
-WANDB_RUN=my_distill TEACHER_DEVICE=cpu bash runs/distill_from_nanochat_d32.sh
+WANDB_RUN=from_scratch_exp bash runs/from_scratch.sh
+WANDB_RUN=student_d32 bash runs/pretrain_with_nanochat_d32.sh
+WANDB_RUN=distill_d32 TEACHER_DEVICE=cpu bash runs/distill_from_nanochat_d32.sh
 DEVICE_TYPE=cpu bash runs/smoke.sh
 ```
 
-Артефакты и вспомогательные файлы сохраняются в `data/`, а не в `out/`.
+## Important Constraint
 
-## Примечания по budget-лейблам
+Online KL distillation in this codebase requires tokenizer compatibility between teacher and student.
+In practice, the distillation workflow assumes:
 
-`100$` и `1000$` в названиях скриптов — это удобные ориентиры по порядку бюджета, а не жёсткая гарантия цены.
-Итоговая стоимость зависит от аренды GPU, числа GPU, длительности запуска и выбранных override-параметров.
+- the teacher is `karpathy/nanochat-d32`
+- the student was pretrained with `runs/pretrain_with_nanochat_d32.sh`
+
+If the student uses a different tokenizer or token ID mapping, distillation will fail by design.
+
+## Python Entry Points
+
+Primary modules:
+
+- `python -m scripts.train_tokenizer`
+- `python -m scripts.pretrain`
+- `python -m scripts.finetune`
+- `python -m scripts.distill`
+- `python -m scripts.evaluate_tokenizer`
+- `python -m scripts.evaluate_model`
+- `python -m scripts.chat`
+
+Defaults are aligned with the `data/` directory layout used by the run scripts.
+
+## Environment
+
+Expected baseline:
+
+- Python 3.12+
+- `uv` for environment setup
+- PyTorch-compatible CPU, CUDA, or MPS runtime
+
+The run scripts create or reuse `.venv` and install dependencies via `uv sync`.
