@@ -2,11 +2,10 @@ import math
 
 import torch
 
-from tinygpt.config import GPTConfig, make_config
+from tinygpt.config import GPTConfig, compute_scaled_total_batch_size, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
 from tinygpt.model import GPT
 from tinygpt.sft_tasks import build_sft_task_lists
-from tinygpt.training_config import compute_nanochat_total_batch_size
 
 
 def test_climbmix_source_uses_last_shard_for_validation(monkeypatch):
@@ -68,7 +67,7 @@ def test_identity_only_sft_validation_uses_identity_dataset(tmp_path):
     assert all(type(task).__name__ == "CustomJSON" for task in train_tasks + val_tasks)
 
 
-def test_default_sft_validation_matches_nanochat_core_mix():
+def test_default_sft_validation_matches_reference_core_mix():
     _, val_tasks = build_sft_task_lists(
         {"smoltalk", "mmlu", "gsm8k", "identity", "spelling"},
         identity_conversations="missing.jsonl",
@@ -79,10 +78,10 @@ def test_default_sft_validation_matches_nanochat_core_mix():
     assert [type(task).__name__ for task in val_tasks] == ["SmolTalk", "MMLU", "GSM8K"]
 
 
-def test_nanochat_batch_size_scaling_matches_reference_formula():
+def test_reference_batch_size_scaling_matches_reference_formula():
     d12 = make_config(12, vocab_size=32768)
     d24 = make_config(24, vocab_size=32768)
-    batch = compute_nanochat_total_batch_size(
+    batch = compute_scaled_total_batch_size(
         scaling_params=1_000_000,
         d12_scaling_params=500_000,
         target_param_data_ratio=12,

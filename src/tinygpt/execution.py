@@ -22,11 +22,11 @@ import io
 import multiprocessing
 import os
 import platform
+import queue
 import signal
 import tempfile
 from collections.abc import Generator
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass
@@ -212,6 +212,17 @@ def _unsafe_execute(
         _os.unlink = unlink
 
 
+def _execute_and_put(
+    code: str,
+    timeout: float,
+    maximum_memory_bytes: int | None,
+    result_queue: multiprocessing.Queue[dict[str, object]],
+) -> None:
+    result_dict: dict[str, object] = {}
+    _unsafe_execute(code, timeout, maximum_memory_bytes, result_dict)
+    result_queue.put(result_dict)
+
+
 def execute_code(
     code: str,
     timeout: float = 5.0,
@@ -228,10 +239,11 @@ def execute_code(
     Returns:
         ExecutionResult with success status, captured output, and error info.
     """
-    manager = multiprocessing.Manager()
-    result_dict: Any = manager.dict()
+    ctx = multiprocessing.get_context("fork") if hasattr(os, "fork") else multiprocessing.get_context()
+    result_queue: multiprocessing.Queue[dict[str, object]] = ctx.Queue(maxsize=1)
+    result_dict: dict[str, object] = {}
 
-    p = multiprocessing.Process(target=_unsafe_execute, args=(code, timeout, maximum_memory_bytes, result_dict))
+    p = ctx.Process(target=_execute_and_put, args=(code, timeout, maximum_memory_bytes, result_queue))
     p.start()
     p.join(timeout=timeout + 1)
 
@@ -239,7 +251,9 @@ def execute_code(
         p.kill()
         return ExecutionResult(success=False, stdout="", stderr="", error="Process timed out", timeout=True)
 
-    if not result_dict:
+    try:
+        result_dict = result_queue.get_nowait()
+    except queue.Empty:
         return ExecutionResult(success=False, stdout="", stderr="", error="No result returned", timeout=True)
 
     return ExecutionResult(

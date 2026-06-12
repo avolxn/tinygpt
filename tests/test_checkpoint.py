@@ -57,6 +57,23 @@ def test_save_and_load_model_checkpoint_roundtrip() -> None:
             torch.testing.assert_close(expected_tensor, actual_tensor)
 
 
+def test_save_model_checkpoint_copies_tokenizer_files() -> None:
+    model = make_test_model()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tokenizer_dir = os.path.join(tmp, "tokenizer")
+        out_dir = os.path.join(tmp, "checkpoint")
+        os.makedirs(tokenizer_dir)
+        with open(os.path.join(tokenizer_dir, "tokenizer.json"), "w", encoding="utf-8") as f:
+            f.write("{}")
+        torch.save(torch.tensor([0, 1], dtype=torch.int32), os.path.join(tokenizer_dir, "token_bytes.pt"))
+
+        save_model_checkpoint(out_dir, model, tokenizer_dir=tokenizer_dir)
+
+        assert os.path.exists(os.path.join(out_dir, "tokenizer.json"))
+        assert os.path.exists(os.path.join(out_dir, "token_bytes.pt"))
+
+
 def test_resolve_model_directory_prefers_latest_trainer_checkpoint() -> None:
     model = make_test_model()
 

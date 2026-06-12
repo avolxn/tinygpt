@@ -47,7 +47,7 @@ parser.add_argument(
 )
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 # Logging
-parser.add_argument("--run", type=str, default="dummy")
+parser.add_argument("--run", type=str, default="", help="wandb run name ('dummy' disables wandb)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="")
 parser.add_argument(
@@ -221,6 +221,9 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
 
 run_name = args.run_name if args.run_name else f"d{meta['model_config']['n_layer']}"
 checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="sft")
+wandb_run_name = args.run if args.run else run_name
+if wandb_run_name != "dummy":
+    os.environ.setdefault("WANDB_PROJECT", "tinygpt")
 
 training_args = TrainingArguments(
     output_dir=checkpoint_dir,
@@ -237,8 +240,8 @@ training_args = TrainingArguments(
     save_steps=args.eval_every if args.eval_every > 0 else num_iterations,
     remove_unused_columns=False,
     dataloader_num_workers=0,
-    report_to=["wandb"] if args.run != "dummy" and master_process else [],
-    run_name=args.run if args.run != "dummy" else None,
+    report_to=["wandb"] if wandb_run_name != "dummy" and master_process else [],
+    run_name=wandb_run_name if wandb_run_name != "dummy" else None,
     label_names=["labels"],
     fsdp="",
     use_cpu=(device_type == "cpu"),
@@ -260,6 +263,7 @@ trainer = TinyGPTTrainer(
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
+    tokenizer_dir=args.tokenizer_dir,
     checkpoint_metadata={
         "phase": "sft",
         "user_config": vars(args).copy(),

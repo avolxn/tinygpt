@@ -1,7 +1,6 @@
-"""
-GPT model configuration. Data only, no logic.
-"""
+"""GPT model configuration and reference-derived scaling helpers."""
 
+import math
 from dataclasses import dataclass
 
 
@@ -16,6 +15,9 @@ class GPTConfig:
     n_kv_head: int = 6
     n_embd: int = 768
     window_pattern: str = "SSSL"
+
+
+REFERENCE_BATCH_SIZE = 2**19
 
 
 def make_config(
@@ -54,4 +56,34 @@ def make_config(
         n_kv_head=num_heads,
         n_embd=model_dim,
         window_pattern=window_pattern,
+    )
+
+
+def compute_scaled_total_batch_size(
+    *,
+    scaling_params: int,
+    d12_scaling_params: int,
+    target_param_data_ratio: float,
+    requested_total_batch_size: int,
+) -> int:
+    """Return the total token batch size using the reference scaling law."""
+    if requested_total_batch_size > 0:
+        return requested_total_batch_size
+    target_tokens = target_param_data_ratio * scaling_params
+    d12_target_tokens = target_param_data_ratio * d12_scaling_params
+    batch_size_ratio = target_tokens / d12_target_tokens
+    predicted_batch_size = REFERENCE_BATCH_SIZE * batch_size_ratio**0.383
+    return 2 ** round(math.log2(predicted_batch_size))
+
+
+def compute_scaled_weight_decay(
+    *,
+    base_weight_decay: float,
+    total_batch_size: int,
+    target_tokens: int,
+    d12_target_tokens: float,
+) -> float:
+    """Return the reference scaled pretraining weight decay."""
+    return base_weight_decay * math.sqrt(total_batch_size / REFERENCE_BATCH_SIZE) * (
+        d12_target_tokens / target_tokens
     )

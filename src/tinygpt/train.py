@@ -82,6 +82,7 @@ class TinyGPTTrainer(Trainer):
         distill_alpha: float = 0.0,
         distill_temperature: float = 1.0,
         checkpoint_metadata: dict[str, Any] | None = None,
+        tokenizer_dir: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -99,6 +100,7 @@ class TinyGPTTrainer(Trainer):
         self._distill_alpha = distill_alpha
         self._distill_temperature = distill_temperature
         self._checkpoint_metadata = checkpoint_metadata or {}
+        self._tokenizer_dir = tokenizer_dir
 
     def get_train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
         """Return a DataLoader that passes pre-batched items through unchanged.
@@ -263,7 +265,12 @@ class TinyGPTTrainer(Trainer):
             output_dir = self.args.output_dir
         assert output_dir is not None
         assert self.model is not None
-        save_model_checkpoint(output_dir, self.model, metadata=self._checkpoint_metadata)
+        save_model_checkpoint(
+            output_dir,
+            self.model,
+            metadata=self._checkpoint_metadata,
+            tokenizer_dir=self._tokenizer_dir,
+        )
 
 
 class SamplerCallback(TrainerCallback):

@@ -4,8 +4,8 @@
 The repository is organized around four opinionated workflows:
 
 1. Full training from scratch: tokenizer training, pretraining, SFT, and evaluation.
-2. Pretraining with the `karpathy/nanochat-d32` tokenizer.
-3. Distillation from `karpathy/nanochat-d32` into a student trained with the same tokenizer.
+2. Pretraining with a converted teacher tokenizer.
+3. Online distillation from `karpathy/nanochat-d32` into a student trained with the same tokenizer.
 4. A smoke test for CPU or a small GPU.
 
 ## Repository Workflows
@@ -13,8 +13,8 @@ The repository is organized around four opinionated workflows:
 | Workflow | Script | What it does |
 | --- | --- | --- |
 | From scratch | `runs/from_scratch.sh` | Trains a tokenizer, pretrains a base model, runs SFT, then evaluates the result. |
-| Nanochat tokenizer pretrain | `runs/pretrain_with_nanochat_d32.sh` | Reuses the `karpathy/nanochat-d32` tokenizer and runs pretraining only. |
-| Distillation | `runs/distill_from_nanochat_d32.sh` | Distills from `karpathy/nanochat-d32` into a student checkpoint produced by `pretrain_with_nanochat_d32.sh`. |
+| Teacher tokenizer pretrain | `runs/pretrain_reference_d32.sh` | Converts the teacher tokenizer and runs pretraining only. |
+| Distillation | `runs/distill_reference_d32.sh` | Distills from `karpathy/nanochat-d32` into a student checkpoint produced by `pretrain_reference_d32.sh`. |
 | Smoke test | `runs/smoke.sh` | Runs a minimal end-to-end validation path on CPU or a small GPU. |
 
 ## Recommended Usage
@@ -23,8 +23,8 @@ Run commands from the `tinygpt` root:
 
 ```bash
 bash runs/from_scratch.sh
-bash runs/pretrain_with_nanochat_d32.sh
-bash runs/distill_from_nanochat_d32.sh
+bash runs/pretrain_reference_d32.sh
+bash runs/distill_reference_d32.sh
 bash runs/smoke.sh
 ```
 
@@ -35,12 +35,12 @@ All generated artifacts and support files are stored under `data/`.
 Typical outputs:
 
 - `data/tokenizer_from_scratch`
-- `data/tokenizer_nanochat_d32`
-- `data/teacher_nanochat_d32`
+- `data/tokenizer_reference_d32`
+- `data/teacher_reference_d32`
 - `data/tokenizer_smoke`
 - `data/pretrain_checkpoints/from_scratch`
-- `data/pretrain_checkpoints/pretrain_with_nanochat_d32`
-- `data/distill_checkpoints/distill_from_nanochat_d32`
+- `data/pretrain_checkpoints/pretrain_reference_d32`
+- `data/distill_checkpoints/distill_reference_d32`
 - `data/sft_checkpoints/from_scratch`
 - `data/sft_checkpoints/smoke`
 - `data/identity_conversations.jsonl`
@@ -49,27 +49,31 @@ Typical outputs:
 
 The run scripts are intentionally simple. Only a small number of environment overrides are supported:
 
-- `WANDB_RUN`: Weights & Biases run name. If unset, scripts default to `dummy`.
+- `WANDB_RUN`: Weights & Biases run name. Production scripts use a real run name by default; `runs/smoke.sh` defaults to `dummy`.
+- `WANDB_PROJECT`: Weights & Biases project name. Defaults to `tinygpt` when W&B is enabled.
 - `NPROC_PER_NODE`: Number of `torchrun` processes per node for GPU workflows.
 - `DEVICE_TYPE`: Runtime override for `runs/smoke.sh`, typically `cpu`, `cuda`, or `mps`.
-- `TEACHER_DEVICE`: Teacher placement override for `runs/distill_from_nanochat_d32.sh`.
+- `TEACHER_DEVICE`: Teacher placement override for `runs/distill_reference_d32.sh`.
+- `REFERENCE_MODEL`: Optional override for the teacher repository/path. Defaults to `karpathy/nanochat-d32`.
 
 Examples:
 
 ```bash
 WANDB_RUN=from_scratch_exp bash runs/from_scratch.sh
-WANDB_RUN=student_d32 bash runs/pretrain_with_nanochat_d32.sh
-WANDB_RUN=distill_d32 TEACHER_DEVICE=cpu bash runs/distill_from_nanochat_d32.sh
+WANDB_RUN=student_d32 bash runs/pretrain_reference_d32.sh
+WANDB_RUN=distill_d32 TEACHER_DEVICE=cpu bash runs/distill_reference_d32.sh
 DEVICE_TYPE=cpu bash runs/smoke.sh
 ```
+
+Set `WANDB_RUN=dummy` to disable Weights & Biases for any run script. The Python entry points follow the same rule through `--run dummy`; if `--run` is omitted, they use `--run-name`.
 
 ## Important Constraint
 
 Online KL distillation in this codebase requires tokenizer compatibility between teacher and student.
 In practice, the distillation workflow assumes:
 
-- the teacher is `karpathy/nanochat-d32`
-- the student was pretrained with `runs/pretrain_with_nanochat_d32.sh`
+- the teacher is `karpathy/nanochat-d32`, unless `REFERENCE_MODEL` overrides it
+- the student was pretrained with `runs/pretrain_reference_d32.sh`
 
 If the student uses a different tokenizer or token ID mapping, distillation will fail by design.
 

@@ -5,8 +5,8 @@ Loss is computed on assistant tokens only (mask = 1) and combines
 supervised CE with online KL distillation from a teacher model.
 
 Usage:
-    python -m scripts.distill --checkpoint data/pretrain_checkpoints/pretrain_with_nanochat_d32 --teacher-model data/teacher_nanochat_d32
-    torchrun --nproc_per_node=8 -m scripts.distill --checkpoint data/pretrain_checkpoints/pretrain_with_nanochat_d32 --teacher-model data/teacher_nanochat_d32
+    python -m scripts.distill --checkpoint data/pretrain_checkpoints/pretrain_reference_d32 --teacher-model data/teacher_reference_d32
+    torchrun --nproc_per_node=8 -m scripts.distill --checkpoint data/pretrain_checkpoints/pretrain_reference_d32 --teacher-model data/teacher_reference_d32
 """
 
 import os
@@ -49,7 +49,7 @@ parser.add_argument(
 )
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 # Logging
-parser.add_argument("--run", type=str, default="dummy")
+parser.add_argument("--run", type=str, default="", help="wandb run name ('dummy' disables wandb)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="")
 parser.add_argument(
@@ -269,6 +269,9 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
 
 run_name = args.run_name if args.run_name else f"d{meta['model_config']['n_layer']}"
 checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="distill")
+wandb_run_name = args.run if args.run else run_name
+if wandb_run_name != "dummy":
+    os.environ.setdefault("WANDB_PROJECT", "tinygpt")
 
 training_args = TrainingArguments(
     output_dir=checkpoint_dir,
@@ -285,8 +288,8 @@ training_args = TrainingArguments(
     save_steps=args.eval_every if args.eval_every > 0 else num_iterations,
     remove_unused_columns=False,
     dataloader_num_workers=0,
-    report_to=["wandb"] if args.run != "dummy" and master_process else [],
-    run_name=args.run if args.run != "dummy" else None,
+    report_to=["wandb"] if wandb_run_name != "dummy" and master_process else [],
+    run_name=wandb_run_name if wandb_run_name != "dummy" else None,
     label_names=["labels"],
     fsdp="",
     use_cpu=(device_type == "cpu"),
@@ -311,6 +314,7 @@ trainer = TinyGPTTrainer(
     teacher_model=teacher_model,
     distill_alpha=args.distill_alpha,
     distill_temperature=args.distill_temperature,
+    tokenizer_dir=args.tokenizer_dir,
     checkpoint_metadata={
         "phase": "distill",
         "user_config": vars(args).copy(),

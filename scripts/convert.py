@@ -1,8 +1,8 @@
 """
-Convert nanochat-style checkpoints and tokenizers into Hugging Face format.
+Convert legacy checkpoints and tokenizers into Hugging Face format.
 
 Usage:
-    python -m scripts.convert --input karpathy/nanochat-d34 --out-dir data/teacher_hf
+    python -m scripts.convert --input <model-or-path> --out-dir data/teacher_hf
     python -m scripts.convert --input path/to/legacy_dir --out-dir data/model_hf
     python -m scripts.convert --input path/to/tokenizer.pkl --out-dir data/tokenizer_hf --skip-model
 """
@@ -177,7 +177,7 @@ def convert_tokenizer_pickle_to_json(
     *,
     probe_texts: Iterable[str] | None = None,
 ) -> str:
-    """Convert a nanochat/tiktoken `tokenizer.pkl` into `tokenizer.json`."""
+    """Convert a legacy tiktoken `tokenizer.pkl` into `tokenizer.json`."""
     with open(tokenizer_pkl_path, "rb") as f:
         encoding = pickle.load(f)
     hf_tokenizer = convert_tiktoken_encoding_to_hf(encoding)
@@ -201,7 +201,7 @@ def convert_legacy_model_to_hf(
     *,
     step: int | None = None,
 ) -> str:
-    """Convert a nanochat `model_*.pt` + `meta_*.json` checkpoint into HF model files."""
+    """Convert a legacy `model_*.pt` + `meta_*.json` checkpoint into HF model files."""
     model_path, meta_path, resolved_step = _resolve_legacy_model_paths(source, step=step)
     model_data = torch.load(model_path, map_location="cpu", weights_only=True)
     with open(meta_path, encoding="utf-8") as f:
@@ -249,7 +249,7 @@ def _save_token_bytes(tokenizer_dir: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert legacy nanochat artifacts into Hugging Face format")
+    parser = argparse.ArgumentParser(description="Convert legacy artifacts into Hugging Face format")
     parser.add_argument(
         "--input",
         type=str,

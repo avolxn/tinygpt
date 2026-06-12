@@ -16,9 +16,9 @@ def build_sft_task_lists(
     mmlu_epochs: int,
     gsm8k_epochs: int,
 ) -> tuple[list[object], list[object]]:
-    """Build nanochat-compatible train/eval task lists.
+    """Build reference-compatible train/eval task lists.
 
-    The default full mixture evaluates on SmolTalk/MMLU/GSM8K like nanochat.
+    The default full mixture evaluates on SmolTalk/MMLU/GSM8K for the full task mixture.
     Narrow local runs, for example identity-only smoke tests, evaluate on the
     same narrow task set so they don't fetch unrelated datasets.
     """

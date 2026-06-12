@@ -21,9 +21,7 @@ command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 source .venv/bin/activate
 
-if [ -z "${WANDB_RUN:-}" ]; then
-    WANDB_RUN=dummy
-fi
+WANDB_RUN="${WANDB_RUN:-from_scratch}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 
 echo "Training tokenizer"

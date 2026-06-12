@@ -38,7 +38,7 @@ def resolve_dataset_source(
 ) -> tuple[str, str, dict[str, list[str]] | None]:
     """Resolve a text dataset into load_dataset arguments.
 
-    ClimbMix exposes only one Hub split, so we mirror nanochat's local parquet
+    ClimbMix exposes only one Hub split, so we mirror the reference local parquet
     convention: all shards except the final shard are train, final shard is val.
     """
     if dataset_name != CLIMBMIX_DATASET:

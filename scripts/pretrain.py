@@ -31,7 +31,7 @@ from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available, flash_attn_backend, use_flash_attn
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, resolve_model_directory
-from tinygpt.config import make_config
+from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weight_decay, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loader_bestfit
 from tinygpt.distributed import (
     compute_cleanup,
@@ -43,12 +43,11 @@ from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import GPT, Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.train import SamplerCallback, TinyGPTTrainer
-from tinygpt.training_config import compute_nanochat_total_batch_size, compute_nanochat_weight_decay
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
 # Logging
-parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb)")
+parser.add_argument("--run", type=str, default="", help="wandb run name ('dummy' disables wandb)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # Distributed
@@ -205,13 +204,13 @@ d12_counts = d12_model.num_scaling_params()
 d12_scaling_params = d12_counts["transformer_matrices"] + d12_counts["lm_head"]
 target_tokens = int(args.target_param_data_ratio * scaling_params)
 d12_target_tokens = args.target_param_data_ratio * d12_scaling_params
-total_batch_size = compute_nanochat_total_batch_size(
+total_batch_size = compute_scaled_total_batch_size(
     scaling_params=scaling_params,
     d12_scaling_params=d12_scaling_params,
     target_param_data_ratio=args.target_param_data_ratio,
     requested_total_batch_size=args.total_batch_size,
 )
-weight_decay = compute_nanochat_weight_decay(
+weight_decay = compute_scaled_weight_decay(
     base_weight_decay=args.weight_decay,
     total_batch_size=total_batch_size,
     target_tokens=target_tokens,
@@ -241,6 +240,9 @@ print0(f"weight_decay: {weight_decay:.6f}")
 
 run_name = args.run_name if args.run_name else f"d{args.depth}"
 checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="pretrain")
+wandb_run_name = args.run if args.run else run_name
+if wandb_run_name != "dummy":
+    os.environ.setdefault("WANDB_PROJECT", "tinygpt")
 
 
 def make_loader(split: str):
@@ -338,8 +340,8 @@ training_args = TrainingArguments(
     save_steps=args.save_every if args.save_every > 0 else num_iterations,
     remove_unused_columns=False,
     dataloader_num_workers=0,
-    report_to=["wandb"] if args.run != "dummy" and master_process else [],
-    run_name=args.run if args.run != "dummy" else None,
+    report_to=["wandb"] if wandb_run_name != "dummy" and master_process else [],
+    run_name=wandb_run_name if wandb_run_name != "dummy" else None,
     label_names=["labels"],
     fsdp="",  # We pre-wrap with FSDP above
     use_cpu=(device_type == "cpu"),
@@ -373,6 +375,7 @@ trainer = TinyGPTTrainer(
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
+    tokenizer_dir=args.tokenizer_dir,
     checkpoint_metadata={
         "phase": "pretrain",
         "user_config": vars(args).copy(),

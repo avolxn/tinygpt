@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 from dataclasses import asdict
 from typing import Any, cast
 
@@ -29,6 +30,7 @@ from tinygpt.model import GPT
 logger = logging.getLogger(__name__)
 TRAINER_STATE_NAME = "trainer_state.json"
 METADATA_NAME = "tinygpt_metadata.json"
+TOKENIZER_FILES = ("tokenizer.json", "token_bytes.pt")
 
 
 def get_checkpoint_dir(out_dir: str, run_name: str, phase: str = "pretrain") -> str:
@@ -88,6 +90,7 @@ def save_model_checkpoint(
     output_dir: str,
     model: torch.nn.Module,
     metadata: dict[str, Any] | None = None,
+    tokenizer_dir: str | None = None,
 ) -> None:
     """Save model weights and config in a Hugging Face style directory."""
     os.makedirs(output_dir, exist_ok=True)
@@ -108,6 +111,12 @@ def save_model_checkpoint(
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
         logger.info("Saved metadata to: %s", metadata_path)
+
+    if tokenizer_dir is not None:
+        for filename in TOKENIZER_FILES:
+            source = os.path.join(tokenizer_dir, filename)
+            if os.path.exists(source):
+                shutil.copy2(source, os.path.join(output_dir, filename))
 
 
 def build_model_from_checkpoint(
