@@ -11,12 +11,12 @@
   "log_history": [
     {
       "epoch": 0.5,
-      "eval/sft_loss": 7.1979146003723145,
+      "eval/sft_loss": 1.1698192358016968,
       "step": 10
     },
     {
       "epoch": 1.0,
-      "eval/sft_loss": 6.6666309356689455,
+      "eval/sft_loss": 0.16079267859458923,
       "step": 20
     }
   ],

@@ -14,14 +14,11 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import argparse
+import math
 from functools import partial
 
 import torch
 from tasks.base import TaskMixture
-from tasks.customjson import CustomJSON
-from tasks.gsm8k import GSM8K
-from tasks.mmlu import MMLU
-from tasks.smoltalk import SmolTalk
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
@@ -38,6 +35,7 @@ from tinygpt.distributed import (
     print0,
 )
 from tinygpt.model import Block
+from tinygpt.sft_tasks import build_sft_task_lists
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.train import TinyGPTTrainer
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
@@ -58,22 +56,26 @@ parser.add_argument(
     "--sharding-strategy", type=str, default="FULL_SHARD", choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"]
 )
 # Training horizon
-parser.add_argument("--num-iterations", type=int, default=1000)
-# Batch sizes
-parser.add_argument("--device-batch-size", type=int, default=8)
+parser.add_argument("--num-iterations", type=int, default=-1, help="Optimization steps (-1 = approximate one epoch)")
+# Batch sizes (default: inherit from pretrain metadata when available)
+parser.add_argument("--device-batch-size", type=int, default=None)
+parser.add_argument("--total-batch-size", type=int, default=None, help="Total batch size in tokens")
 parser.add_argument("--max-seq-len", type=int, default=None, help="Sequence length (default: from checkpoint)")
 # Optimizer
-parser.add_argument("--matrix-lr", type=float, default=0.0003)
-parser.add_argument("--embedding-lr", type=float, default=0.003)
-parser.add_argument("--scalar-lr", type=float, default=0.03)
-parser.add_argument("--weight-decay", type=float, default=0.01)
+parser.add_argument("--matrix-lr", type=float, default=None)
+parser.add_argument("--lm-head-lr", type=float, default=None)
+parser.add_argument("--embedding-lr", type=float, default=None)
+parser.add_argument("--scalar-lr", type=float, default=None)
+parser.add_argument("--init-lr-frac", type=float, default=0.8)
+parser.add_argument("--weight-decay", type=float, default=0.0)
 parser.add_argument("--grad-clip", type=float, default=1.0)
 # LR schedule
-parser.add_argument("--warmup-steps", type=int, default=20)
+parser.add_argument("--warmup-ratio", type=float, default=0.0)
 parser.add_argument("--warmdown-ratio", type=float, default=0.5)
 parser.add_argument("--final-lr-frac", type=float, default=0.0)
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=200)
+parser.add_argument("--eval-tokens", type=int, default=40 * 524288)
 # Output
 parser.add_argument("--out-dir", type=str, default="data")
 parser.add_argument("--run-name", type=str, default="")
@@ -103,14 +105,14 @@ parser.add_argument("--distill-temperature", type=float, default=1.0, help="Temp
 parser.add_argument(
     "--tasks",
     type=str,
-    default="smoltalk,mmlu,gsm8k",
-    help="Comma-separated task groups: smoltalk,mmlu,gsm8k,identity",
+    default="smoltalk,mmlu,gsm8k,identity,spelling",
+    help="Comma-separated task groups: smoltalk,mmlu,gsm8k,identity,spelling",
 )
 parser.add_argument(
     "--identity-conversations",
     type=str,
-    default="",
-    help="Path to identity_conversations.jsonl (used when 'identity' in --tasks)",
+    default="data/identity_conversations.jsonl",
+    help="Path to identity_conversations.jsonl",
 )
 parser.add_argument("--mmlu-epochs", type=int, default=3)
 parser.add_argument("--gsm8k-epochs", type=int, default=4)
@@ -132,6 +134,46 @@ if args.distill_temperature <= 0:
 model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="train")
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
 sequence_len = args.max_seq_len or meta["model_config"]["sequence_len"]
+pretrain_user_config = meta.get("user_config", {})
+
+
+def resolve_value(
+    arg_name: str,
+    fallback: int | float,
+    *candidates: int | float | None,
+) -> int | float:
+    arg_val = getattr(args, arg_name)
+    if arg_val is not None:
+        return arg_val
+    for candidate in candidates:
+        if candidate is not None:
+            print0(f"Inherited {arg_name}={candidate} from pretrain checkpoint")
+            return candidate
+    print0(f"Using fallback {arg_name}={fallback}")
+    return fallback
+
+
+args.device_batch_size = int(
+    resolve_value("device_batch_size", 32, meta.get("device_batch_size"), pretrain_user_config.get("device_batch_size"))
+)
+args.total_batch_size = int(
+    resolve_value(
+        "total_batch_size", 524288, meta.get("total_batch_size"), pretrain_user_config.get("total_batch_size")
+    )
+)
+args.matrix_lr = float(resolve_value("matrix_lr", 0.02, pretrain_user_config.get("matrix_lr")))
+args.lm_head_lr = float(
+    resolve_value(
+        "lm_head_lr", 0.004, pretrain_user_config.get("lm_head_lr"), pretrain_user_config.get("unembedding_lr")
+    )
+)
+args.embedding_lr = float(resolve_value("embedding_lr", 0.3, pretrain_user_config.get("embedding_lr")))
+args.scalar_lr = float(resolve_value("scalar_lr", 0.5, pretrain_user_config.get("scalar_lr")))
+
+args.matrix_lr *= args.init_lr_frac
+args.lm_head_lr *= args.init_lr_frac
+args.embedding_lr *= args.init_lr_frac
+args.scalar_lr *= args.init_lr_frac
 
 
 def resolve_teacher_device() -> torch.device:
@@ -167,35 +209,56 @@ if device_type == "cuda" and is_dist:
         device_id=local_rank,
     )
 
-task_names = {t.strip() for t in args.tasks.split(",")}
-task_list = []
-
-if "smoltalk" in task_names:
-    task_list.append(SmolTalk(split="train"))
-
-if "identity" in task_names and args.identity_conversations:
-    task_list += [CustomJSON(filepath=args.identity_conversations)] * 2
-
-if "mmlu" in task_names:
-    task_list += [MMLU(subset="all", split="auxiliary_train")] * args.mmlu_epochs
-
-if "gsm8k" in task_names:
-    task_list += [GSM8K(subset="main", split="train")] * args.gsm8k_epochs
+task_names = {t.strip() for t in args.tasks.split(",") if t.strip()}
+task_list, val_task_list = build_sft_task_lists(
+    task_names,
+    identity_conversations=args.identity_conversations,
+    mmlu_epochs=args.mmlu_epochs,
+    gsm8k_epochs=args.gsm8k_epochs,
+)
 
 if not task_list:
     raise ValueError(f"No valid tasks found in: {args.tasks}")
 
 task = TaskMixture(task_list)
-print0(f"Task mixture: {len(task)} examples from {task_names}")
+print0(f"Task mixture: {len(task):,} examples from {task_names}")
 
+val_task = (
+    TaskMixture(val_task_list)
+    if args.eval_every > 0
+    else None
+)
 train_loader = sft_data_loader(tokenizer, task, args.device_batch_size, sequence_len, device)
+
+tokens_per_fwdbwd = args.device_batch_size * sequence_len
+world_tokens_per_fwdbwd = tokens_per_fwdbwd * world_size
+if args.total_batch_size % world_tokens_per_fwdbwd != 0:
+    raise ValueError(
+        f"total_batch_size {args.total_batch_size} must be divisible by "
+        f"device_batch_size*seq_len*world_size = {world_tokens_per_fwdbwd}"
+    )
+grad_accum_steps = args.total_batch_size // world_tokens_per_fwdbwd
+print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {sequence_len} = {tokens_per_fwdbwd:,}")
+print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
+print0(f"Total batch size {args.total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
+
+if args.num_iterations > 0:
+    num_iterations = args.num_iterations
+else:
+    approx_rows_per_step = max(1, args.device_batch_size * world_size * grad_accum_steps)
+    num_iterations = max(1, math.ceil(len(task) / approx_rows_per_step))
+    print0(f"Approximated one-epoch num_iterations={num_iterations:,} from {len(task):,} mixed conversations")
+
+warmup_steps = round(args.warmup_ratio * num_iterations)
+eval_steps = max(1, args.eval_tokens // args.total_batch_size)
 
 
 def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
-    """Evaluate distillation/SFT loss on 10 batches."""
-    eval_loader = sft_data_loader(tokenizer, task, args.device_batch_size, sequence_len, device)
+    """Evaluate distillation/SFT loss on the held-out validation mixture."""
+    assert val_task is not None
+    eval_loader = sft_data_loader(tokenizer, val_task, args.device_batch_size, sequence_len, device)
     losses = []
-    for _ in range(10):
+    for _ in range(eval_steps):
         x, y = next(eval_loader)
         loss = eval_model(x, y)
         losses.append(loss.item())
@@ -204,22 +267,22 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
     return {"distill_loss": sft_val_loss}
 
 
-run_name = args.run_name if args.run_name else f"d{meta['model_config']['depth']}"
+run_name = args.run_name if args.run_name else f"d{meta['model_config']['n_layer']}"
 checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="distill")
 
 training_args = TrainingArguments(
     output_dir=checkpoint_dir,
-    max_steps=args.num_iterations,
+    max_steps=num_iterations,
     per_device_train_batch_size=args.device_batch_size,
-    gradient_accumulation_steps=1,
-    warmup_steps=args.warmup_steps,
+    gradient_accumulation_steps=grad_accum_steps,
+    warmup_steps=warmup_steps,
     weight_decay=args.weight_decay,
     max_grad_norm=args.grad_clip,
     logging_steps=50,
     eval_strategy="steps" if args.eval_every > 0 else "no",
     eval_steps=args.eval_every if args.eval_every > 0 else None,
     save_strategy="steps",
-    save_steps=args.eval_every if args.eval_every > 0 else args.num_iterations,
+    save_steps=args.eval_every if args.eval_every > 0 else num_iterations,
     remove_unused_columns=False,
     dataloader_num_workers=0,
     report_to=["wandb"] if args.run != "dummy" and master_process else [],
@@ -240,6 +303,7 @@ trainer = TinyGPTTrainer(
     matrix_lr=args.matrix_lr,
     embedding_lr=args.embedding_lr,
     scalar_lr=args.scalar_lr,
+    lm_head_lr=args.lm_head_lr,
     warmdown_ratio=args.warmdown_ratio,
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,
@@ -247,6 +311,15 @@ trainer = TinyGPTTrainer(
     teacher_model=teacher_model,
     distill_alpha=args.distill_alpha,
     distill_temperature=args.distill_temperature,
+    checkpoint_metadata={
+        "phase": "distill",
+        "user_config": vars(args).copy(),
+        "device_batch_size": args.device_batch_size,
+        "max_seq_len": sequence_len,
+        "total_batch_size": args.total_batch_size,
+        "grad_accum_steps": grad_accum_steps,
+        "num_iterations": num_iterations,
+    },
 )
 
 trainer.train()

@@ -28,6 +28,7 @@ from tinygpt.model import GPT
 
 logger = logging.getLogger(__name__)
 TRAINER_STATE_NAME = "trainer_state.json"
+METADATA_NAME = "tinygpt_metadata.json"
 
 
 def get_checkpoint_dir(out_dir: str, run_name: str, phase: str = "pretrain") -> str:
@@ -86,6 +87,7 @@ def _load_state_dict(weights_path: str, device: torch.device) -> dict[str, torch
 def save_model_checkpoint(
     output_dir: str,
     model: torch.nn.Module,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Save model weights and config in a Hugging Face style directory."""
     os.makedirs(output_dir, exist_ok=True)
@@ -100,6 +102,12 @@ def save_model_checkpoint(
     weights_path = os.path.join(output_dir, SAFE_WEIGHTS_NAME)
     safe_save_file(_sanitize_state_dict_for_save(model), weights_path, metadata={"format": "pt"})
     logger.info("Saved model weights to: %s", weights_path)
+
+    if metadata is not None:
+        metadata_path = os.path.join(output_dir, METADATA_NAME)
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+        logger.info("Saved metadata to: %s", metadata_path)
 
 
 def build_model_from_checkpoint(
@@ -123,7 +131,8 @@ def build_model_from_checkpoint(
     else:
         model.train()
 
-    metadata = _load_optional_json(os.path.join(model_dir, TRAINER_STATE_NAME))
+    metadata = _load_optional_json(os.path.join(model_dir, METADATA_NAME))
+    metadata.update(_load_optional_json(os.path.join(model_dir, TRAINER_STATE_NAME)))
     if "global_step" in metadata and "step" not in metadata:
         metadata["step"] = metadata["global_step"]
     metadata["model_config"] = config_dict

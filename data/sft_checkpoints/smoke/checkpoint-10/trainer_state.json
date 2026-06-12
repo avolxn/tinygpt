@@ -11,7 +11,7 @@
   "log_history": [
     {
       "epoch": 0.5,
-      "eval/sft_loss": 7.1979146003723145,
+      "eval/sft_loss": 1.1698192358016968,
       "step": 10
     }
   ],

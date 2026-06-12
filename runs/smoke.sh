@@ -78,6 +78,7 @@ python -m scripts.finetune \
   --device-batch-size 1 \
   --num-iterations 20 \
   --eval-every 10 \
+  --eval-tokens 2048 \
   --tasks identity \
   --identity-conversations "$IDENTITY_JSONL" \
   --run "$WANDB_RUN" \

@@ -24,7 +24,7 @@ from tasks.humaneval import HumanEval
 from tasks.mmlu import MMLU
 
 from tinygpt.checkpoint import build_model_from_checkpoint
-from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
+from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loader_bestfit
 from tinygpt.distributed import compute_cleanup, compute_init, get_dist_info, print0
 from tinygpt.inference import Engine
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
@@ -41,7 +41,7 @@ parser.add_argument(
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 parser.add_argument("--eval", type=str, default="bpb,sample", help="Comma-separated modes: bpb,sample,chat")
 parser.add_argument("--tasks", type=str, default="", help="Tasks for chat eval, pipe-separated. Default = all.")
-parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
+parser.add_argument("--dataset", type=str, default=CLIMBMIX_DATASET)
 parser.add_argument("--text-field", type=str, default="text")
 parser.add_argument("--device-batch-size", type=int, default=32)
 parser.add_argument("--split-tokens", type=int, default=40 * 524288)

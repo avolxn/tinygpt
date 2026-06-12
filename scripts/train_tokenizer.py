@@ -27,11 +27,12 @@ import time
 import torch
 from datasets import load_dataset
 
+from tinygpt.dataloader import CLIMBMIX_DATASET
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 parser = argparse.ArgumentParser(description="Train a BPE tokenizer")
 parser.add_argument(
-    "--dataset", type=str, default="HuggingFaceFW/fineweb", help="HF dataset identifier (ignored if --txt is given)"
+    "--dataset", type=str, default=CLIMBMIX_DATASET, help="HF dataset identifier (ignored if --txt is given)"
 )
 parser.add_argument("--split", type=str, default="train", help="Dataset split to train on")
 parser.add_argument("--text-field", type=str, default="text", help="Column name containing document text")

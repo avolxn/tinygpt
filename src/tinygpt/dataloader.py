@@ -9,16 +9,45 @@ BOS-aligned bestfit packing:
 """
 
 import logging
-from collections import deque
 from collections.abc import Iterator
+from functools import lru_cache
 from typing import Any
 
 import torch
 from datasets import load_dataset
+from huggingface_hub import list_repo_files
 
 from tinygpt.distributed import get_dist_info
 
 logger = logging.getLogger(__name__)
+CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
+
+
+@lru_cache(maxsize=1)
+def _climbmix_parquet_files() -> tuple[str, ...]:
+    files = list_repo_files(CLIMBMIX_DATASET, repo_type="dataset")
+    parquet_files = sorted(f for f in files if f.endswith(".parquet"))
+    if len(parquet_files) < 2:
+        raise RuntimeError(f"Expected at least two parquet shards in {CLIMBMIX_DATASET}, got {len(parquet_files)}")
+    return tuple(f"hf://datasets/{CLIMBMIX_DATASET}/{path}" for path in parquet_files)
+
+
+def resolve_dataset_source(
+    dataset_name: str,
+    split: str,
+) -> tuple[str, str, dict[str, list[str]] | None]:
+    """Resolve a text dataset into load_dataset arguments.
+
+    ClimbMix exposes only one Hub split, so we mirror nanochat's local parquet
+    convention: all shards except the final shard are train, final shard is val.
+    """
+    if dataset_name != CLIMBMIX_DATASET:
+        hf_split = "validation" if split == "val" else split
+        return dataset_name, hf_split, None
+
+    parquet_files = _climbmix_parquet_files()
+    selected = list(parquet_files[-1:] if split == "val" else parquet_files[:-1])
+    return "parquet", "train", {"train": selected}
 
 
 def document_batches(
@@ -44,8 +73,15 @@ def document_batches(
         epoch is the 1-based epoch counter.
     """
     epoch = 1
+    resolved_name, resolved_split, data_files = resolve_dataset_source(dataset_name, split)
     while True:
-        ds = load_dataset(dataset_name, split=split, streaming=True, trust_remote_code=True)
+        ds = load_dataset(
+            resolved_name,
+            split=resolved_split,
+            data_files=data_files,
+            streaming=True,
+            trust_remote_code=True,
+        )
         if world_size > 1:
             ds = ds.shard(num_shards=world_size, index=rank)
         for batch in ds.iter(batch_size=batch_size):
@@ -84,9 +120,8 @@ def tokenizing_distributed_data_loader_bestfit(
         inputs shifted by one position.
     """
     _, rank, _, world_size = get_dist_info()
-    hf_split = "validation" if split == "val" else split
 
-    batches = document_batches(dataset_name, hf_split, rank, world_size, tokenizer_batch_size, text_field)
+    batches = document_batches(dataset_name, split, rank, world_size, tokenizer_batch_size, text_field)
     bos_token = tokenizer.get_bos_token_id()
     doc_buffer: list[list[int]] = []
 
@@ -183,13 +218,19 @@ def sft_data_loader(
     cpu_inputs = cpu_inputs_buf[: B * T].view(B, T)
     cpu_targets = cpu_targets_buf[: B * T].view(B, T)
 
-    doc_deque: deque[tuple[list[int], list[int]]] = deque()  # (ids, mask) pairs
+    conv_buffer: list[tuple[list[int], list[int]]] = []
+    cursor = 0
 
     def refill() -> None:
-        for idx in indices:
+        nonlocal cursor
+        while len(conv_buffer) < 100:
+            if not indices:
+                break
+            idx = indices[cursor % len(indices)]
             conv = task[idx % n]
             ids, mask = tokenizer.render_conversation(conv, max_tokens=T + 1)
-            doc_deque.append((ids, mask))
+            conv_buffer.append((ids, mask))
+            cursor += 1
 
     while True:
         for row_idx in range(B):
@@ -198,29 +239,30 @@ def sft_data_loader(
             target_buffer[row_idx].fill_(-1)
 
             while pos < row_capacity:
-                if not doc_deque:
+                if not conv_buffer:
                     refill()
+                if not conv_buffer:
+                    break
 
                 remaining = row_capacity - pos
-                ids, mask = doc_deque[0]
+                best_idx = -1
+                best_len = 0
+                for i, (ids, _) in enumerate(conv_buffer):
+                    conv_len = len(ids)
+                    if conv_len <= remaining and conv_len > best_len:
+                        best_idx = i
+                        best_len = conv_len
 
-                if len(ids) <= remaining:
-                    doc_deque.popleft()
-                    length = len(ids)
-                    row_buffer[row_idx, pos : pos + length] = torch.tensor(ids, dtype=torch.long)
-                    target_buffer[row_idx, pos : pos + length] = torch.tensor(
-                        [i if m else -1 for i, m in zip(ids, mask, strict=True)], dtype=torch.long
-                    )
-                    pos += length
-                else:
-                    doc_deque[0] = (ids[:remaining], mask[:remaining])
-                    length = remaining
-                    row_buffer[row_idx, pos : pos + length] = torch.tensor(ids[:remaining], dtype=torch.long)
-                    target_buffer[row_idx, pos : pos + length] = torch.tensor(
-                        [i if m else -1 for i, m in zip(ids[:remaining], mask[:remaining], strict=True)],
-                        dtype=torch.long,
-                    )
-                    pos += length
+                if best_idx < 0:
+                    break
+
+                ids, mask = conv_buffer.pop(best_idx)
+                row_buffer[row_idx, pos : pos + best_len] = torch.tensor(ids, dtype=torch.long)
+                target_buffer[row_idx, pos : pos + best_len] = torch.tensor(
+                    [token_id if mask_val else -1 for token_id, mask_val in zip(ids, mask, strict=True)],
+                    dtype=torch.long,
+                )
+                pos += best_len
 
         cpu_inputs.copy_(row_buffer[:, :-1])
         cpu_targets.copy_(target_buffer[:, 1:])

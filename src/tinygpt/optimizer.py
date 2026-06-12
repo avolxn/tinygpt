@@ -26,8 +26,6 @@ def make_param_groups(
     weight_decay: float = 0.1,
     muon_momentum: float = 0.95,
     muon_ns_steps: int = 5,
-    adamw_betas: tuple[float, float] = (0.9, 0.95),
-    adamw_eps: float = 1e-8,
 ) -> list[dict[str, Any]]:
     """
     Split model parameters into MuonAdamW-friendly groups.
@@ -47,7 +45,11 @@ def make_param_groups(
     matrix_params: list[nn.Parameter] = []
     lm_head_params: list[nn.Parameter] = []
     embedding_params: list[nn.Parameter] = []
-    scalar_params: list[nn.Parameter] = []
+    value_embeds_params: list[nn.Parameter] = []
+    resid_params: list[nn.Parameter] = []
+    x0_params: list[nn.Parameter] = []
+    smear_params: list[nn.Parameter] = []
+    misc_scalar_params: list[nn.Parameter] = []
 
     seen: set[int] = set()
     for name, param in model.named_parameters():
@@ -55,17 +57,104 @@ def make_param_groups(
             continue
         seen.add(id(param))
 
-        if "wte" in name or "value_embeds" in name:
+        if "wte" in name:
             embedding_params.append(param)
+        elif "value_embeds" in name:
+            value_embeds_params.append(param)
         elif "lm_head" in name:
             lm_head_params.append(param)
-        elif param.dim() < 2 or "smear" in name or "lambda" in name or "ve_gate" in name:
-            scalar_params.append(param)
+        elif "resid_lambdas" in name:
+            resid_params.append(param)
+        elif "x0_lambdas" in name:
+            x0_params.append(param)
+        elif "smear_gate" in name or "smear_lambda" in name or "backout_lambda" in name:
+            smear_params.append(param)
+        elif param.dim() < 2:
+            misc_scalar_params.append(param)
         else:
             matrix_params.append(param)
 
-    groups: list[dict[str, Any]] = []
+    model_dim = getattr(getattr(model, "config", None), "n_embd", 768)
+    dmodel_lr_scale = (model_dim / 768) ** -0.5
 
+    groups: list[dict[str, Any]] = []
+    if lm_head_params:
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": lm_head_params,
+                "lr": lm_head_lr * dmodel_lr_scale,
+                "weight_decay": 0.01,
+                "betas": (0.8, 0.96),
+                "eps": 1e-10,
+            }
+        )
+    if embedding_params:
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": embedding_params,
+                "lr": embedding_lr * dmodel_lr_scale,
+                "weight_decay": 0.001,
+                "betas": (0.8, 0.995),
+                "eps": 1e-10,
+            }
+        )
+    if value_embeds_params:
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": value_embeds_params,
+                "lr": embedding_lr * dmodel_lr_scale * 0.5,
+                "weight_decay": 0.01,
+                "betas": (0.8, 0.995),
+                "eps": 1e-10,
+            }
+        )
+    if resid_params:
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": resid_params,
+                "lr": scalar_lr * 0.01,
+                "weight_decay": 0.05,
+                "betas": (0.8, 0.95),
+                "eps": 1e-10,
+            }
+        )
+    if x0_params:
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": x0_params,
+                "lr": scalar_lr,
+                "weight_decay": 0.0,
+                "betas": (0.96, 0.95),
+                "eps": 1e-10,
+            }
+        )
+    if smear_params:
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": smear_params,
+                "lr": 0.2,
+                "weight_decay": 0.0,
+                "betas": (0.8, 0.95),
+                "eps": 1e-10,
+            }
+        )
+    if misc_scalar_params:
+        groups.append(
+            {
+                "kind": "adamw",
+                "params": misc_scalar_params,
+                "lr": scalar_lr,
+                "weight_decay": 0.0,
+                "betas": (0.9, 0.95),
+                "eps": 1e-8,
+            }
+        )
     if matrix_params:
         groups.append(
             {
@@ -75,39 +164,6 @@ def make_param_groups(
                 "weight_decay": weight_decay,
                 "momentum": muon_momentum,
                 "ns_steps": muon_ns_steps,
-            }
-        )
-    if lm_head_params:
-        groups.append(
-            {
-                "kind": "adamw",
-                "params": lm_head_params,
-                "lr": lm_head_lr,
-                "weight_decay": weight_decay,
-                "betas": adamw_betas,
-                "eps": adamw_eps,
-            }
-        )
-    if embedding_params:
-        groups.append(
-            {
-                "kind": "adamw",
-                "params": embedding_params,
-                "lr": embedding_lr,
-                "weight_decay": 0.0,
-                "betas": adamw_betas,
-                "eps": adamw_eps,
-            }
-        )
-    if scalar_params:
-        groups.append(
-            {
-                "kind": "adamw",
-                "params": scalar_params,
-                "lr": scalar_lr,
-                "weight_decay": 0.0,
-                "betas": adamw_betas,
-                "eps": adamw_eps,
             }
         )
 
@@ -191,8 +247,6 @@ def make_optimizer(
     weight_decay: float = 0.1,
     muon_momentum: float = 0.95,
     muon_ns_steps: int = 5,
-    adamw_betas: tuple[float, float] = (0.9, 0.95),
-    adamw_eps: float = 1e-8,
 ) -> MuonAdamW:
     """
     Create a MuonAdamW optimizer with per-group learning rates.
@@ -210,8 +264,6 @@ def make_optimizer(
         weight_decay=weight_decay,
         muon_momentum=muon_momentum,
         muon_ns_steps=muon_ns_steps,
-        adamw_betas=adamw_betas,
-        adamw_eps=adamw_eps,
     )
     optimizer = MuonAdamW(param_groups)
     for group in optimizer.param_groups:

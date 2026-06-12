@@ -21,6 +21,7 @@ class CompressionMetrics(TypedDict):
     tokens: int
     ratio: float
 
+
 parser = argparse.ArgumentParser(description="Evaluate tokenizer compression")
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer", help="Directory containing tokenizer.json")
 args = parser.parse_args()

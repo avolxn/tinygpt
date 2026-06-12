@@ -41,10 +41,10 @@ python -m scripts.evaluate_tokenizer --tokenizer-dir data/tokenizer_nanochat_d32
 
 echo "==> Pretraining student with nanochat tokenizer"
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
-  --depth 24 \
+  --depth 32 \
   --tokenizer-dir data/tokenizer_nanochat_d32 \
-  --target-param-data-ratio 8 \
-  --device-batch-size 16 \
+  --target-param-data-ratio 12 \
+  --device-batch-size 32 \
   --run "$WANDB_RUN" \
   --run-name pretrain_with_nanochat_d32 \
   --out-dir data
@@ -53,4 +53,4 @@ echo "==> Evaluating base checkpoint data/pretrain_checkpoints/pretrain_with_nan
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate_model \
   --checkpoint data/pretrain_checkpoints/pretrain_with_nanochat_d32 \
   --tokenizer-dir data/tokenizer_nanochat_d32 \
-  --device-batch-size 16
+  --device-batch-size 32

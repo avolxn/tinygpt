@@ -58,12 +58,10 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.distill \
   --teacher-model data/teacher_nanochat_d32 \
   --teacher-tokenizer data/teacher_nanochat_d32 \
   --teacher-device "$TEACHER_DEVICE" \
-  --device-batch-size 4 \
-  --num-iterations 12000 \
   --eval-every 500 \
   --distill-alpha 0.75 \
   --distill-temperature 1.5 \
-  --tasks smoltalk,mmlu,gsm8k,identity \
+  --tasks smoltalk,mmlu,gsm8k,identity,spelling \
   --identity-conversations data/identity_conversations.jsonl \
   --run "$WANDB_RUN" \
   --run-name distill_from_nanochat_d32 \
@@ -74,5 +72,5 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate_mod
   --checkpoint data/distill_checkpoints/distill_from_nanochat_d32 \
   --tokenizer-dir data/tokenizer_nanochat_d32 \
   --eval chat \
-  --device-batch-size 4 \
+  --device-batch-size 32 \
   --max-problems 64

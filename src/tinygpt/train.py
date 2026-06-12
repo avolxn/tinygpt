@@ -71,6 +71,7 @@ class TinyGPTTrainer(Trainer):
         matrix_lr: float,
         embedding_lr: float,
         scalar_lr: float,
+        lm_head_lr: float | None = None,
         muon_momentum: float = 0.95,
         muon_ns_steps: int = 5,
         warmdown_ratio: float = 0.65,
@@ -80,12 +81,14 @@ class TinyGPTTrainer(Trainer):
         teacher_model: nn.Module | None = None,
         distill_alpha: float = 0.0,
         distill_temperature: float = 1.0,
+        checkpoint_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._matrix_lr = matrix_lr
         self._embedding_lr = embedding_lr
         self._scalar_lr = scalar_lr
+        self._lm_head_lr = lm_head_lr
         self._muon_momentum = muon_momentum
         self._muon_ns_steps = muon_ns_steps
         self._warmdown_ratio = warmdown_ratio
@@ -95,6 +98,7 @@ class TinyGPTTrainer(Trainer):
         self._teacher_model = teacher_model
         self._distill_alpha = distill_alpha
         self._distill_temperature = distill_temperature
+        self._checkpoint_metadata = checkpoint_metadata or {}
 
     def get_train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
         """Return a DataLoader that passes pre-batched items through unchanged.
@@ -140,11 +144,14 @@ class TinyGPTTrainer(Trainer):
             return (loss, {"loss": loss}) if return_outputs else loss
 
         student_logits = model(input_ids)
-        ce_loss = torch.nn.functional.cross_entropy(
-            student_logits.view(-1, student_logits.size(-1)),
-            labels.view(-1),
-            ignore_index=-1,
-        )
+        if bool(labels.ne(-1).any()):
+            ce_loss = torch.nn.functional.cross_entropy(
+                student_logits.view(-1, student_logits.size(-1)),
+                labels.view(-1),
+                ignore_index=-1,
+            )
+        else:
+            ce_loss = student_logits.sum() * 0.0
 
         teacher_device = get_model_device(self._teacher_model)
         teacher_input_ids = input_ids.to(teacher_device)
@@ -181,6 +188,7 @@ class TinyGPTTrainer(Trainer):
             matrix_lr=self._matrix_lr,
             embedding_lr=self._embedding_lr,
             scalar_lr=self._scalar_lr,
+            lm_head_lr=self._lm_head_lr,
             weight_decay=self.args.weight_decay,
             muon_momentum=self._muon_momentum,
             muon_ns_steps=self._muon_ns_steps,
@@ -255,7 +263,7 @@ class TinyGPTTrainer(Trainer):
             output_dir = self.args.output_dir
         assert output_dir is not None
         assert self.model is not None
-        save_model_checkpoint(output_dir, self.model)
+        save_model_checkpoint(output_dir, self.model, metadata=self._checkpoint_metadata)
 
 
 class SamplerCallback(TrainerCallback):

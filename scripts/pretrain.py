@@ -32,7 +32,7 @@ from transformers import TrainingArguments
 from tinygpt.attention import flash_attn_available, flash_attn_backend, use_flash_attn
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, resolve_model_directory
 from tinygpt.config import make_config
-from tinygpt.dataloader import tokenizing_distributed_data_loader_bestfit
+from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loader_bestfit
 from tinygpt.distributed import (
     compute_cleanup,
     compute_init,
@@ -43,6 +43,7 @@ from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import GPT, Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.train import SamplerCallback, TinyGPTTrainer
+from tinygpt.training_config import compute_nanochat_total_batch_size, compute_nanochat_weight_decay
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
@@ -65,7 +66,7 @@ parser.add_argument("--head-dim", type=int, default=128)
 parser.add_argument("--max-seq-len", type=int, default=2048)
 parser.add_argument("--window-pattern", type=str, default="SSSL")
 # Data
-parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
+parser.add_argument("--dataset", type=str, default=CLIMBMIX_DATASET)
 parser.add_argument("--txt", type=str, default="", help="Local .txt file (overrides --dataset)")
 parser.add_argument("--text-field", type=str, default="text")
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
@@ -77,9 +78,10 @@ parser.add_argument("--device-batch-size", type=int, default=32)
 parser.add_argument("--total-batch-size", type=int, default=-1)
 # Optimizer (MuonAdamW: Muon for matrix params, AdamW for embeddings/scalars)
 parser.add_argument("--matrix-lr", type=float, default=0.02, help="LR for transformer matrix weights (Muon)")
+parser.add_argument("--lm-head-lr", type=float, default=0.008, help="LR for lm_head / unembedding parameters (AdamW)")
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="LR for embedding parameters (AdamW)")
 parser.add_argument("--scalar-lr", type=float, default=0.5, help="LR for scalar/1-D parameters (AdamW)")
-parser.add_argument("--weight-decay", type=float, default=0.1)
+parser.add_argument("--weight-decay", type=float, default=0.28)
 parser.add_argument("--grad-clip", type=float, default=1.0)
 parser.add_argument("--muon-momentum", type=float, default=0.95, help="Momentum for Muon optimizer")
 parser.add_argument("--muon-ns-steps", type=int, default=5, help="Newton-Schulz iterations for Muon")
@@ -186,20 +188,42 @@ if param_counts:
 num_params = sum(p.numel() for p in model.parameters())
 print0(f"Total params: {num_params:,}")
 
+scaling_params = (
+    param_counts.get("transformer_matrices", 0) + param_counts.get("lm_head", 0) if param_counts else num_params
+)
+d12_config = make_config(
+    12,
+    aspect_ratio=args.aspect_ratio,
+    head_dim=args.head_dim,
+    vocab_size=vocab_size,
+    sequence_len=args.max_seq_len,
+    window_pattern=args.window_pattern,
+)
+with torch.device("meta"):
+    d12_model = GPT(d12_config)
+d12_counts = d12_model.num_scaling_params()
+d12_scaling_params = d12_counts["transformer_matrices"] + d12_counts["lm_head"]
+target_tokens = int(args.target_param_data_ratio * scaling_params)
+d12_target_tokens = args.target_param_data_ratio * d12_scaling_params
+total_batch_size = compute_nanochat_total_batch_size(
+    scaling_params=scaling_params,
+    d12_scaling_params=d12_scaling_params,
+    target_param_data_ratio=args.target_param_data_ratio,
+    requested_total_batch_size=args.total_batch_size,
+)
+weight_decay = compute_nanochat_weight_decay(
+    base_weight_decay=args.weight_decay,
+    total_batch_size=total_batch_size,
+    target_tokens=target_tokens,
+    d12_target_tokens=d12_target_tokens,
+)
+
 if args.num_iterations > 0:
     num_iterations = args.num_iterations
-elif param_counts and args.target_param_data_ratio > 0:
-    scaling_params = param_counts.get("transformer_matrices", 0) + param_counts.get("lm_head", 0)
-    target_tokens = int(args.target_param_data_ratio * scaling_params)
-    total_batch = args.total_batch_size if args.total_batch_size > 0 else 524288
-    num_iterations = max(1, target_tokens // total_batch)
+elif args.target_param_data_ratio > 0:
+    num_iterations = max(1, target_tokens // total_batch_size)
 else:
     num_iterations = 1000
-
-if args.total_batch_size > 0:
-    total_batch_size = args.total_batch_size
-else:
-    total_batch_size = args.device_batch_size * args.max_seq_len * world_size
 
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len
 world_tokens = tokens_per_fwdbwd * world_size
@@ -213,6 +237,7 @@ grad_accum_steps = total_batch_size // world_tokens
 print0(f"num_iterations: {num_iterations:,}")
 print0(f"total_batch_size: {total_batch_size:,}")
 print0(f"grad_accum_steps: {grad_accum_steps}")
+print0(f"weight_decay: {weight_decay:.6f}")
 
 run_name = args.run_name if args.run_name else f"d{args.depth}"
 checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="pretrain")
@@ -304,7 +329,7 @@ training_args = TrainingArguments(
     per_device_train_batch_size=args.device_batch_size,
     gradient_accumulation_steps=grad_accum_steps,
     warmup_steps=args.warmup_steps,
-    weight_decay=args.weight_decay,
+    weight_decay=weight_decay,
     max_grad_norm=args.grad_clip,
     logging_steps=100,
     eval_strategy="steps" if args.eval_every > 0 else "no",
@@ -341,12 +366,21 @@ trainer = TinyGPTTrainer(
     matrix_lr=args.matrix_lr,
     embedding_lr=args.embedding_lr,
     scalar_lr=args.scalar_lr,
+    lm_head_lr=args.lm_head_lr,
     muon_momentum=args.muon_momentum,
     muon_ns_steps=args.muon_ns_steps,
     warmdown_ratio=args.warmdown_ratio,
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
+    checkpoint_metadata={
+        "phase": "pretrain",
+        "user_config": vars(args).copy(),
+        "device_batch_size": args.device_batch_size,
+        "max_seq_len": args.max_seq_len,
+        "total_batch_size": total_batch_size,
+        "grad_accum_steps": grad_accum_steps,
+    },
 )
 
 if start_step > 0:

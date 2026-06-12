@@ -58,9 +58,6 @@ echo "Running SFT"
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.finetune \
   --checkpoint data/pretrain_checkpoints/from_scratch \
   --tokenizer-dir data/tokenizer_from_scratch \
-  --device-batch-size 16 \
-  --tasks smoltalk,mmlu,gsm8k,identity \
-  --identity-conversations data/identity_conversations.jsonl \
   --run "$WANDB_RUN" \
   --run-name from_scratch \
   --out-dir data
