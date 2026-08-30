@@ -272,7 +272,7 @@ def _txt_loader(tok, path: str, B: int, T: int, dev):
         for ln in lines:
             doc_buffer.append(tok.encode(ln, prepend=bos))
 
-    use_cuda = str(dev) == "cuda"
+    use_cuda = torch.device(dev).type == "cuda"
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
     cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
     gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=dev)

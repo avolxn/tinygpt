@@ -126,7 +126,7 @@ def tokenizing_distributed_data_loader_bestfit(
     doc_buffer: list[list[int]] = []
 
     row_capacity = T + 1
-    use_cuda = str(device) == "cuda"
+    use_cuda = torch.device(device).type == "cuda"
 
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
     cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
@@ -206,7 +206,7 @@ def sft_data_loader(
 
     bos_token = tokenizer.get_bos_token_id()
     row_capacity = T + 1
-    use_cuda = str(device) == "cuda"
+    use_cuda = torch.device(device).type == "cuda"
 
     row_buffer = torch.full((B, row_capacity), fill_value=bos_token, dtype=torch.long)
     target_buffer = torch.full((B, row_capacity), fill_value=-1, dtype=torch.long)
