@@ -27,7 +27,7 @@ import time
 import torch
 from datasets import load_dataset
 
-from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
+from tinygpt.dataloader import CLIMBMIX_DATASET
 from tinygpt.metrics import compute_token_bytes
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
@@ -67,15 +67,8 @@ def text_iterator():
                 if nchars >= args.max_chars:
                     return
     else:
-        print(f"Streaming from dataset: {args.dataset} / {args.split}")
-        dataset_name, split, data_files = resolve_dataset_source(args.dataset, args.split)
-        ds = load_dataset(
-            dataset_name,
-            split=split,
-            data_files=data_files,
-            streaming=True,
-            trust_remote_code=True,
-        )
+        print(f"Streaming from HF dataset: {args.dataset} / {args.split}")
+        ds = load_dataset(args.dataset, split=args.split, streaming=True, trust_remote_code=True)
         for row in ds:
             doc = row.get(args.text_field, row.get("content", ""))
             if not doc:

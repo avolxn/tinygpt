@@ -9,7 +9,6 @@ BOS-aligned bestfit packing:
 """
 
 import logging
-import os
 from collections.abc import Iterator
 from functools import lru_cache
 from typing import Any
@@ -39,24 +38,9 @@ def resolve_dataset_source(
 ) -> tuple[str, str, dict[str, list[str]] | None]:
     """Resolve a text dataset into load_dataset arguments.
 
-    Local Spark-prepared datasets use train/ and validation/ Parquet directories.
     ClimbMix exposes only one Hub split, so we mirror the reference local parquet
     convention: all shards except the final shard are train, final shard is val.
     """
-    if os.path.isdir(dataset_name):
-        local_split = "validation" if split in {"val", "validation"} else split
-        split_dir = os.path.join(dataset_name, local_split)
-        parquet_files = (
-            sorted(
-                os.path.join(split_dir, filename) for filename in os.listdir(split_dir) if filename.endswith(".parquet")
-            )
-            if os.path.isdir(split_dir)
-            else []
-        )
-        if not parquet_files:
-            raise FileNotFoundError(f"No Parquet files found for split {local_split!r} in {split_dir}")
-        return "parquet", "train", {"train": parquet_files}
-
     if dataset_name != CLIMBMIX_DATASET:
         hf_split = "validation" if split == "val" else split
         return dataset_name, hf_split, None
