@@ -16,16 +16,11 @@ COMMON_ENV = {
     "TORCHRUN_BIN": TORCHRUN_BIN,
     "PYTHONPATH": f"{WORKSPACE}/src:{WORKSPACE}",
     "RUN_NAME": "{{ params.experiment }}-{{ ts_nodash }}",
-    "RAW_INPUT": "{{ params.raw_input }}",
-    "INPUT_FORMAT": "{{ params.input_format }}",
+    "TXT_INPUT": "{{ params.txt }}",
     "TEXT_FIELD": "{{ params.text_field }}",
     "DATASET": "{{ params.dataset }}",
     "DEVICE_TYPE": "{{ params.device_type }}",
     "NPROC_PER_NODE": "{{ params.nproc_per_node }}",
-    "SPARK_MASTER": "{{ params.spark_master }}",
-    "SPARK_PARTITIONS": "{{ params.spark_partitions }}",
-    "VALIDATION_FRACTION": "{{ params.validation_fraction }}",
-    "MIN_CHARS": "{{ params.min_chars }}",
     "TOKENIZER_MAX_CHARS": "{{ params.tokenizer_max_chars }}",
     "VOCAB_SIZE": "{{ params.vocab_size }}",
     "DEPTH": "{{ params.depth }}",
@@ -57,7 +52,7 @@ def bash_task(task_id: str, bash_command: str, *, retries: int = 0) -> BashOpera
 
 with DAG(
     dag_id="tinygpt_training",
-    description="Prepare data, train a tokenizer, pretrain, run SFT, and evaluate tinygpt",
+    description="Train a tokenizer, pretrain, run SFT, and evaluate tinygpt",
     schedule=None,
     start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
@@ -69,19 +64,14 @@ with DAG(
             pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
             description="Safe artifact and W&B run prefix",
         ),
-        "raw_input": Param("", type="string", description="Optional Spark input path or glob"),
-        "input_format": Param("text", type="string", enum=["text", "json", "parquet"]),
         "text_field": Param("text", type="string", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$"),
         "dataset": Param(
             "karpathy/climbmix-400b-shuffle",
             type="string",
             minLength=1,
-            description="HF dataset or prepared local directory when raw_input is empty",
+            description="Hugging Face dataset used when txt is empty",
         ),
-        "spark_master": Param("local[*]", type="string", minLength=1),
-        "spark_partitions": Param(1, type="integer", minimum=0, maximum=4096),
-        "validation_fraction": Param(0.01, type="number", exclusiveMinimum=0, exclusiveMaximum=1),
-        "min_chars": Param(32, type="integer", minimum=1),
+        "txt": Param("", type="string", description="Optional local text file with one document per line"),
         "tokenizer_max_chars": Param(100_000, type="integer", minimum=1_000),
         "vocab_size": Param(2_048, type="integer", minimum=256, maximum=131_072),
         "device_type": Param("cpu", type="string", enum=["cpu", "cuda"]),
@@ -113,44 +103,23 @@ with DAG(
         retries=1,
     )
 
-    prepare_data = bash_task(
-        "prepare_data",
-        """set -euo pipefail
-ARTIFACT_DIR="data/airflow/$RUN_NAME"
-PREPARED_DATASET="$ARTIFACT_DIR/dataset"
-if [[ -z "$RAW_INPUT" ]]; then
-  echo "raw_input is empty; using dataset=$DATASET"
-  exit 0
-fi
-"$PYTHON_BIN" -m scripts.prepare_data \
-  --input "$RAW_INPUT" \
-  --input-format "$INPUT_FORMAT" \
-  --text-field "$TEXT_FIELD" \
-  --output "$PREPARED_DATASET" \
-  --master "$SPARK_MASTER" \
-  --partitions "$SPARK_PARTITIONS" \
-  --validation-fraction "$VALIDATION_FRACTION" \
-  --min-chars "$MIN_CHARS" \
-  --write-mode overwrite
-""",
-        retries=1,
-    )
-
     train_tokenizer = bash_task(
         "train_tokenizer",
         """set -euo pipefail
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
-TRAIN_DATASET="$DATASET"
-if [[ -n "$RAW_INPUT" ]]; then
-  TRAIN_DATASET="$ARTIFACT_DIR/dataset"
-fi
-"$PYTHON_BIN" -m scripts.train_tokenizer \
-  --dataset "$TRAIN_DATASET" \
-  --split train \
-  --text-field "$TEXT_FIELD" \
-  --max-chars "$TOKENIZER_MAX_CHARS" \
-  --vocab-size "$VOCAB_SIZE" \
+ARGS=(
+  -m scripts.train_tokenizer
+  --dataset "$DATASET"
+  --split train
+  --text-field "$TEXT_FIELD"
+  --max-chars "$TOKENIZER_MAX_CHARS"
+  --vocab-size "$VOCAB_SIZE"
   --out-dir "$ARTIFACT_DIR/tokenizer"
+)
+if [[ -n "$TXT_INPUT" ]]; then
+  ARGS+=(--txt "$TXT_INPUT")
+fi
+"$PYTHON_BIN" "${ARGS[@]}"
 """,
     )
 
@@ -167,13 +136,9 @@ fi
         "pretrain",
         """set -euo pipefail
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
-TRAIN_DATASET="$DATASET"
-if [[ -n "$RAW_INPUT" ]]; then
-  TRAIN_DATASET="$ARTIFACT_DIR/dataset"
-fi
 ARGS=(
   -m scripts.pretrain
-  --dataset "$TRAIN_DATASET"
+  --dataset "$DATASET"
   --text-field "$TEXT_FIELD"
   --tokenizer-dir "$ARTIFACT_DIR/tokenizer"
   --device-type "$DEVICE_TYPE"
@@ -188,6 +153,9 @@ ARGS=(
   --run-name "$RUN_NAME"
   --run "$RUN_NAME-pretrain"
 )
+if [[ -n "$TXT_INPUT" ]]; then
+  ARGS+=(--txt "$TXT_INPUT")
+fi
 if [[ "$NPROC_PER_NODE" -eq 1 ]]; then
   "$PYTHON_BIN" "${ARGS[@]}"
 else
@@ -200,20 +168,20 @@ fi
         "evaluate_base",
         """set -euo pipefail
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
-TRAIN_DATASET="$DATASET"
-if [[ -n "$RAW_INPUT" ]]; then
-  TRAIN_DATASET="$ARTIFACT_DIR/dataset"
+EVAL_MODES="bpb,sample"
+if [[ -n "$TXT_INPUT" ]]; then
+  EVAL_MODES="sample"
 fi
 ARGS=(
   -m scripts.evaluate_model
   --checkpoint "$ARTIFACT_DIR/pretrain_checkpoints/$RUN_NAME"
   --tokenizer-dir "$ARTIFACT_DIR/tokenizer"
-  --dataset "$TRAIN_DATASET"
+  --dataset "$DATASET"
   --text-field "$TEXT_FIELD"
   --device-type "$DEVICE_TYPE"
   --device-batch-size "$DEVICE_BATCH_SIZE"
   --split-tokens "$EVAL_TOKENS"
-  --eval bpb,sample
+  --eval "$EVAL_MODES"
 )
 if [[ "$NPROC_PER_NODE" -eq 1 ]]; then
   "$PYTHON_BIN" "${ARGS[@]}"
@@ -287,6 +255,6 @@ fi
         retries=1,
     )
 
-    verify_wandb >> [prepare_data, download_identity]
-    prepare_data >> train_tokenizer >> evaluate_tokenizer >> pretrain >> evaluate_base
+    verify_wandb >> [train_tokenizer, download_identity]
+    train_tokenizer >> evaluate_tokenizer >> pretrain >> evaluate_base
     [evaluate_base, download_identity] >> finetune >> evaluate_chat
