@@ -10,7 +10,14 @@ parser.add_argument(
     action="store_true",
     help="Require preconfigured credentials instead of prompting",
 )
-args = parser.parse_args()
 
-require_wandb_auth(interactive=not args.non_interactive)
-print("W&B authentication verified.")
+
+def main() -> None:
+    args = parser.parse_args()
+
+    require_wandb_auth(interactive=not args.non_interactive)
+    print("W&B authentication verified.")
+
+
+if __name__ == "__main__":
+    main()
