@@ -69,7 +69,6 @@ def run_turn(user_input: str) -> str:
         print(tokenizer.decode([token]), end="", flush=True)
     print()
     response = tokenizer.decode(response_tokens)
-    # Append to conversation history
     conversation_tokens = (
         conversation_tokens
         + [user_start]

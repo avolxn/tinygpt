@@ -84,6 +84,4 @@ def compute_scaled_weight_decay(
     d12_target_tokens: float,
 ) -> float:
     """Return the reference scaled pretraining weight decay."""
-    return base_weight_decay * math.sqrt(total_batch_size / REFERENCE_BATCH_SIZE) * (
-        d12_target_tokens / target_tokens
-    )
+    return base_weight_decay * math.sqrt(total_batch_size / REFERENCE_BATCH_SIZE) * (d12_target_tokens / target_tokens)

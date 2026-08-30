@@ -175,11 +175,7 @@ if not task_list:
 task = TaskMixture(task_list)
 print0(f"Task mixture: {len(task):,} examples from {task_names}")
 
-val_task = (
-    TaskMixture(val_task_list)
-    if args.eval_every > 0
-    else None
-)
+val_task = TaskMixture(val_task_list) if args.eval_every > 0 else None
 train_loader = sft_data_loader(tokenizer, task, args.device_batch_size, sequence_len, device)
 
 tokens_per_fwdbwd = args.device_batch_size * sequence_len

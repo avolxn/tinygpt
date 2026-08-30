@@ -77,7 +77,7 @@ else:
     _kvc, _kvc_ver = None, 0
 
 flash_attn_available: bool = _fwd is not None
-use_flash_attn: bool = _fwd is not None
+use_flash_attn: bool = flash_attn_available
 flash_attn_backend: str | None = f"FA{_fwd_ver}" if _fwd_ver else None
 
 

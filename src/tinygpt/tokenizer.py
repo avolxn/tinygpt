@@ -113,16 +113,16 @@ class HuggingFaceTokenizer:
         """
         return [w.content for w in self.tokenizer.get_added_tokens_decoder().values()]
 
-    def id_to_token(self, id: int) -> str:
+    def id_to_token(self, token_id: int) -> str:
         """Convert a token id to its string representation.
 
         Args:
-            id: Integer token id.
+            token_id: Integer token id.
 
         Returns:
             String representation of the token.
         """
-        return str(self.tokenizer.id_to_token(id))
+        return str(self.tokenizer.id_to_token(token_id))
 
     def encode_special(self, text: str) -> int | None:
         """Return the token id for a special token string, or None if not found.
