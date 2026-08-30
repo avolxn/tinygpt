@@ -3,6 +3,8 @@ MMLU evaluation task.
 https://huggingface.co/datasets/cais/mmlu
 """
 
+from typing import Any
+
 from datasets import load_dataset
 
 from tasks.base import Task, render_mc
@@ -13,7 +15,7 @@ LETTERS = ("A", "B", "C", "D")
 class MMLU(Task):
     """Massive Multitask Language Understanding benchmark."""
 
-    def __init__(self, subset: str, split: str, **kwargs) -> None:
+    def __init__(self, subset: str, split: str, **kwargs: Any) -> None:
         """Load the MMLU dataset.
 
         Args:
@@ -41,7 +43,7 @@ class MMLU(Task):
         """
         return len(self.ds)
 
-    def get_example(self, index: int) -> dict:
+    def get_example(self, index: int) -> dict[str, Any]:
         """Return a conversation dict for an MMLU problem.
 
         Args:
@@ -52,9 +54,9 @@ class MMLU(Task):
             the valid answer letters.
         """
         row = self.ds[index]
-        question = row["question"]
-        choices = row["choices"]
-        answer_idx = row["answer"]
+        question = str(row["question"])
+        choices = list(row["choices"])
+        answer_idx = int(row["answer"])
         assert len(choices) == 4, "MMLU should have 4 choices"
         user_msg = render_mc(question, LETTERS, choices)
         return {
@@ -65,7 +67,7 @@ class MMLU(Task):
             "letters": list(LETTERS),
         }
 
-    def evaluate(self, problem: dict, completion: str) -> bool:
+    def evaluate(self, problem: dict[str, Any], completion: str) -> bool:
         """Check whether the completion matches the correct answer letter.
 
         Args:
@@ -75,5 +77,5 @@ class MMLU(Task):
         Returns:
             True if completion (stripped, uppercased) equals the expected letter.
         """
-        expected = problem["messages"][-1]["content"]
+        expected = str(problem["messages"][-1]["content"])
         return completion.strip().upper() == expected

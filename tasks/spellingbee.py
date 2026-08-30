@@ -158,14 +158,14 @@ class SpellingBee(Task):
             ]
         }
 
-    def evaluate(self, conversation: dict[str, Any], assistant_response: str) -> int:
+    def evaluate(self, conversation: dict[str, Any], assistant_response: str) -> bool:
         assistant_message = conversation["messages"][-1]
         assert assistant_message["role"] == "assistant"
         assert isinstance(assistant_message["content"], list)
         last_text_part = assistant_message["content"][-1]["text"]
         ref_num = extract_answer(last_text_part)
         pred_num = extract_answer(assistant_response)
-        return int(pred_num == ref_num)
+        return pred_num == ref_num
 
     def reward(self, conversation: dict[str, Any], assistant_response: str) -> float:
         return float(self.evaluate(conversation, assistant_response))

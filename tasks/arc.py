@@ -72,4 +72,4 @@ class ARC(Task):
             True if completion equals the correct answer letter.
         """
         assert completion in problem["letters"], f"ARC answer {completion!r} must be one of {problem['letters']}"
-        return completion == problem["messages"][-1]["content"]
+        return completion == str(problem["messages"][-1]["content"])

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tasks.base import Task
 from tasks.customjson import CustomJSON
 from tasks.gsm8k import GSM8K
 from tasks.mmlu import MMLU
@@ -15,14 +16,14 @@ def build_sft_task_lists(
     identity_conversations: str,
     mmlu_epochs: int,
     gsm8k_epochs: int,
-) -> tuple[list[object], list[object]]:
+) -> tuple[list[Task], list[Task]]:
     """Build reference-compatible train/eval task lists.
 
     The default full mixture evaluates on SmolTalk/MMLU/GSM8K for the full task mixture.
     Narrow local runs, for example identity-only smoke tests, evaluate on the
     same narrow task set so they don't fetch unrelated datasets.
     """
-    train_tasks: list[object] = []
+    train_tasks: list[Task] = []
 
     if "smoltalk" in task_names:
         train_tasks.append(SmolTalk(split="train"))
@@ -42,7 +43,7 @@ def build_sft_task_lists(
             SpellingBee(size=80000, split="train"),
         ]
 
-    val_tasks: list[object] = []
+    val_tasks: list[Task] = []
     default_eval_names = {"smoltalk", "mmlu", "gsm8k"}
     if default_eval_names.issubset(task_names):
         val_tasks = [
