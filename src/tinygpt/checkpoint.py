@@ -14,7 +14,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import shutil
+import subprocess
+import sys
 from dataclasses import asdict
 from typing import Any, cast
 
@@ -24,7 +27,7 @@ from safetensors.torch import save_file as safe_save_file
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_NAME
 
-from tinygpt.config import GPTConfig
+from tinygpt.config import GPTConfig, RuntimeConfig
 from tinygpt.model import GPT
 
 logger = logging.getLogger(__name__)
@@ -36,6 +39,38 @@ TOKENIZER_FILES = ("tokenizer.json", "token_bytes.pt")
 def get_checkpoint_dir(out_dir: str, run_name: str, phase: str = "pretrain") -> str:
     """Return the Trainer output directory for a named run."""
     return os.path.join(out_dir, f"{phase}_checkpoints", run_name)
+
+
+def build_checkpoint_metadata(
+    *,
+    phase: str,
+    args: Any,
+    runtime_config: RuntimeConfig,
+    **derived_values: Any,
+) -> dict[str, Any]:
+    """Build reproducibility metadata shared by all training phases."""
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    try:
+        git_revision = subprocess.run(
+            ["git", "-C", repo_root, "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        git_revision = "unknown"
+
+    return {
+        "phase": phase,
+        "user_config": vars(args).copy(),
+        "runtime_config": runtime_config.as_dict(),
+        "derived_values": derived_values,
+        "git_revision": git_revision,
+        "command": sys.argv.copy(),
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "torch_version": torch.__version__,
+    }
 
 
 def _has_model_files(model_dir: str) -> bool:

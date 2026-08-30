@@ -273,6 +273,21 @@ class TinyGPTTrainer(Trainer):
         )
 
 
+class RunMetadataCallback(TrainerCallback):
+    """Publish the checkpoint metadata to the active W&B run."""
+
+    def __init__(self, metadata: dict[str, Any]) -> None:
+        self._metadata = metadata
+
+    def on_train_begin(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs: Any) -> None:
+        if not state.is_world_process_zero:
+            return
+        import wandb
+
+        if wandb.run is not None:
+            wandb.config.update(self._metadata, allow_val_change=True)  # type: ignore[no-untyped-call]
+
+
 class SamplerCallback(TrainerCallback):
     """Generate sample text from the model every sample_every steps.
 

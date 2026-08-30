@@ -30,7 +30,12 @@ from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available, flash_attn_backend, use_flash_attn
-from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, resolve_model_directory
+from tinygpt.checkpoint import (
+    build_checkpoint_metadata,
+    build_model_from_checkpoint,
+    get_checkpoint_dir,
+    resolve_model_directory,
+)
 from tinygpt.config import (
     RuntimeConfig,
     add_runtime_arguments,
@@ -50,7 +55,7 @@ from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import GPT, Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_wandb_auth
-from tinygpt.train import SamplerCallback, TinyGPTTrainer
+from tinygpt.train import RunMetadataCallback, SamplerCallback, TinyGPTTrainer
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
@@ -109,7 +114,7 @@ if preflight_rank == 0:
     require_wandb_auth(interactive=not dist_requested)
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-is_dist, rank, local_rank, world_size, device = compute_init(device_type)
+is_dist, rank, local_rank, world_size, device = compute_init(device_type, seed=runtime_config.seed)
 master_process = rank == 0
 
 if device_type == "cuda":
@@ -357,7 +362,17 @@ training_args = TrainingArguments(
     disable_tqdm=not master_process,
 )
 
+checkpoint_metadata = build_checkpoint_metadata(
+    phase="pretrain",
+    args=args,
+    runtime_config=runtime_config,
+    device_batch_size=args.device_batch_size,
+    max_seq_len=args.max_seq_len,
+    total_batch_size=total_batch_size,
+    grad_accum_steps=grad_accum_steps,
+)
 callbacks = [
+    RunMetadataCallback(checkpoint_metadata),
     SamplerCallback(
         tokenizer=tokenizer,
         device=device,
@@ -382,14 +397,7 @@ trainer = TinyGPTTrainer(
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
     tokenizer_dir=args.tokenizer_dir,
-    checkpoint_metadata={
-        "phase": "pretrain",
-        "user_config": vars(args).copy(),
-        "device_batch_size": args.device_batch_size,
-        "max_seq_len": args.max_seq_len,
-        "total_batch_size": total_batch_size,
-        "grad_accum_steps": grad_accum_steps,
-    },
+    checkpoint_metadata=checkpoint_metadata,
 )
 
 if start_step > 0:

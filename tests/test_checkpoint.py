@@ -2,6 +2,7 @@
 Tests for Hugging Face style model serialization helpers.
 """
 
+import argparse
 import os
 import tempfile
 
@@ -11,12 +12,13 @@ from tinygpt.checkpoint import (
     CONFIG_NAME,
     SAFE_WEIGHTS_NAME,
     TRAINER_STATE_NAME,
+    build_checkpoint_metadata,
     build_model_from_checkpoint,
     get_checkpoint_dir,
     resolve_model_directory,
     save_model_checkpoint,
 )
-from tinygpt.config import make_config
+from tinygpt.config import RuntimeConfig, make_config
 from tinygpt.model import GPT
 
 
@@ -93,3 +95,22 @@ def test_resolve_model_directory_prefers_latest_trainer_checkpoint() -> None:
 
         _, metadata = build_model_from_checkpoint(run_dir, torch.device("cpu"), phase="train")
         assert metadata["step"] == 10
+
+
+def test_build_checkpoint_metadata_captures_runtime_context() -> None:
+    args = argparse.Namespace(seed=7, value="demo")
+    runtime_config = RuntimeConfig(seed=7, run_name="demo")
+
+    metadata = build_checkpoint_metadata(
+        phase="pretrain",
+        args=args,
+        runtime_config=runtime_config,
+        total_batch_size=128,
+    )
+
+    assert metadata["phase"] == "pretrain"
+    assert metadata["user_config"] == {"seed": 7, "value": "demo"}
+    assert metadata["runtime_config"]["seed"] == 7
+    assert metadata["derived_values"] == {"total_batch_size": 128}
+    assert metadata["command"]
+    assert metadata["torch_version"] == torch.__version__

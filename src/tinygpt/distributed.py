@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 from typing import Any
 
 import torch
@@ -64,13 +65,14 @@ def print0(s: str = "", **kwargs: Any) -> None:
         print(s, **kwargs)
 
 
-def compute_init(device_type: str = "cuda") -> tuple[bool, int, int, int, torch.device]:
+def compute_init(device_type: str = "cuda", seed: int = 42) -> tuple[bool, int, int, int, torch.device]:
     """Initialize compute environment: seeds, precision, and distributed process group.
 
     For FSDP, this sets up the process group; FSDP wrapping happens in the training script.
 
     Args:
         device_type: One of 'cuda', 'mps', or 'cpu'.
+        seed: Random seed shared by all distributed workers.
 
     Returns:
         A (is_dist, rank, local_rank, world_size, device) tuple.
@@ -86,9 +88,10 @@ def compute_init(device_type: str = "cuda") -> tuple[bool, int, int, int, torch.
     if device_type == "mps" and not torch.backends.mps.is_available():
         raise RuntimeError("PyTorch is not configured for MPS")
 
-    torch.manual_seed(42)
+    random.seed(seed)
+    torch.manual_seed(seed)
     if device_type == "cuda":
-        torch.cuda.manual_seed(42)
+        torch.cuda.manual_seed_all(seed)
         torch.set_float32_matmul_precision("high")
 
     is_dist, rank, local_rank, world_size = get_dist_info()
