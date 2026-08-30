@@ -2,6 +2,7 @@
 Tests for online distillation helpers.
 """
 
+import pytest
 import torch
 
 from tinygpt.distillation import masked_distillation_loss, validate_teacher_tokenizer_compatibility
@@ -50,21 +51,13 @@ def test_validate_teacher_tokenizer_compatibility_rejects_vocab_mismatch() -> No
     student = FakeTokenizer(vocab_size=64)
     teacher = FakeTokenizer(vocab_size=65)
 
-    try:
+    with pytest.raises(ValueError, match="vocab sizes differ"):
         validate_teacher_tokenizer_compatibility(student, teacher)
-    except ValueError as exc:
-        assert "vocab sizes differ" in str(exc)
-    else:
-        raise AssertionError("Expected compatibility check to fail on vocab mismatch")
 
 
 def test_validate_teacher_tokenizer_compatibility_rejects_special_token_mismatch() -> None:
     student = FakeTokenizer(vocab_size=64)
     teacher = FakeTokenizer(vocab_size=64, offset=1)
 
-    try:
+    with pytest.raises(ValueError, match="special token ids differ"):
         validate_teacher_tokenizer_compatibility(student, teacher)
-    except ValueError as exc:
-        assert "special token ids differ" in str(exc)
-    else:
-        raise AssertionError("Expected compatibility check to fail on special token mismatch")

@@ -2,7 +2,6 @@
 Tests for the dataloader:
   - BOS token starts every row
   - bestfit packing doesn't drop tokens (all tokens in buffer used)
-  - rank sharding produces disjoint token streams
 """
 
 import pytest
@@ -88,7 +87,7 @@ def test_bos_starts_every_row(tokenizer: HuggingFaceTokenizer) -> None:
     B, T = 4, 32
     loader = make_in_memory_loader(tokenizer, docs, B, T)
     for _ in range(3):
-        x, y = next(loader)
+        x, _ = next(loader)
         for row in range(B):
             assert x[row, 0].item() == bos, f"Row {row} does not start with BOS"
 
@@ -109,10 +108,6 @@ def test_targets_are_shifted_inputs(tokenizer: HuggingFaceTokenizer) -> None:
     B, T = 2, 32
     loader = make_in_memory_loader(tokenizer, docs, B, T)
     x, y = next(loader)
-    # x[row, 1:] should equal y[row, :-1] within each row boundary
-    # (this holds where the row doesn't span a document boundary)
-    # At minimum, every x[row, i] == y[row, i-1] for i > 0 if in same row
-    # Check that y[:, :-1] == x[:, 1:]
     torch.testing.assert_close(x[:, 1:], y[:, :-1])
 
 
@@ -134,8 +129,5 @@ def test_full_utilisation(tokenizer: HuggingFaceTokenizer) -> None:
     B, T = 2, 32
     loader = make_in_memory_loader(tokenizer, docs, B, T)
     x, _ = next(loader)
-    # No token should be the padding sentinel 0 unexpectedly —
-    # check that rows are completely filled (length == T, all non-zero-ish)
-    # We just check that no row is all-zeros
     for row in range(B):
         assert x[row].any(), f"Row {row} is all zeros (unfilled)"
