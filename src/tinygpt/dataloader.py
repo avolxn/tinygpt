@@ -9,7 +9,7 @@ BOS-aligned bestfit packing:
 """
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from functools import lru_cache
 from typing import Any
 
@@ -91,6 +91,59 @@ def document_batches(
         epoch += 1
 
 
+def _bestfit_batches(
+    *,
+    B: int,
+    T: int,
+    device: torch.device | str,
+    buffer_size: int,
+    refill_buffer: Callable[[list[list[int]]], bool],
+) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+    """Pack tokenized documents into full BOS-aligned batches."""
+    doc_buffer: list[list[int]] = []
+    row_capacity = T + 1
+    use_cuda = torch.device(device).type == "cuda"
+
+    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
+    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
+    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device)
+    cpu_inputs = cpu_buffer[: B * T].view(B, T)
+    cpu_targets = cpu_buffer[B * T :].view(B, T)
+    inputs = gpu_buffer[: B * T].view(B, T)
+    targets = gpu_buffer[B * T :].view(B, T)
+
+    while True:
+        for row_idx in range(B):
+            pos = 0
+            while pos < row_capacity:
+                while len(doc_buffer) < buffer_size and refill_buffer(doc_buffer):
+                    pass
+                if not doc_buffer:
+                    raise RuntimeError("Data source yielded no tokenized documents")
+
+                remaining = row_capacity - pos
+                best_idx = max(
+                    (i for i, doc in enumerate(doc_buffer) if len(doc) <= remaining),
+                    key=lambda i: len(doc_buffer[i]),
+                    default=-1,
+                )
+                if best_idx >= 0:
+                    doc = doc_buffer.pop(best_idx)
+                    doc_len = len(doc)
+                    row_buffer[row_idx, pos : pos + doc_len] = torch.tensor(doc, dtype=torch.long)
+                    pos += doc_len
+                else:
+                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
+                    doc = doc_buffer.pop(shortest_idx)
+                    row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
+                    pos += remaining
+
+        cpu_inputs.copy_(row_buffer[:, :-1])
+        cpu_targets.copy_(row_buffer[:, 1:])
+        gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
+        yield inputs, targets
+
+
 def tokenizing_distributed_data_loader_bestfit(
     tokenizer: Any,
     B: int,
@@ -123,58 +176,24 @@ def tokenizing_distributed_data_loader_bestfit(
 
     batches = document_batches(dataset_name, split, rank, world_size, tokenizer_batch_size, text_field)
     bos_token = tokenizer.get_bos_token_id()
-    doc_buffer: list[list[int]] = []
 
-    row_capacity = T + 1
-    use_cuda = torch.device(device).type == "cuda"
-
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device)
-    cpu_inputs = cpu_buffer[: B * T].view(B, T)
-    cpu_targets = cpu_buffer[B * T :].view(B, T)
-    inputs = gpu_buffer[: B * T].view(B, T)
-    targets = gpu_buffer[B * T :].view(B, T)
-
-    def refill_buffer() -> None:
+    def refill_buffer(doc_buffer: list[list[int]]) -> bool:
         doc_batch, _ = next(batches)
         token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
+        if not token_lists:
+            return False
         if isinstance(token_lists[0], int):
             token_lists = [token_lists]
         doc_buffer.extend(token_lists)
+        return True
 
-    while True:
-        for row_idx in range(B):
-            pos = 0
-            while pos < row_capacity:
-                while len(doc_buffer) < buffer_size:
-                    refill_buffer()
-
-                remaining = row_capacity - pos
-
-                best_idx = -1
-                best_len = 0
-                for i, doc in enumerate(doc_buffer):
-                    doc_len = len(doc)
-                    if doc_len <= remaining and doc_len > best_len:
-                        best_idx = i
-                        best_len = doc_len
-
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    doc_len = len(doc)
-                    row_buffer[row_idx, pos : pos + doc_len] = torch.tensor(doc, dtype=torch.long)
-                    pos += doc_len
-                else:
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                    pos += remaining
-
-        cpu_inputs.copy_(row_buffer[:, :-1])
-        cpu_targets.copy_(row_buffer[:, 1:])
-        gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
-        yield inputs, targets
+    yield from _bestfit_batches(
+        B=B,
+        T=T,
+        device=device,
+        buffer_size=buffer_size,
+        refill_buffer=refill_buffer,
+    )
 
 
 def text_data_loader(
@@ -187,56 +206,23 @@ def text_data_loader(
     """Yield BOS-aligned best-fit batches from a local text file."""
     with open(path, encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
+    if not lines:
+        raise ValueError(f"Text data file contains no non-empty lines: {path}")
 
     bos_token = tokenizer.get_bos_token_id()
-    row_capacity = T + 1
-    doc_buffer: list[list[int]] = []
 
-    def refill_buffer() -> None:
+    def refill_buffer(doc_buffer: list[list[int]]) -> bool:
         for line in lines:
             doc_buffer.append(tokenizer.encode(line, prepend=bos_token))
+        return bool(lines)
 
-    use_cuda = torch.device(device).type == "cuda"
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device)
-    cpu_inputs = cpu_buffer[: B * T].view(B, T)
-    cpu_targets = cpu_buffer[B * T :].view(B, T)
-    inputs = gpu_buffer[: B * T].view(B, T)
-    targets = gpu_buffer[B * T :].view(B, T)
-
-    while True:
-        for row_idx in range(B):
-            pos = 0
-            while pos < row_capacity:
-                while len(doc_buffer) < 200:
-                    refill_buffer()
-                    if not doc_buffer:
-                        break
-                if not doc_buffer:
-                    break
-
-                remaining = row_capacity - pos
-                best_idx = max(
-                    (i for i in range(len(doc_buffer)) if len(doc_buffer[i]) <= remaining),
-                    key=lambda i: len(doc_buffer[i]),
-                    default=-1,
-                )
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    doc_len = len(doc)
-                    row_buffer[row_idx, pos : pos + doc_len] = torch.tensor(doc, dtype=torch.long)
-                    pos += doc_len
-                else:
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                    pos += remaining
-
-        cpu_inputs.copy_(row_buffer[:, :-1])
-        cpu_targets.copy_(row_buffer[:, 1:])
-        gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
-        yield inputs, targets
+    yield from _bestfit_batches(
+        B=B,
+        T=T,
+        device=device,
+        buffer_size=200,
+        refill_buffer=refill_buffer,
+    )
 
 
 def sft_data_loader(
