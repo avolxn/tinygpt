@@ -61,8 +61,8 @@ def resolve_dataset_source(
         hf_split = "validation" if split == "val" else split
         return dataset_name, hf_split, None
 
-    parquet_files = _climbmix_parquet_files()
-    selected = list(parquet_files[-1:] if split == "val" else parquet_files[:-1])
+    climbmix_parquet_files = _climbmix_parquet_files()
+    selected = list(climbmix_parquet_files[-1:] if split == "val" else climbmix_parquet_files[:-1])
     return "parquet", "train", {"train": selected}
 
 

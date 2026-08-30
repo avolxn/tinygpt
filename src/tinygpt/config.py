@@ -73,7 +73,7 @@ def compute_scaled_total_batch_size(
     d12_target_tokens = target_param_data_ratio * d12_scaling_params
     batch_size_ratio = target_tokens / d12_target_tokens
     predicted_batch_size = REFERENCE_BATCH_SIZE * batch_size_ratio**0.383
-    return 2 ** round(math.log2(predicted_batch_size))
+    return int(2 ** round(math.log2(predicted_batch_size)))
 
 
 def compute_scaled_weight_decay(
