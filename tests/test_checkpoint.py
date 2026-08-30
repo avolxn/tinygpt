@@ -16,6 +16,7 @@ from tinygpt.checkpoint import (
     build_model_from_checkpoint,
     get_checkpoint_dir,
     resolve_model_directory,
+    resolve_trainer_checkpoint,
     save_model_checkpoint,
 )
 from tinygpt.config import RuntimeConfig, make_config
@@ -114,3 +115,16 @@ def test_build_checkpoint_metadata_captures_runtime_context() -> None:
     assert metadata["derived_values"] == {"total_batch_size": 128}
     assert metadata["command"]
     assert metadata["torch_version"] == torch.__version__
+
+
+def test_resolve_trainer_checkpoint_requires_training_state() -> None:
+    model = make_test_model()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        checkpoint = os.path.join(tmp, "checkpoint-10")
+        save_model_checkpoint(checkpoint, model)
+        assert resolve_trainer_checkpoint(checkpoint) is None
+
+        for filename in (TRAINER_STATE_NAME, "optimizer.pt", "scheduler.pt"):
+            open(os.path.join(checkpoint, filename), "w", encoding="utf-8").close()
+        assert resolve_trainer_checkpoint(checkpoint) == checkpoint

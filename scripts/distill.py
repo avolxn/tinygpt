@@ -26,7 +26,12 @@ from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available
-from tinygpt.checkpoint import build_checkpoint_metadata, build_model_from_checkpoint, get_checkpoint_dir
+from tinygpt.checkpoint import (
+    build_checkpoint_metadata,
+    build_model_from_checkpoint,
+    get_checkpoint_dir,
+    resolve_trainer_checkpoint,
+)
 from tinygpt.config import RuntimeConfig, add_runtime_arguments
 from tinygpt.dataloader import sft_data_loader
 from tinygpt.distillation import load_teacher_model, validate_teacher_tokenizer_compatibility
@@ -51,6 +56,7 @@ parser.add_argument(
     required=True,
     help="Student model directory or Trainer output directory",
 )
+parser.add_argument("--resume-from", type=str, default="", help="Distillation model or full Trainer checkpoint")
 parser.add_argument(
     "--sharding-strategy", type=str, default="FULL_SHARD", choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"]
 )
@@ -132,7 +138,11 @@ if not 0.0 <= args.distill_alpha <= 1.0:
 if args.distill_temperature <= 0:
     raise ValueError(f"--distill-temperature must be > 0, got {args.distill_temperature}")
 
-model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="train")
+model_ref = args.resume_from or args.checkpoint
+model, meta = build_model_from_checkpoint(model_ref, device, phase="train")
+resume_checkpoint = resolve_trainer_checkpoint(model_ref) if args.resume_from else None
+if args.resume_from and resume_checkpoint is None:
+    print0("No complete Trainer state found; continuing from weights only.")
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
 sequence_len = args.max_seq_len or meta["model_config"]["sequence_len"]
 pretrain_user_config = meta.get("user_config", {})
@@ -327,5 +337,5 @@ trainer = TinyGPTTrainer(
     checkpoint_metadata=checkpoint_metadata,
 )
 
-trainer.train()
+trainer.train(resume_from_checkpoint=resume_checkpoint)
 compute_cleanup()

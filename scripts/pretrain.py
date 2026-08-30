@@ -35,6 +35,7 @@ from tinygpt.checkpoint import (
     build_model_from_checkpoint,
     get_checkpoint_dir,
     resolve_model_directory,
+    resolve_trainer_checkpoint,
 )
 from tinygpt.config import (
     RuntimeConfig,
@@ -158,6 +159,7 @@ model.to_empty(device=device)
 model.init_weights()
 
 start_step = 0
+resume_checkpoint = None
 if args.resume_from:
     print0(f"Resuming model weights from {args.resume_from}")
     resolved_resume_dir = resolve_model_directory(args.resume_from)
@@ -165,6 +167,9 @@ if args.resume_from:
     model, resume_meta = build_model_from_checkpoint(resolved_resume_dir, device, phase="train")
     start_step = int(resume_meta.get("step", 0))
     print0(f"Resumed at step {start_step}")
+    resume_checkpoint = resolve_trainer_checkpoint(resolved_resume_dir)
+    if resume_checkpoint is None:
+        print0("No complete Trainer state found; continuing from weights only.")
 
 
 if device_type == "cuda" and is_dist:
@@ -370,6 +375,7 @@ checkpoint_metadata = build_checkpoint_metadata(
     max_seq_len=args.max_seq_len,
     total_batch_size=total_batch_size,
     grad_accum_steps=grad_accum_steps,
+    num_iterations=num_iterations,
 )
 callbacks = [
     RunMetadataCallback(checkpoint_metadata),
@@ -400,8 +406,5 @@ trainer = TinyGPTTrainer(
     checkpoint_metadata=checkpoint_metadata,
 )
 
-if start_step > 0:
-    trainer.state.global_step = start_step
-
-trainer.train()
+trainer.train(resume_from_checkpoint=resume_checkpoint)
 compute_cleanup()
