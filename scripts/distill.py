@@ -27,6 +27,7 @@ from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir
+from tinygpt.config import RuntimeConfig, add_runtime_arguments
 from tinygpt.dataloader import sft_data_loader
 from tinygpt.distillation import load_teacher_model, validate_teacher_tokenizer_compatibility
 from tinygpt.distributed import (
@@ -43,17 +44,13 @@ from tinygpt.train import TinyGPTTrainer
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
 
 parser = argparse.ArgumentParser(description="Student-teacher distillation")
+add_runtime_arguments(parser)
 parser.add_argument(
     "--checkpoint",
     type=str,
     required=True,
     help="Student model directory or Trainer output directory",
 )
-parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
-# Logging
-parser.add_argument("--run", type=str, default="", help="W&B run name")
-# Runtime
-parser.add_argument("--device-type", type=str, default="")
 parser.add_argument(
     "--sharding-strategy", type=str, default="FULL_SHARD", choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"]
 )
@@ -78,9 +75,6 @@ parser.add_argument("--final-lr-frac", type=float, default=0.0)
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=200)
 parser.add_argument("--eval-tokens", type=int, default=40 * 524288)
-# Output
-parser.add_argument("--out-dir", type=str, default="data")
-parser.add_argument("--run-name", type=str, default="")
 # Distillation
 parser.add_argument(
     "--teacher-model",
@@ -119,6 +113,7 @@ parser.add_argument(
 parser.add_argument("--mmlu-epochs", type=int, default=3)
 parser.add_argument("--gsm8k-epochs", type=int, default=4)
 args = parser.parse_args()
+runtime_config = RuntimeConfig.from_namespace(args)
 
 dist_requested, preflight_rank, _, _ = get_dist_info()
 if preflight_rank == 0:
@@ -269,9 +264,10 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
     return {"distill_loss": sft_val_loss}
 
 
-run_name = args.run_name if args.run_name else f"d{meta['model_config']['n_layer']}"
-checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="distill")
-wandb_run_name = args.run if args.run else run_name
+run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['n_layer']}"
+runtime_config = runtime_config.with_run_name(run_name)
+checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="distill")
+wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
 os.environ.setdefault("WANDB_PROJECT", "tinygpt")
 
 training_args = TrainingArguments(

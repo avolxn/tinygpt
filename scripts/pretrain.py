@@ -31,7 +31,13 @@ from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available, flash_attn_backend, use_flash_attn
 from tinygpt.checkpoint import build_model_from_checkpoint, get_checkpoint_dir, resolve_model_directory
-from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weight_decay, make_config
+from tinygpt.config import (
+    RuntimeConfig,
+    add_runtime_arguments,
+    compute_scaled_total_batch_size,
+    compute_scaled_weight_decay,
+    make_config,
+)
 from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loader_bestfit
 from tinygpt.distributed import (
     compute_cleanup,
@@ -48,10 +54,7 @@ from tinygpt.train import SamplerCallback, TinyGPTTrainer
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
-# Logging
-parser.add_argument("--run", type=str, default="", help="W&B run name")
-# Runtime
-parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+add_runtime_arguments(parser)
 # Distributed
 parser.add_argument(
     "--sharding-strategy",
@@ -70,7 +73,6 @@ parser.add_argument("--window-pattern", type=str, default="SSSL")
 parser.add_argument("--dataset", type=str, default=CLIMBMIX_DATASET)
 parser.add_argument("--txt", type=str, default="", help="Local .txt file (overrides --dataset)")
 parser.add_argument("--text-field", type=str, default="text")
-parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 # Training horizon
 parser.add_argument("--num-iterations", type=int, default=-1)
 parser.add_argument("--target-param-data-ratio", type=float, default=12)
@@ -99,10 +101,8 @@ parser.add_argument("--eval-every", type=int, default=250)
 parser.add_argument("--eval-tokens", type=int, default=80 * 524288)
 parser.add_argument("--sample-every", type=int, default=2000)
 parser.add_argument("--save-every", type=int, default=-1)
-# Output
-parser.add_argument("--out-dir", type=str, default="data")
-parser.add_argument("--run-name", type=str, default="")
 args = parser.parse_args()
+runtime_config = RuntimeConfig.from_namespace(args)
 
 dist_requested, preflight_rank, _, _ = get_dist_info()
 if preflight_rank == 0:
@@ -244,9 +244,10 @@ print0(f"total_batch_size: {total_batch_size:,}")
 print0(f"grad_accum_steps: {grad_accum_steps}")
 print0(f"weight_decay: {weight_decay:.6f}")
 
-run_name = args.run_name if args.run_name else f"d{args.depth}"
-checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="pretrain")
-wandb_run_name = args.run if args.run else run_name
+run_name = runtime_config.run_name if runtime_config.run_name else f"d{args.depth}"
+runtime_config = runtime_config.with_run_name(run_name)
+checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="pretrain")
+wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
 os.environ.setdefault("WANDB_PROJECT", "tinygpt")
 
 

@@ -1,7 +1,11 @@
-"""GPT model configuration and reference-derived scaling helpers."""
+"""GPT model and shared training-run configuration."""
 
+from __future__ import annotations
+
+import argparse
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
+from typing import Any
 
 
 @dataclass
@@ -15,6 +19,50 @@ class GPTConfig:
     n_kv_head: int = 6
     n_embd: int = 768
     window_pattern: str = "SSSL"
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    """Common runtime settings shared by all training entry points."""
+
+    run: str = ""
+    device_type: str = ""
+    tokenizer_dir: str = "data/tokenizer"
+    out_dir: str = "data"
+    run_name: str = ""
+    seed: int = 42
+
+    @classmethod
+    def from_namespace(cls, args: argparse.Namespace) -> RuntimeConfig:
+        """Build the shared config from an argparse namespace."""
+        return cls(
+            run=str(args.run),
+            device_type=str(args.device_type),
+            tokenizer_dir=str(args.tokenizer_dir),
+            out_dir=str(args.out_dir),
+            run_name=str(args.run_name),
+            seed=int(args.seed),
+        )
+
+    def with_run_name(self, run_name: str) -> RuntimeConfig:
+        """Return a copy with a resolved run name."""
+        return replace(self, run_name=run_name)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable representation for checkpoint metadata."""
+        return asdict(self)
+
+
+def add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the shared runtime arguments to a training CLI parser."""
+    parser.add_argument("--run", type=str, default=RuntimeConfig.run, help="W&B run name")
+    parser.add_argument(
+        "--device-type", type=str, default=RuntimeConfig.device_type, help="cuda|cpu|mps (empty = autodetect)"
+    )
+    parser.add_argument("--tokenizer-dir", type=str, default=RuntimeConfig.tokenizer_dir)
+    parser.add_argument("--out-dir", type=str, default=RuntimeConfig.out_dir)
+    parser.add_argument("--run-name", type=str, default=RuntimeConfig.run_name)
+    parser.add_argument("--seed", type=int, default=RuntimeConfig.seed, help="Random seed for training")
 
 
 REFERENCE_BATCH_SIZE = 2**19
