@@ -1,12 +1,13 @@
 # tinygpt
 
 `tinygpt` is a compact training and evaluation stack for small GPT-style models.
-The repository is organized around four opinionated workflows:
+The repository is organized around five opinionated workflows:
 
 1. Full training from scratch: tokenizer training, pretraining, SFT, and evaluation.
 2. Pretraining with a converted teacher tokenizer.
 3. Online distillation from `karpathy/nanochat-d32` into a student trained with the same tokenizer.
 4. A smoke test for CPU or a small GPU.
+5. An Airflow DAG that orchestrates Spark preparation, training, evaluation, and mandatory W&B tracking.
 
 ## Repository Workflows
 
@@ -16,6 +17,7 @@ The repository is organized around four opinionated workflows:
 | Teacher tokenizer pretrain | `runs/pretrain_reference_d32.sh` | Converts the teacher tokenizer and runs pretraining only. |
 | Distillation | `runs/distill_reference_d32.sh` | Distills from `karpathy/nanochat-d32` into a student checkpoint produced by `pretrain_reference_d32.sh`. |
 | Smoke test | `runs/smoke.sh` | Runs a minimal end-to-end validation path on CPU or a small GPU. |
+| Airflow | `runs/airflow.sh` | Starts the local Airflow UI and the parameterized `tinygpt_training` DAG. |
 
 ## Recommended Usage
 
@@ -26,6 +28,7 @@ bash runs/from_scratch.sh
 bash runs/pretrain_reference_d32.sh
 bash runs/distill_reference_d32.sh
 bash runs/smoke.sh
+bash runs/airflow.sh
 ```
 
 ## Storage Layout
@@ -43,6 +46,7 @@ Typical outputs:
 - `data/distill_checkpoints/distill_reference_d32`
 - `data/sft_checkpoints/from_scratch`
 - `data/sft_checkpoints/smoke`
+- `data/airflow/<experiment>-<timestamp>`
 - `data/identity_conversations.jsonl`
 
 ## Runtime Overrides
@@ -57,6 +61,7 @@ The run scripts are intentionally simple. Only a small number of environment ove
 - `DEVICE_TYPE`: Runtime override for `runs/smoke.sh`, typically `cpu`, `cuda`, or `mps`.
 - `TEACHER_DEVICE`: Teacher placement override for `runs/distill_reference_d32.sh`.
 - `REFERENCE_MODEL`: Optional override for the teacher repository/path. Defaults to `karpathy/nanochat-d32`.
+- `AIRFLOW_GPU`: Set to `1` to build the CUDA image and request all NVIDIA GPUs from Docker Compose.
 
 Examples:
 
@@ -71,6 +76,51 @@ Online W&B tracking is mandatory for pretraining, SFT, and distillation. Run
 `uv run wandb login --verify` before invoking a Python entry point directly.
 The shell workflows run the same verified login preflight automatically and
 stop before allocating training resources when authentication fails.
+
+## Local Airflow Orchestration
+
+The local stack packages Airflow 3.1, Java 17, PySpark, and the tinygpt runtime
+in one reproducible image. Airflow owns orchestration and observability; model
+metrics and artifacts are logged to W&B; Spark is used only for offline data
+preparation.
+
+Create a local secrets file and add a valid W&B API key:
+
+```bash
+cp infra/airflow/.env.example infra/airflow/.env
+$EDITOR infra/airflow/.env
+bash runs/airflow.sh
+```
+
+Alternatively, export `WANDB_API_KEY` instead of creating the file. The Compose
+configuration refuses to start when the key is missing or empty, and the first
+DAG task verifies it online before any data or training work begins.
+
+Open `http://localhost:8081`, sign in as `admin`, enable the
+`tinygpt_training` DAG, and trigger it with the generated parameter form. The
+standalone server writes its generated development password to:
+
+```text
+/opt/airflow/simple_auth_manager_passwords.json.generated
+```
+
+The default parameters run two small CPU training steps. Set `raw_input` to a
+text, JSON, or Parquet path when Spark should build deterministic local shards;
+leave it empty to use the configured Hugging Face dataset directly. Artifacts
+for each run are isolated under `data/airflow/<experiment>-<timestamp>`.
+
+On a Linux host with the NVIDIA Container Toolkit, request the GPU image with:
+
+```bash
+AIRFLOW_GPU=1 bash runs/airflow.sh
+```
+
+This Compose stack intentionally uses `airflow standalone` and the Simple Auth
+Manager, so it is a local development environment, not a production Airflow
+deployment. For production, keep the DAG but run it in managed Airflow or the
+official Kubernetes Helm deployment, inject `WANDB_API_KEY` through a secrets
+backend, move durable artifacts to object storage, and submit Spark/training
+jobs to dedicated compute instead of running them inside the Airflow service.
 
 ## Important Constraint
 
