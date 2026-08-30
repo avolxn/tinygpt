@@ -39,7 +39,7 @@ from tinygpt.config import (
     compute_scaled_weight_decay,
     make_config,
 )
-from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loader_bestfit
+from tinygpt.dataloader import CLIMBMIX_DATASET, text_data_loader, tokenizing_distributed_data_loader_bestfit
 from tinygpt.distributed import (
     compute_cleanup,
     compute_init,
@@ -255,7 +255,7 @@ os.environ.setdefault("WANDB_PROJECT", "tinygpt")
 
 def make_loader(split: str):
     if args.txt:
-        return _txt_loader(tokenizer, args.txt, args.device_batch_size, args.max_seq_len, device)
+        return text_data_loader(tokenizer, args.txt, args.device_batch_size, args.max_seq_len, device)
     return tokenizing_distributed_data_loader_bestfit(
         tokenizer,
         args.device_batch_size,
@@ -265,60 +265,6 @@ def make_loader(split: str):
         device=device,
         text_field=args.text_field,
     )
-
-
-def _txt_loader(tok, path: str, B: int, T: int, dev):
-    """Minimal bestfit loader backed by a local text file."""
-    with open(path, encoding="utf-8") as f:
-        lines = [ln.strip() for ln in f if ln.strip()]
-
-    bos = tok.get_bos_token_id()
-    row_capacity = T + 1
-    doc_buffer: list[list[int]] = []
-
-    def refill() -> None:
-        for ln in lines:
-            doc_buffer.append(tok.encode(ln, prepend=bos))
-
-    use_cuda = torch.device(dev).type == "cuda"
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=dev)
-    cpu_inputs = cpu_buffer[: B * T].view(B, T)
-    cpu_targets = cpu_buffer[B * T :].view(B, T)
-    inputs = gpu_buffer[: B * T].view(B, T)
-    targets = gpu_buffer[B * T :].view(B, T)
-
-    while True:
-        for row_idx in range(B):
-            pos = 0
-            while pos < row_capacity:
-                while len(doc_buffer) < 200:
-                    refill()
-                    if not doc_buffer:
-                        break
-                if not doc_buffer:
-                    break
-                remaining = row_capacity - pos
-                best_idx = max(
-                    (i for i in range(len(doc_buffer)) if len(doc_buffer[i]) <= remaining),
-                    key=lambda i: len(doc_buffer[i]),
-                    default=-1,
-                )
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    dl = len(doc)
-                    row_buffer[row_idx, pos : pos + dl] = torch.tensor(doc, dtype=torch.long)
-                    pos += dl
-                else:
-                    si = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(si)
-                    row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                    pos += remaining
-        cpu_inputs.copy_(row_buffer[:, :-1])
-        cpu_targets.copy_(row_buffer[:, 1:])
-        gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
-        yield inputs, targets
 
 
 train_loader = make_loader("train")

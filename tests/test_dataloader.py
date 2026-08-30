@@ -7,6 +7,7 @@ Tests for the dataloader:
 import pytest
 import torch
 
+from tinygpt.dataloader import text_data_loader
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 
@@ -131,3 +132,16 @@ def test_full_utilisation(tokenizer: HuggingFaceTokenizer) -> None:
     x, _ = next(loader)
     for row in range(B):
         assert x[row].any(), f"Row {row} is all zeros (unfilled)"
+
+
+def test_text_data_loader_reads_local_documents(tmp_path, tokenizer: HuggingFaceTokenizer) -> None:
+    """The production text loader packs documents from a local file."""
+    source = tmp_path / "train.txt"
+    source.write_text("Hello world!\nPython is great.\n", encoding="utf-8")
+
+    loader = text_data_loader(tokenizer, str(source), B=2, T=16, device="cpu")
+    inputs, targets = next(loader)
+
+    assert inputs.shape == (2, 16)
+    assert targets.shape == (2, 16)
+    assert (inputs[:, 0] == tokenizer.get_bos_token_id()).all()
