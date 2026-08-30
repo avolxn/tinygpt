@@ -21,12 +21,8 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import argparse
 import json
 from dataclasses import asdict
-from functools import partial
 
 import torch
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import ShardingStrategy
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 
 from tinygpt.attention import flash_attn_available, flash_attn_backend, use_flash_attn
 from tinygpt.checkpoint import (
@@ -48,8 +44,8 @@ from tinygpt.distributed import (
     compute_cleanup,
     compute_init,
     get_dist_info,
-    make_fsdp_mixed_precision,
     print0,
+    wrap_fsdp,
 )
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import GPT, Block
@@ -180,18 +176,14 @@ if device_type == "cuda" and is_dist:
         print0("         requires full matrices — results will be INCORRECT with sharding.")
         print0("         Use --sharding-strategy NO_SHARD for correct Muon behavior.")
         print0("!" * 70)
-    strategy_map = {
-        "FULL_SHARD": ShardingStrategy.FULL_SHARD,
-        "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
-        "NO_SHARD": ShardingStrategy.NO_SHARD,
-    }
-    wrap_policy = partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
-    model = FSDP(
+    model = wrap_fsdp(
         model,
-        sharding_strategy=strategy_map[args.sharding_strategy],
-        mixed_precision=make_fsdp_mixed_precision(compute_dtype),
-        auto_wrap_policy=wrap_policy,
-        device_id=local_rank,
+        device_type=device_type,
+        is_dist=is_dist,
+        sharding_strategy=args.sharding_strategy,
+        compute_dtype_override=compute_dtype,
+        local_rank=local_rank,
+        transformer_layer_cls=Block,
     )
     print0(f"FSDP enabled with sharding strategy: {args.sharding_strategy}")
 

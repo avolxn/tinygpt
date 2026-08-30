@@ -9,11 +9,15 @@ from __future__ import annotations
 import logging
 import os
 import random
+from functools import partial
 from typing import Any
 
 import torch
 import torch.distributed as dist
-from torch.distributed.fsdp import MixedPrecision
+import torch.nn as nn
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 
 from tinygpt.utils import compute_dtype
 
@@ -129,4 +133,38 @@ def make_fsdp_mixed_precision(override: torch.dtype | None = None) -> Any:
         param_dtype=dtype,
         reduce_dtype=dtype,
         buffer_dtype=dtype,
+    )
+
+
+def wrap_fsdp(
+    model: nn.Module,
+    *,
+    device_type: str,
+    is_dist: bool,
+    sharding_strategy: str,
+    compute_dtype_override: torch.dtype,
+    local_rank: int,
+    transformer_layer_cls: type[nn.Module],
+) -> nn.Module:
+    """Wrap a model with FSDP when running distributed CUDA training."""
+    if device_type != "cuda" or not is_dist:
+        return model
+
+    strategy_map = {
+        "FULL_SHARD": ShardingStrategy.FULL_SHARD,
+        "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
+        "NO_SHARD": ShardingStrategy.NO_SHARD,
+    }
+    try:
+        resolved_strategy = strategy_map[sharding_strategy]
+    except KeyError as exc:
+        raise ValueError(f"Unknown FSDP sharding strategy: {sharding_strategy}") from exc
+
+    wrap_policy = partial(transformer_auto_wrap_policy, transformer_layer_cls={transformer_layer_cls})
+    return FSDP(
+        model,
+        sharding_strategy=resolved_strategy,
+        mixed_precision=make_fsdp_mixed_precision(compute_dtype_override),
+        auto_wrap_policy=wrap_policy,
+        device_id=local_rank,
     )

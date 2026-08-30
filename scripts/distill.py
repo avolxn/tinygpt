@@ -15,14 +15,10 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import argparse
 import math
-from functools import partial
 
 import torch
 from tasks.base import TaskMixture
 from tasks.sft import build_sft_task_lists
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import ShardingStrategy
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 
 from tinygpt.attention import flash_attn_available
 from tinygpt.checkpoint import (
@@ -38,8 +34,8 @@ from tinygpt.distributed import (
     compute_cleanup,
     compute_init,
     get_dist_info,
-    make_fsdp_mixed_precision,
     print0,
+    wrap_fsdp,
 )
 from tinygpt.model import Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
@@ -206,20 +202,15 @@ teacher_tokenizer = HuggingFaceTokenizer.from_directory(teacher_tokenizer_ref)
 validate_teacher_tokenizer_compatibility(tokenizer, teacher_tokenizer)
 print0(f"Loaded teacher with vocab size {teacher_meta['model_config']['vocab_size']:,}")
 
-if device_type == "cuda" and is_dist:
-    strategy_map = {
-        "FULL_SHARD": ShardingStrategy.FULL_SHARD,
-        "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
-        "NO_SHARD": ShardingStrategy.NO_SHARD,
-    }
-    wrap_policy = partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
-    model = FSDP(
-        model,
-        sharding_strategy=strategy_map[args.sharding_strategy],
-        mixed_precision=make_fsdp_mixed_precision(compute_dtype),
-        auto_wrap_policy=wrap_policy,
-        device_id=local_rank,
-    )
+model = wrap_fsdp(
+    model,
+    device_type=device_type,
+    is_dist=is_dist,
+    sharding_strategy=args.sharding_strategy,
+    compute_dtype_override=compute_dtype,
+    local_rank=local_rank,
+    transformer_layer_cls=Block,
+)
 
 task_names = {t.strip() for t in args.tasks.split(",") if t.strip()}
 task_list, val_task_list = build_sft_task_lists(
