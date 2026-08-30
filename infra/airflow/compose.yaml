@@ -1,0 +1,31 @@
+name: tinygpt-airflow
+
+services:
+  airflow:
+    build:
+      context: ../..
+      dockerfile: infra/airflow/Dockerfile
+      args:
+        TINYGPT_EXTRA: cpu
+    command: standalone
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/simple_auth_manager_passwords.json.generated
+      PYTHONPATH: /workspace/src:/workspace
+      WANDB_API_KEY: ${WANDB_API_KEY:?Set WANDB_API_KEY before starting Airflow}
+      WANDB_BASE_URL: ${WANDB_BASE_URL:-https://api.wandb.ai}
+      WANDB_ENTITY: ${WANDB_ENTITY:-}
+      WANDB_PROJECT: ${WANDB_PROJECT:-tinygpt}
+      WANDB_MODE: online
+    volumes:
+      - airflow-state:/opt/airflow
+      - ../..:/workspace
+      - ./dags:/opt/airflow/dags:ro
+
+volumes:
+  airflow-state:

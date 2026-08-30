@@ -1,0 +1,6 @@
+services:
+  airflow:
+    build:
+      args:
+        TINYGPT_EXTRA: gpu
+    gpus: all
