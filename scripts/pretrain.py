@@ -109,305 +109,303 @@ parser.add_argument("--sample-every", type=int, default=2000)
 parser.add_argument("--save-every", type=int, default=-1)
 
 
-def main() -> None:
-    args = parser.parse_args()
-    runtime_config = RuntimeConfig.from_namespace(args)
+args = parser.parse_args()
+runtime_config = RuntimeConfig.from_namespace(args)
 
-    dist_requested, preflight_rank, _, _ = get_dist_info()
-    if preflight_rank == 0:
-        require_wandb_auth(interactive=not dist_requested)
+dist_requested, preflight_rank, _, _ = get_dist_info()
+if preflight_rank == 0:
+    require_wandb_auth(interactive=not dist_requested)
 
-    device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-    is_dist, rank, local_rank, world_size, device = compute_init(device_type, seed=runtime_config.seed)
-    master_process = rank == 0
+device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+is_dist, rank, local_rank, world_size, device = compute_init(device_type, seed=runtime_config.seed)
+master_process = rank == 0
 
-    if device_type == "cuda":
-        gpu_name = torch.cuda.get_device_name(0)
-        gpu_peak_flops = get_peak_flops(gpu_name)
-        print0(f"GPU: {gpu_name} | Peak FLOPS (BF16): {gpu_peak_flops:.2e}")
+if device_type == "cuda":
+    gpu_name = torch.cuda.get_device_name(0)
+    gpu_peak_flops = get_peak_flops(gpu_name)
+    print0(f"GPU: {gpu_name} | Peak FLOPS (BF16): {gpu_peak_flops:.2e}")
+else:
+    gpu_peak_flops = float("inf")
+
+print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
+
+if use_flash_attn:
+    print0(f"Using {flash_attn_backend}.")
+else:
+    print0("!" * 70)
+    if flash_attn_available and compute_dtype != torch.bfloat16:
+        print0(f"WARNING: flash-attn available but requires bf16, compute_dtype={compute_dtype}. Using SDPA.")
     else:
-        gpu_peak_flops = float("inf")
+        print0("WARNING: flash-attn not available (install flash-attn-4 / kernels / flash-attn). Using SDPA fallback.")
+    print0("!" * 70)
 
-    print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
+tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
+vocab_size = tokenizer.get_vocab_size()
+token_bytes = compute_token_bytes(tokenizer, device=device)
+print0(f"Vocab size: {vocab_size:,}")
 
-    if use_flash_attn:
-        print0(f"Using {flash_attn_backend}.")
-    else:
+config = make_config(
+    args.depth,
+    aspect_ratio=args.aspect_ratio,
+    head_dim=args.head_dim,
+    vocab_size=vocab_size,
+    sequence_len=args.max_seq_len,
+    window_pattern=args.window_pattern,
+)
+model_config_kwargs = asdict(config)
+print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
+
+with torch.device("meta"):
+    model = GPT(config)
+model.to_empty(device=device)
+model.init_weights()
+
+start_step = 0
+resume_checkpoint = None
+if args.resume_from:
+    print0(f"Resuming model weights from {args.resume_from}")
+    resolved_resume_dir = resolve_model_directory(args.resume_from)
+    print0(f"Resolved resume checkpoint: {resolved_resume_dir}")
+    model, resume_meta = build_model_from_checkpoint(resolved_resume_dir, device, phase="train")
+    start_step = int(resume_meta.get("step", 0))
+    print0(f"Resumed at step {start_step}")
+    resume_checkpoint = resolve_trainer_checkpoint(resolved_resume_dir)
+    if resume_checkpoint is None:
+        print0("No complete Trainer state found; continuing from weights only.")
+
+if device_type == "cuda" and is_dist:
+    if args.sharding_strategy != "NO_SHARD":
         print0("!" * 70)
-        if flash_attn_available and compute_dtype != torch.bfloat16:
-            print0(f"WARNING: flash-attn available but requires bf16, compute_dtype={compute_dtype}. Using SDPA.")
-        else:
-            print0(
-                "WARNING: flash-attn not available (install flash-attn-4 / kernels / flash-attn). Using SDPA fallback."
-            )
+        print0(f"WARNING: sharding_strategy={args.sharding_strategy} shards parameters along")
+        print0("         the first dimension. Muon's Newton-Schulz orthogonalization")
+        print0("         requires full matrices — results will be INCORRECT with sharding.")
+        print0("         Use --sharding-strategy NO_SHARD for correct Muon behavior.")
         print0("!" * 70)
-
-    tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
-    vocab_size = tokenizer.get_vocab_size()
-    token_bytes = compute_token_bytes(tokenizer, device=device)
-    print0(f"Vocab size: {vocab_size:,}")
-
-    config = make_config(
-        args.depth,
-        aspect_ratio=args.aspect_ratio,
-        head_dim=args.head_dim,
-        vocab_size=vocab_size,
-        sequence_len=args.max_seq_len,
-        window_pattern=args.window_pattern,
+    strategy_map = {
+        "FULL_SHARD": ShardingStrategy.FULL_SHARD,
+        "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
+        "NO_SHARD": ShardingStrategy.NO_SHARD,
+    }
+    wrap_policy = partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
+    model = FSDP(
+        model,
+        sharding_strategy=strategy_map[args.sharding_strategy],
+        mixed_precision=make_fsdp_mixed_precision(compute_dtype),
+        auto_wrap_policy=wrap_policy,
+        device_id=local_rank,
     )
-    model_config_kwargs = asdict(config)
-    print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
+    print0(f"FSDP enabled with sharding strategy: {args.sharding_strategy}")
 
-    with torch.device("meta"):
-        model = GPT(config)
-    model.to_empty(device=device)
-    model.init_weights()
+param_counts = model.num_scaling_params() if hasattr(model, "num_scaling_params") else {}
+if param_counts:
+    print0("Parameter counts:")
+    for k, v in param_counts.items():
+        print0(f"  {k:<24}: {v:,}")
+num_params = sum(p.numel() for p in model.parameters())
+print0(f"Total params: {num_params:,}")
 
-    start_step = 0
-    resume_checkpoint = None
-    if args.resume_from:
-        print0(f"Resuming model weights from {args.resume_from}")
-        resolved_resume_dir = resolve_model_directory(args.resume_from)
-        print0(f"Resolved resume checkpoint: {resolved_resume_dir}")
-        model, resume_meta = build_model_from_checkpoint(resolved_resume_dir, device, phase="train")
-        start_step = int(resume_meta.get("step", 0))
-        print0(f"Resumed at step {start_step}")
-        resume_checkpoint = resolve_trainer_checkpoint(resolved_resume_dir)
-        if resume_checkpoint is None:
-            print0("No complete Trainer state found; continuing from weights only.")
+scaling_params = (
+    param_counts.get("transformer_matrices", 0) + param_counts.get("lm_head", 0) if param_counts else num_params
+)
+d12_config = make_config(
+    12,
+    aspect_ratio=args.aspect_ratio,
+    head_dim=args.head_dim,
+    vocab_size=vocab_size,
+    sequence_len=args.max_seq_len,
+    window_pattern=args.window_pattern,
+)
+with torch.device("meta"):
+    d12_model = GPT(d12_config)
+d12_counts = d12_model.num_scaling_params()
+d12_scaling_params = d12_counts["transformer_matrices"] + d12_counts["lm_head"]
+target_tokens = int(args.target_param_data_ratio * scaling_params)
+d12_target_tokens = args.target_param_data_ratio * d12_scaling_params
+total_batch_size = compute_scaled_total_batch_size(
+    scaling_params=scaling_params,
+    d12_scaling_params=d12_scaling_params,
+    target_param_data_ratio=args.target_param_data_ratio,
+    requested_total_batch_size=args.total_batch_size,
+)
+weight_decay = compute_scaled_weight_decay(
+    base_weight_decay=args.weight_decay,
+    total_batch_size=total_batch_size,
+    target_tokens=target_tokens,
+    d12_target_tokens=d12_target_tokens,
+)
 
-    if device_type == "cuda" and is_dist:
-        if args.sharding_strategy != "NO_SHARD":
-            print0("!" * 70)
-            print0(f"WARNING: sharding_strategy={args.sharding_strategy} shards parameters along")
-            print0("         the first dimension. Muon's Newton-Schulz orthogonalization")
-            print0("         requires full matrices — results will be INCORRECT with sharding.")
-            print0("         Use --sharding-strategy NO_SHARD for correct Muon behavior.")
-            print0("!" * 70)
-        strategy_map = {
-            "FULL_SHARD": ShardingStrategy.FULL_SHARD,
-            "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
-            "NO_SHARD": ShardingStrategy.NO_SHARD,
-        }
-        wrap_policy = partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
-        model = FSDP(
-            model,
-            sharding_strategy=strategy_map[args.sharding_strategy],
-            mixed_precision=make_fsdp_mixed_precision(compute_dtype),
-            auto_wrap_policy=wrap_policy,
-            device_id=local_rank,
-        )
-        print0(f"FSDP enabled with sharding strategy: {args.sharding_strategy}")
+if args.num_iterations > 0:
+    num_iterations = args.num_iterations
+elif args.target_param_data_ratio > 0:
+    num_iterations = max(1, target_tokens // total_batch_size)
+else:
+    num_iterations = 1000
 
-    param_counts = model.num_scaling_params() if hasattr(model, "num_scaling_params") else {}
-    if param_counts:
-        print0("Parameter counts:")
-        for k, v in param_counts.items():
-            print0(f"  {k:<24}: {v:,}")
-    num_params = sum(p.numel() for p in model.parameters())
-    print0(f"Total params: {num_params:,}")
-
-    scaling_params = (
-        param_counts.get("transformer_matrices", 0) + param_counts.get("lm_head", 0) if param_counts else num_params
+tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len
+world_tokens = tokens_per_fwdbwd * world_size
+if total_batch_size % world_tokens != 0:
+    raise ValueError(
+        f"total_batch_size {total_batch_size} must be divisible by "
+        f"world_tokens {world_tokens} = device_batch_size*seq_len*world_size"
     )
-    d12_config = make_config(
-        12,
-        aspect_ratio=args.aspect_ratio,
-        head_dim=args.head_dim,
-        vocab_size=vocab_size,
-        sequence_len=args.max_seq_len,
-        window_pattern=args.window_pattern,
-    )
-    with torch.device("meta"):
-        d12_model = GPT(d12_config)
-    d12_counts = d12_model.num_scaling_params()
-    d12_scaling_params = d12_counts["transformer_matrices"] + d12_counts["lm_head"]
-    target_tokens = int(args.target_param_data_ratio * scaling_params)
-    d12_target_tokens = args.target_param_data_ratio * d12_scaling_params
-    total_batch_size = compute_scaled_total_batch_size(
-        scaling_params=scaling_params,
-        d12_scaling_params=d12_scaling_params,
-        target_param_data_ratio=args.target_param_data_ratio,
-        requested_total_batch_size=args.total_batch_size,
-    )
-    weight_decay = compute_scaled_weight_decay(
-        base_weight_decay=args.weight_decay,
-        total_batch_size=total_batch_size,
-        target_tokens=target_tokens,
-        d12_target_tokens=d12_target_tokens,
+grad_accum_steps = total_batch_size // world_tokens
+
+print0(f"num_iterations: {num_iterations:,}")
+print0(f"total_batch_size: {total_batch_size:,}")
+print0(f"grad_accum_steps: {grad_accum_steps}")
+print0(f"weight_decay: {weight_decay:.6f}")
+
+run_name = runtime_config.run_name if runtime_config.run_name else f"d{args.depth}"
+runtime_config = runtime_config.with_run_name(run_name)
+checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="pretrain")
+wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
+os.environ.setdefault("WANDB_PROJECT", "tinygpt")
+
+
+def make_loader(split: str):
+    if args.txt:
+        return _txt_loader(tokenizer, args.txt, args.device_batch_size, args.max_seq_len, device)
+    return tokenizing_distributed_data_loader_bestfit(
+        tokenizer,
+        args.device_batch_size,
+        args.max_seq_len,
+        dataset_name=args.dataset,
+        split=split,
+        device=device,
+        text_field=args.text_field,
     )
 
-    if args.num_iterations > 0:
-        num_iterations = args.num_iterations
-    elif args.target_param_data_ratio > 0:
-        num_iterations = max(1, target_tokens // total_batch_size)
-    else:
-        num_iterations = 1000
 
-    tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len
-    world_tokens = tokens_per_fwdbwd * world_size
-    if total_batch_size % world_tokens != 0:
-        raise ValueError(
-            f"total_batch_size {total_batch_size} must be divisible by "
-            f"world_tokens {world_tokens} = device_batch_size*seq_len*world_size"
-        )
-    grad_accum_steps = total_batch_size // world_tokens
+def _txt_loader(tok, path: str, B: int, T: int, dev):
+    """Minimal bestfit loader backed by a local text file."""
+    with open(path, encoding="utf-8") as f:
+        lines = [ln.strip() for ln in f if ln.strip()]
 
-    print0(f"num_iterations: {num_iterations:,}")
-    print0(f"total_batch_size: {total_batch_size:,}")
-    print0(f"grad_accum_steps: {grad_accum_steps}")
-    print0(f"weight_decay: {weight_decay:.6f}")
+    bos = tok.get_bos_token_id()
+    row_capacity = T + 1
+    doc_buffer: list[list[int]] = []
 
-    run_name = runtime_config.run_name if runtime_config.run_name else f"d{args.depth}"
-    runtime_config = runtime_config.with_run_name(run_name)
-    checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="pretrain")
-    wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
-    os.environ.setdefault("WANDB_PROJECT", "tinygpt")
+    def refill() -> None:
+        for ln in lines:
+            doc_buffer.append(tok.encode(ln, prepend=bos))
 
-    def make_loader(split: str):
-        if args.txt:
-            return _txt_loader(tokenizer, args.txt, args.device_batch_size, args.max_seq_len, device)
-        return tokenizing_distributed_data_loader_bestfit(
-            tokenizer,
-            args.device_batch_size,
-            args.max_seq_len,
-            dataset_name=args.dataset,
-            split=split,
-            device=device,
-            text_field=args.text_field,
-        )
+    use_cuda = torch.device(dev).type == "cuda"
+    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
+    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
+    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=dev)
+    cpu_inputs = cpu_buffer[: B * T].view(B, T)
+    cpu_targets = cpu_buffer[B * T :].view(B, T)
+    inputs = gpu_buffer[: B * T].view(B, T)
+    targets = gpu_buffer[B * T :].view(B, T)
 
-    def _txt_loader(tok, path: str, B: int, T: int, dev):
-        """Minimal bestfit loader backed by a local text file."""
-        with open(path, encoding="utf-8") as f:
-            lines = [ln.strip() for ln in f if ln.strip()]
-
-        bos = tok.get_bos_token_id()
-        row_capacity = T + 1
-        doc_buffer: list[list[int]] = []
-
-        def refill() -> None:
-            for ln in lines:
-                doc_buffer.append(tok.encode(ln, prepend=bos))
-
-        use_cuda = torch.device(dev).type == "cuda"
-        row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-        cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
-        gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=dev)
-        cpu_inputs = cpu_buffer[: B * T].view(B, T)
-        cpu_targets = cpu_buffer[B * T :].view(B, T)
-        inputs = gpu_buffer[: B * T].view(B, T)
-        targets = gpu_buffer[B * T :].view(B, T)
-
-        while True:
-            for row_idx in range(B):
-                pos = 0
-                while pos < row_capacity:
-                    while len(doc_buffer) < 200:
-                        refill()
-                        if not doc_buffer:
-                            break
+    while True:
+        for row_idx in range(B):
+            pos = 0
+            while pos < row_capacity:
+                while len(doc_buffer) < 200:
+                    refill()
                     if not doc_buffer:
                         break
-                    remaining = row_capacity - pos
-                    best_idx = max(
-                        (i for i in range(len(doc_buffer)) if len(doc_buffer[i]) <= remaining),
-                        key=lambda i: len(doc_buffer[i]),
-                        default=-1,
-                    )
-                    if best_idx >= 0:
-                        doc = doc_buffer.pop(best_idx)
-                        dl = len(doc)
-                        row_buffer[row_idx, pos : pos + dl] = torch.tensor(doc, dtype=torch.long)
-                        pos += dl
-                    else:
-                        si = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                        doc = doc_buffer.pop(si)
-                        row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                        pos += remaining
-            cpu_inputs.copy_(row_buffer[:, :-1])
-            cpu_targets.copy_(row_buffer[:, 1:])
-            gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
-            yield inputs, targets
-
-    train_loader = make_loader("train")
-    eval_steps = max(1, args.eval_tokens // (args.device_batch_size * args.max_seq_len * world_size))
-
-    def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
-        """Evaluate bits-per-byte on the validation split."""
-        eval_loader = make_loader("val")
-        bpb = evaluate_bpb(eval_model, eval_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | val bpb: {bpb:.6f}")
-        return {"bpb": bpb}
-
-    training_args = TrainingArguments(
-        output_dir=checkpoint_dir,
-        max_steps=num_iterations,
-        per_device_train_batch_size=args.device_batch_size,
-        gradient_accumulation_steps=grad_accum_steps,
-        warmup_steps=args.warmup_steps,
-        weight_decay=weight_decay,
-        max_grad_norm=args.grad_clip,
-        logging_steps=100,
-        eval_strategy="steps" if args.eval_every > 0 else "no",
-        eval_steps=args.eval_every if args.eval_every > 0 else None,
-        save_strategy="steps",
-        save_steps=args.save_every if args.save_every > 0 else num_iterations,
-        remove_unused_columns=False,
-        dataloader_num_workers=0,
-        report_to=["wandb"] if master_process else [],
-        run_name=wandb_run_name,
-        label_names=["labels"],
-        fsdp="",  # We pre-wrap with FSDP above
-        use_cpu=(device_type == "cpu"),
-        bf16=(compute_dtype == torch.bfloat16 and device_type == "cuda"),
-        fp16=False,
-        prediction_loss_only=True,
-        disable_tqdm=not master_process,
-    )
-
-    checkpoint_metadata = build_checkpoint_metadata(
-        phase="pretrain",
-        args=args,
-        runtime_config=runtime_config,
-        device_batch_size=args.device_batch_size,
-        max_seq_len=args.max_seq_len,
-        total_batch_size=total_batch_size,
-        grad_accum_steps=grad_accum_steps,
-        num_iterations=num_iterations,
-    )
-    callbacks = [
-        RunMetadataCallback(checkpoint_metadata),
-        SamplerCallback(
-            tokenizer=tokenizer,
-            device=device,
-            sample_every=args.sample_every,
-            master_process=master_process,
-        ),
-    ]
-
-    trainer = TinyGPTTrainer(
-        model=model,
-        args=training_args,
-        callbacks=callbacks,
-        eval_dataset=[0] if args.eval_every > 0 else None,
-        matrix_lr=args.matrix_lr,
-        embedding_lr=args.embedding_lr,
-        scalar_lr=args.scalar_lr,
-        lm_head_lr=args.lm_head_lr,
-        muon_momentum=args.muon_momentum,
-        muon_ns_steps=args.muon_ns_steps,
-        warmdown_ratio=args.warmdown_ratio,
-        final_lr_frac=args.final_lr_frac,
-        train_loader=train_loader,
-        eval_fn=eval_fn if args.eval_every > 0 else None,
-        tokenizer_dir=args.tokenizer_dir,
-        checkpoint_metadata=checkpoint_metadata,
-    )
-
-    trainer.train(resume_from_checkpoint=resume_checkpoint)
-    compute_cleanup()
+                if not doc_buffer:
+                    break
+                remaining = row_capacity - pos
+                best_idx = max(
+                    (i for i in range(len(doc_buffer)) if len(doc_buffer[i]) <= remaining),
+                    key=lambda i: len(doc_buffer[i]),
+                    default=-1,
+                )
+                if best_idx >= 0:
+                    doc = doc_buffer.pop(best_idx)
+                    dl = len(doc)
+                    row_buffer[row_idx, pos : pos + dl] = torch.tensor(doc, dtype=torch.long)
+                    pos += dl
+                else:
+                    si = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
+                    doc = doc_buffer.pop(si)
+                    row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
+                    pos += remaining
+        cpu_inputs.copy_(row_buffer[:, :-1])
+        cpu_targets.copy_(row_buffer[:, 1:])
+        gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
+        yield inputs, targets
 
 
-if __name__ == "__main__":
-    main()
+train_loader = make_loader("train")
+eval_steps = max(1, args.eval_tokens // (args.device_batch_size * args.max_seq_len * world_size))
+
+
+def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
+    """Evaluate bits-per-byte on the validation split."""
+    eval_loader = make_loader("val")
+    bpb = evaluate_bpb(eval_model, eval_loader, eval_steps, token_bytes)
+    print0(f"Step {step:05d} | val bpb: {bpb:.6f}")
+    return {"bpb": bpb}
+
+
+training_args = TrainingArguments(
+    output_dir=checkpoint_dir,
+    max_steps=num_iterations,
+    per_device_train_batch_size=args.device_batch_size,
+    gradient_accumulation_steps=grad_accum_steps,
+    warmup_steps=args.warmup_steps,
+    weight_decay=weight_decay,
+    max_grad_norm=args.grad_clip,
+    logging_steps=100,
+    eval_strategy="steps" if args.eval_every > 0 else "no",
+    eval_steps=args.eval_every if args.eval_every > 0 else None,
+    save_strategy="steps",
+    save_steps=args.save_every if args.save_every > 0 else num_iterations,
+    remove_unused_columns=False,
+    dataloader_num_workers=0,
+    report_to=["wandb"] if master_process else [],
+    run_name=wandb_run_name,
+    label_names=["labels"],
+    fsdp="",  # We pre-wrap with FSDP above
+    use_cpu=(device_type == "cpu"),
+    bf16=(compute_dtype == torch.bfloat16 and device_type == "cuda"),
+    fp16=False,
+    prediction_loss_only=True,
+    disable_tqdm=not master_process,
+)
+
+checkpoint_metadata = build_checkpoint_metadata(
+    phase="pretrain",
+    args=args,
+    runtime_config=runtime_config,
+    device_batch_size=args.device_batch_size,
+    max_seq_len=args.max_seq_len,
+    total_batch_size=total_batch_size,
+    grad_accum_steps=grad_accum_steps,
+    num_iterations=num_iterations,
+)
+callbacks = [
+    RunMetadataCallback(checkpoint_metadata),
+    SamplerCallback(
+        tokenizer=tokenizer,
+        device=device,
+        sample_every=args.sample_every,
+        master_process=master_process,
+    ),
+]
+
+trainer = TinyGPTTrainer(
+    model=model,
+    args=training_args,
+    callbacks=callbacks,
+    eval_dataset=[0] if args.eval_every > 0 else None,
+    matrix_lr=args.matrix_lr,
+    embedding_lr=args.embedding_lr,
+    scalar_lr=args.scalar_lr,
+    lm_head_lr=args.lm_head_lr,
+    muon_momentum=args.muon_momentum,
+    muon_ns_steps=args.muon_ns_steps,
+    warmdown_ratio=args.warmdown_ratio,
+    final_lr_frac=args.final_lr_frac,
+    train_loader=train_loader,
+    eval_fn=eval_fn if args.eval_every > 0 else None,
+    tokenizer_dir=args.tokenizer_dir,
+    checkpoint_metadata=checkpoint_metadata,
+)
+
+trainer.train(resume_from_checkpoint=resume_checkpoint)
+compute_cleanup()

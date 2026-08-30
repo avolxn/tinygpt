@@ -120,225 +120,224 @@ parser.add_argument("--mmlu-epochs", type=int, default=3)
 parser.add_argument("--gsm8k-epochs", type=int, default=4)
 
 
-def main() -> None:
-    args = parser.parse_args()
-    runtime_config = RuntimeConfig.from_namespace(args)
+args = parser.parse_args()
+runtime_config = RuntimeConfig.from_namespace(args)
 
-    dist_requested, preflight_rank, _, _ = get_dist_info()
-    if preflight_rank == 0:
-        require_wandb_auth(interactive=not dist_requested)
+dist_requested, preflight_rank, _, _ = get_dist_info()
+if preflight_rank == 0:
+    require_wandb_auth(interactive=not dist_requested)
 
-    device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-    is_dist, rank, local_rank, world_size, device = compute_init(device_type, seed=runtime_config.seed)
-    master_process = rank == 0
+device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+is_dist, rank, local_rank, world_size, device = compute_init(device_type, seed=runtime_config.seed)
+master_process = rank == 0
 
-    print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
-    if not flash_attn_available:
-        print0("WARNING: FA2 not available, using SDPA fallback.")
+print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
+if not flash_attn_available:
+    print0("WARNING: FA2 not available, using SDPA fallback.")
 
-    if not 0.0 <= args.distill_alpha <= 1.0:
-        raise ValueError(f"--distill-alpha must be in [0, 1], got {args.distill_alpha}")
-    if args.distill_temperature <= 0:
-        raise ValueError(f"--distill-temperature must be > 0, got {args.distill_temperature}")
+if not 0.0 <= args.distill_alpha <= 1.0:
+    raise ValueError(f"--distill-alpha must be in [0, 1], got {args.distill_alpha}")
+if args.distill_temperature <= 0:
+    raise ValueError(f"--distill-temperature must be > 0, got {args.distill_temperature}")
 
-    model_ref = args.resume_from or args.checkpoint
-    model, meta = build_model_from_checkpoint(model_ref, device, phase="train")
-    resume_checkpoint = resolve_trainer_checkpoint(model_ref) if args.resume_from else None
-    if args.resume_from and resume_checkpoint is None:
-        print0("No complete Trainer state found; continuing from weights only.")
-    tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
-    sequence_len = args.max_seq_len or meta["model_config"]["sequence_len"]
-    pretrain_user_config = meta.get("user_config", {})
+model_ref = args.resume_from or args.checkpoint
+model, meta = build_model_from_checkpoint(model_ref, device, phase="train")
+resume_checkpoint = resolve_trainer_checkpoint(model_ref) if args.resume_from else None
+if args.resume_from and resume_checkpoint is None:
+    print0("No complete Trainer state found; continuing from weights only.")
+tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
+sequence_len = args.max_seq_len or meta["model_config"]["sequence_len"]
+pretrain_user_config = meta.get("user_config", {})
 
-    def resolve_value(
-        arg_name: str,
-        fallback: int | float,
-        *candidates: int | float | None,
-    ) -> int | float:
-        arg_val = getattr(args, arg_name)
-        if arg_val is not None:
-            return arg_val
-        for candidate in candidates:
-            if candidate is not None:
-                print0(f"Inherited {arg_name}={candidate} from pretrain checkpoint")
-                return candidate
-        print0(f"Using fallback {arg_name}={fallback}")
-        return fallback
 
-    args.device_batch_size = int(
-        resolve_value(
-            "device_batch_size", 32, meta.get("device_batch_size"), pretrain_user_config.get("device_batch_size")
-        )
+def resolve_value(
+    arg_name: str,
+    fallback: int | float,
+    *candidates: int | float | None,
+) -> int | float:
+    arg_val = getattr(args, arg_name)
+    if arg_val is not None:
+        return arg_val
+    for candidate in candidates:
+        if candidate is not None:
+            print0(f"Inherited {arg_name}={candidate} from pretrain checkpoint")
+            return candidate
+    print0(f"Using fallback {arg_name}={fallback}")
+    return fallback
+
+
+args.device_batch_size = int(
+    resolve_value("device_batch_size", 32, meta.get("device_batch_size"), pretrain_user_config.get("device_batch_size"))
+)
+args.total_batch_size = int(
+    resolve_value(
+        "total_batch_size", 524288, meta.get("total_batch_size"), pretrain_user_config.get("total_batch_size")
     )
-    args.total_batch_size = int(
-        resolve_value(
-            "total_batch_size", 524288, meta.get("total_batch_size"), pretrain_user_config.get("total_batch_size")
-        )
+)
+args.matrix_lr = float(resolve_value("matrix_lr", 0.02, pretrain_user_config.get("matrix_lr")))
+args.lm_head_lr = float(
+    resolve_value(
+        "lm_head_lr", 0.004, pretrain_user_config.get("lm_head_lr"), pretrain_user_config.get("unembedding_lr")
     )
-    args.matrix_lr = float(resolve_value("matrix_lr", 0.02, pretrain_user_config.get("matrix_lr")))
-    args.lm_head_lr = float(
-        resolve_value(
-            "lm_head_lr", 0.004, pretrain_user_config.get("lm_head_lr"), pretrain_user_config.get("unembedding_lr")
-        )
-    )
-    args.embedding_lr = float(resolve_value("embedding_lr", 0.3, pretrain_user_config.get("embedding_lr")))
-    args.scalar_lr = float(resolve_value("scalar_lr", 0.5, pretrain_user_config.get("scalar_lr")))
+)
+args.embedding_lr = float(resolve_value("embedding_lr", 0.3, pretrain_user_config.get("embedding_lr")))
+args.scalar_lr = float(resolve_value("scalar_lr", 0.5, pretrain_user_config.get("scalar_lr")))
 
-    args.matrix_lr *= args.init_lr_frac
-    args.lm_head_lr *= args.init_lr_frac
-    args.embedding_lr *= args.init_lr_frac
-    args.scalar_lr *= args.init_lr_frac
+args.matrix_lr *= args.init_lr_frac
+args.lm_head_lr *= args.init_lr_frac
+args.embedding_lr *= args.init_lr_frac
+args.scalar_lr *= args.init_lr_frac
 
-    def resolve_teacher_device() -> torch.device:
-        if args.teacher_device == "same":
-            return device
-        if args.teacher_device == "cuda":
-            if device_type != "cuda":
-                raise ValueError("--teacher-device=cuda requires CUDA")
-            return torch.device("cuda", local_rank) if is_dist else torch.device("cuda")
-        return torch.device(args.teacher_device)
 
-    teacher_device = resolve_teacher_device()
-    print0(f"Loading teacher model from {args.teacher_model} on {teacher_device}")
-    teacher_model, teacher_meta = load_teacher_model(args.teacher_model, device=teacher_device)
-    teacher_tokenizer_ref = args.teacher_tokenizer or args.teacher_model
-    teacher_tokenizer = HuggingFaceTokenizer.from_directory(teacher_tokenizer_ref)
-    validate_teacher_tokenizer_compatibility(tokenizer, teacher_tokenizer)
-    print0(f"Loaded teacher with vocab size {teacher_meta['model_config']['vocab_size']:,}")
+def resolve_teacher_device() -> torch.device:
+    if args.teacher_device == "same":
+        return device
+    if args.teacher_device == "cuda":
+        if device_type != "cuda":
+            raise ValueError("--teacher-device=cuda requires CUDA")
+        return torch.device("cuda", local_rank) if is_dist else torch.device("cuda")
+    return torch.device(args.teacher_device)
 
-    if device_type == "cuda" and is_dist:
-        strategy_map = {
-            "FULL_SHARD": ShardingStrategy.FULL_SHARD,
-            "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
-            "NO_SHARD": ShardingStrategy.NO_SHARD,
-        }
-        wrap_policy = partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
-        model = FSDP(
-            model,
-            sharding_strategy=strategy_map[args.sharding_strategy],
-            mixed_precision=make_fsdp_mixed_precision(compute_dtype),
-            auto_wrap_policy=wrap_policy,
-            device_id=local_rank,
-        )
 
-    task_names = {t.strip() for t in args.tasks.split(",") if t.strip()}
-    task_list, val_task_list = build_sft_task_lists(
-        task_names,
-        identity_conversations=args.identity_conversations,
-        mmlu_epochs=args.mmlu_epochs,
-        gsm8k_epochs=args.gsm8k_epochs,
+teacher_device = resolve_teacher_device()
+print0(f"Loading teacher model from {args.teacher_model} on {teacher_device}")
+teacher_model, teacher_meta = load_teacher_model(args.teacher_model, device=teacher_device)
+teacher_tokenizer_ref = args.teacher_tokenizer or args.teacher_model
+teacher_tokenizer = HuggingFaceTokenizer.from_directory(teacher_tokenizer_ref)
+validate_teacher_tokenizer_compatibility(tokenizer, teacher_tokenizer)
+print0(f"Loaded teacher with vocab size {teacher_meta['model_config']['vocab_size']:,}")
+
+if device_type == "cuda" and is_dist:
+    strategy_map = {
+        "FULL_SHARD": ShardingStrategy.FULL_SHARD,
+        "SHARD_GRAD_OP": ShardingStrategy.SHARD_GRAD_OP,
+        "NO_SHARD": ShardingStrategy.NO_SHARD,
+    }
+    wrap_policy = partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
+    model = FSDP(
+        model,
+        sharding_strategy=strategy_map[args.sharding_strategy],
+        mixed_precision=make_fsdp_mixed_precision(compute_dtype),
+        auto_wrap_policy=wrap_policy,
+        device_id=local_rank,
     )
 
-    if not task_list:
-        raise ValueError(f"No valid tasks found in: {args.tasks}")
+task_names = {t.strip() for t in args.tasks.split(",") if t.strip()}
+task_list, val_task_list = build_sft_task_lists(
+    task_names,
+    identity_conversations=args.identity_conversations,
+    mmlu_epochs=args.mmlu_epochs,
+    gsm8k_epochs=args.gsm8k_epochs,
+)
 
-    task = TaskMixture(task_list)
-    print0(f"Task mixture: {len(task):,} examples from {task_names}")
+if not task_list:
+    raise ValueError(f"No valid tasks found in: {args.tasks}")
 
-    val_task = TaskMixture(val_task_list) if args.eval_every > 0 else None
-    train_loader = sft_data_loader(tokenizer, task, args.device_batch_size, sequence_len, device)
+task = TaskMixture(task_list)
+print0(f"Task mixture: {len(task):,} examples from {task_names}")
 
-    tokens_per_fwdbwd = args.device_batch_size * sequence_len
-    world_tokens_per_fwdbwd = tokens_per_fwdbwd * world_size
-    if args.total_batch_size % world_tokens_per_fwdbwd != 0:
-        raise ValueError(
-            f"total_batch_size {args.total_batch_size} must be divisible by "
-            f"device_batch_size*seq_len*world_size = {world_tokens_per_fwdbwd}"
-        )
-    grad_accum_steps = args.total_batch_size // world_tokens_per_fwdbwd
-    print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {sequence_len} = {tokens_per_fwdbwd:,}")
-    print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
-    print0(f"Total batch size {args.total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
+val_task = TaskMixture(val_task_list) if args.eval_every > 0 else None
+train_loader = sft_data_loader(tokenizer, task, args.device_batch_size, sequence_len, device)
 
-    if args.num_iterations > 0:
-        num_iterations = args.num_iterations
-    else:
-        approx_rows_per_step = max(1, args.device_batch_size * world_size * grad_accum_steps)
-        num_iterations = max(1, math.ceil(len(task) / approx_rows_per_step))
-        print0(f"Approximated one-epoch num_iterations={num_iterations:,} from {len(task):,} mixed conversations")
-
-    warmup_steps = round(args.warmup_ratio * num_iterations)
-    eval_steps = max(1, args.eval_tokens // args.total_batch_size)
-
-    def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
-        """Evaluate distillation/SFT loss on the held-out validation mixture."""
-        assert val_task is not None
-        eval_loader = sft_data_loader(tokenizer, val_task, args.device_batch_size, sequence_len, device)
-        losses = []
-        for _ in range(eval_steps):
-            x, y = next(eval_loader)
-            loss = eval_model(x, y)
-            losses.append(loss.item())
-        sft_val_loss = sum(losses) / len(losses)
-        print0(f"Step {step:05d} | distill val loss: {sft_val_loss:.4f}")
-        return {"distill_loss": sft_val_loss}
-
-    run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['n_layer']}"
-    runtime_config = runtime_config.with_run_name(run_name)
-    checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="distill")
-    wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
-    os.environ.setdefault("WANDB_PROJECT", "tinygpt")
-
-    training_args = TrainingArguments(
-        output_dir=checkpoint_dir,
-        max_steps=num_iterations,
-        per_device_train_batch_size=args.device_batch_size,
-        gradient_accumulation_steps=grad_accum_steps,
-        warmup_steps=warmup_steps,
-        weight_decay=args.weight_decay,
-        max_grad_norm=args.grad_clip,
-        logging_steps=50,
-        eval_strategy="steps" if args.eval_every > 0 else "no",
-        eval_steps=args.eval_every if args.eval_every > 0 else None,
-        save_strategy="steps",
-        save_steps=args.eval_every if args.eval_every > 0 else num_iterations,
-        remove_unused_columns=False,
-        dataloader_num_workers=0,
-        report_to=["wandb"] if master_process else [],
-        run_name=wandb_run_name,
-        label_names=["labels"],
-        fsdp="",
-        use_cpu=(device_type == "cpu"),
-        bf16=(compute_dtype == torch.bfloat16 and device_type == "cuda"),
-        fp16=False,
-        prediction_loss_only=True,
-        disable_tqdm=not master_process,
+tokens_per_fwdbwd = args.device_batch_size * sequence_len
+world_tokens_per_fwdbwd = tokens_per_fwdbwd * world_size
+if args.total_batch_size % world_tokens_per_fwdbwd != 0:
+    raise ValueError(
+        f"total_batch_size {args.total_batch_size} must be divisible by "
+        f"device_batch_size*seq_len*world_size = {world_tokens_per_fwdbwd}"
     )
+grad_accum_steps = args.total_batch_size // world_tokens_per_fwdbwd
+print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {sequence_len} = {tokens_per_fwdbwd:,}")
+print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
+print0(f"Total batch size {args.total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
-    checkpoint_metadata = build_checkpoint_metadata(
-        phase="distill",
-        args=args,
-        runtime_config=runtime_config,
-        device_batch_size=args.device_batch_size,
-        max_seq_len=sequence_len,
-        total_batch_size=args.total_batch_size,
-        grad_accum_steps=grad_accum_steps,
-        num_iterations=num_iterations,
-    )
+if args.num_iterations > 0:
+    num_iterations = args.num_iterations
+else:
+    approx_rows_per_step = max(1, args.device_batch_size * world_size * grad_accum_steps)
+    num_iterations = max(1, math.ceil(len(task) / approx_rows_per_step))
+    print0(f"Approximated one-epoch num_iterations={num_iterations:,} from {len(task):,} mixed conversations")
 
-    trainer = TinyGPTTrainer(
-        model=model,
-        args=training_args,
-        callbacks=[RunMetadataCallback(checkpoint_metadata)],
-        eval_dataset=[0] if args.eval_every > 0 else None,
-        matrix_lr=args.matrix_lr,
-        embedding_lr=args.embedding_lr,
-        scalar_lr=args.scalar_lr,
-        lm_head_lr=args.lm_head_lr,
-        warmdown_ratio=args.warmdown_ratio,
-        final_lr_frac=args.final_lr_frac,
-        train_loader=train_loader,
-        eval_fn=eval_fn if args.eval_every > 0 else None,
-        teacher_model=teacher_model,
-        distill_alpha=args.distill_alpha,
-        distill_temperature=args.distill_temperature,
-        tokenizer_dir=args.tokenizer_dir,
-        checkpoint_metadata=checkpoint_metadata,
-    )
-
-    trainer.train(resume_from_checkpoint=resume_checkpoint)
-    compute_cleanup()
+warmup_steps = round(args.warmup_ratio * num_iterations)
+eval_steps = max(1, args.eval_tokens // args.total_batch_size)
 
 
-if __name__ == "__main__":
-    main()
+def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
+    """Evaluate distillation/SFT loss on the held-out validation mixture."""
+    assert val_task is not None
+    eval_loader = sft_data_loader(tokenizer, val_task, args.device_batch_size, sequence_len, device)
+    losses = []
+    for _ in range(eval_steps):
+        x, y = next(eval_loader)
+        loss = eval_model(x, y)
+        losses.append(loss.item())
+    sft_val_loss = sum(losses) / len(losses)
+    print0(f"Step {step:05d} | distill val loss: {sft_val_loss:.4f}")
+    return {"distill_loss": sft_val_loss}
+
+
+run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['n_layer']}"
+runtime_config = runtime_config.with_run_name(run_name)
+checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="distill")
+wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
+os.environ.setdefault("WANDB_PROJECT", "tinygpt")
+
+training_args = TrainingArguments(
+    output_dir=checkpoint_dir,
+    max_steps=num_iterations,
+    per_device_train_batch_size=args.device_batch_size,
+    gradient_accumulation_steps=grad_accum_steps,
+    warmup_steps=warmup_steps,
+    weight_decay=args.weight_decay,
+    max_grad_norm=args.grad_clip,
+    logging_steps=50,
+    eval_strategy="steps" if args.eval_every > 0 else "no",
+    eval_steps=args.eval_every if args.eval_every > 0 else None,
+    save_strategy="steps",
+    save_steps=args.eval_every if args.eval_every > 0 else num_iterations,
+    remove_unused_columns=False,
+    dataloader_num_workers=0,
+    report_to=["wandb"] if master_process else [],
+    run_name=wandb_run_name,
+    label_names=["labels"],
+    fsdp="",
+    use_cpu=(device_type == "cpu"),
+    bf16=(compute_dtype == torch.bfloat16 and device_type == "cuda"),
+    fp16=False,
+    prediction_loss_only=True,
+    disable_tqdm=not master_process,
+)
+
+checkpoint_metadata = build_checkpoint_metadata(
+    phase="distill",
+    args=args,
+    runtime_config=runtime_config,
+    device_batch_size=args.device_batch_size,
+    max_seq_len=sequence_len,
+    total_batch_size=args.total_batch_size,
+    grad_accum_steps=grad_accum_steps,
+    num_iterations=num_iterations,
+)
+
+trainer = TinyGPTTrainer(
+    model=model,
+    args=training_args,
+    callbacks=[RunMetadataCallback(checkpoint_metadata)],
+    eval_dataset=[0] if args.eval_every > 0 else None,
+    matrix_lr=args.matrix_lr,
+    embedding_lr=args.embedding_lr,
+    scalar_lr=args.scalar_lr,
+    lm_head_lr=args.lm_head_lr,
+    warmdown_ratio=args.warmdown_ratio,
+    final_lr_frac=args.final_lr_frac,
+    train_loader=train_loader,
+    eval_fn=eval_fn if args.eval_every > 0 else None,
+    teacher_model=teacher_model,
+    distill_alpha=args.distill_alpha,
+    distill_temperature=args.distill_temperature,
+    tokenizer_dir=args.tokenizer_dir,
+    checkpoint_metadata=checkpoint_metadata,
+)
+
+trainer.train(resume_from_checkpoint=resume_checkpoint)
+compute_cleanup()

@@ -12,12 +12,7 @@ parser.add_argument(
 )
 
 
-def main() -> None:
-    args = parser.parse_args()
+args = parser.parse_args()
 
-    require_wandb_auth(interactive=not args.non_interactive)
-    print("W&B authentication verified.")
-
-
-if __name__ == "__main__":
-    main()
+require_wandb_auth(interactive=not args.non_interactive)
+print("W&B authentication verified.")
