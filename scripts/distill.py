@@ -23,7 +23,6 @@ from tasks.sft import build_sft_task_lists
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available
 from tinygpt.checkpoint import (
@@ -45,7 +44,7 @@ from tinygpt.distributed import (
 from tinygpt.model import Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_wandb_auth
-from tinygpt.train import RunMetadataCallback, TinyGPTTrainer
+from tinygpt.train import RunMetadataCallback, TinyGPTTrainer, build_training_arguments, resolve_training_value
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
 
 parser = argparse.ArgumentParser(description="Student-teacher distillation")
@@ -150,38 +149,38 @@ sequence_len = args.max_seq_len or meta["model_config"]["sequence_len"]
 pretrain_user_config = meta.get("user_config", {})
 
 
-def resolve_value(
-    arg_name: str,
-    fallback: int | float,
-    *candidates: int | float | None,
-) -> int | float:
-    arg_val = getattr(args, arg_name)
-    if arg_val is not None:
-        return arg_val
-    for candidate in candidates:
-        if candidate is not None:
-            print0(f"Inherited {arg_name}={candidate} from pretrain checkpoint")
-            return candidate
-    print0(f"Using fallback {arg_name}={fallback}")
-    return fallback
-
-
 args.device_batch_size = int(
-    resolve_value("device_batch_size", 32, meta.get("device_batch_size"), pretrain_user_config.get("device_batch_size"))
+    resolve_training_value(
+        "device_batch_size",
+        args.device_batch_size,
+        32,
+        meta.get("device_batch_size"),
+        pretrain_user_config.get("device_batch_size"),
+    )
 )
 args.total_batch_size = int(
-    resolve_value(
-        "total_batch_size", 524288, meta.get("total_batch_size"), pretrain_user_config.get("total_batch_size")
+    resolve_training_value(
+        "total_batch_size",
+        args.total_batch_size,
+        524288,
+        meta.get("total_batch_size"),
+        pretrain_user_config.get("total_batch_size"),
     )
 )
-args.matrix_lr = float(resolve_value("matrix_lr", 0.02, pretrain_user_config.get("matrix_lr")))
+args.matrix_lr = float(resolve_training_value("matrix_lr", args.matrix_lr, 0.02, pretrain_user_config.get("matrix_lr")))
 args.lm_head_lr = float(
-    resolve_value(
-        "lm_head_lr", 0.004, pretrain_user_config.get("lm_head_lr"), pretrain_user_config.get("unembedding_lr")
+    resolve_training_value(
+        "lm_head_lr",
+        args.lm_head_lr,
+        0.004,
+        pretrain_user_config.get("lm_head_lr"),
+        pretrain_user_config.get("unembedding_lr"),
     )
 )
-args.embedding_lr = float(resolve_value("embedding_lr", 0.3, pretrain_user_config.get("embedding_lr")))
-args.scalar_lr = float(resolve_value("scalar_lr", 0.5, pretrain_user_config.get("scalar_lr")))
+args.embedding_lr = float(
+    resolve_training_value("embedding_lr", args.embedding_lr, 0.3, pretrain_user_config.get("embedding_lr"))
+)
+args.scalar_lr = float(resolve_training_value("scalar_lr", args.scalar_lr, 0.5, pretrain_user_config.get("scalar_lr")))
 
 args.matrix_lr *= args.init_lr_frac
 args.lm_head_lr *= args.init_lr_frac
@@ -282,29 +281,21 @@ checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_n
 wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
 os.environ.setdefault("WANDB_PROJECT", "tinygpt")
 
-training_args = TrainingArguments(
+training_args = build_training_arguments(
     output_dir=checkpoint_dir,
     max_steps=num_iterations,
-    per_device_train_batch_size=args.device_batch_size,
-    gradient_accumulation_steps=grad_accum_steps,
+    device_batch_size=args.device_batch_size,
+    grad_accum_steps=grad_accum_steps,
     warmup_steps=warmup_steps,
     weight_decay=args.weight_decay,
-    max_grad_norm=args.grad_clip,
+    grad_clip=args.grad_clip,
     logging_steps=50,
-    eval_strategy="steps" if args.eval_every > 0 else "no",
-    eval_steps=args.eval_every if args.eval_every > 0 else None,
-    save_strategy="steps",
+    eval_every=args.eval_every,
     save_steps=args.eval_every if args.eval_every > 0 else num_iterations,
-    remove_unused_columns=False,
-    dataloader_num_workers=0,
-    report_to=["wandb"] if master_process else [],
     run_name=wandb_run_name,
-    label_names=["labels"],
-    fsdp="",
-    use_cpu=(device_type == "cpu"),
-    bf16=(compute_dtype == torch.bfloat16 and device_type == "cuda"),
-    fp16=False,
-    prediction_loss_only=True,
+    report_to=["wandb"] if master_process else [],
+    device_type=device_type,
+    compute_dtype=compute_dtype,
     disable_tqdm=not master_process,
 )
 

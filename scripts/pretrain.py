@@ -27,7 +27,6 @@ import torch
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from transformers import TrainingArguments
 
 from tinygpt.attention import flash_attn_available, flash_attn_backend, use_flash_attn
 from tinygpt.checkpoint import (
@@ -56,7 +55,7 @@ from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import GPT, Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_wandb_auth
-from tinygpt.train import RunMetadataCallback, SamplerCallback, TinyGPTTrainer
+from tinygpt.train import RunMetadataCallback, SamplerCallback, TinyGPTTrainer, build_training_arguments
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
@@ -342,29 +341,21 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
     return {"bpb": bpb}
 
 
-training_args = TrainingArguments(
+training_args = build_training_arguments(
     output_dir=checkpoint_dir,
     max_steps=num_iterations,
-    per_device_train_batch_size=args.device_batch_size,
-    gradient_accumulation_steps=grad_accum_steps,
+    device_batch_size=args.device_batch_size,
+    grad_accum_steps=grad_accum_steps,
     warmup_steps=args.warmup_steps,
     weight_decay=weight_decay,
-    max_grad_norm=args.grad_clip,
+    grad_clip=args.grad_clip,
     logging_steps=100,
-    eval_strategy="steps" if args.eval_every > 0 else "no",
-    eval_steps=args.eval_every if args.eval_every > 0 else None,
-    save_strategy="steps",
+    eval_every=args.eval_every,
     save_steps=args.save_every if args.save_every > 0 else num_iterations,
-    remove_unused_columns=False,
-    dataloader_num_workers=0,
-    report_to=["wandb"] if master_process else [],
     run_name=wandb_run_name,
-    label_names=["labels"],
-    fsdp="",  # We pre-wrap with FSDP above
-    use_cpu=(device_type == "cpu"),
-    bf16=(compute_dtype == torch.bfloat16 and device_type == "cuda"),
-    fp16=False,
-    prediction_loss_only=True,
+    report_to=["wandb"] if master_process else [],
+    device_type=device_type,
+    compute_dtype=compute_dtype,
     disable_tqdm=not master_process,
 )
 

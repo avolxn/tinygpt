@@ -28,6 +28,70 @@ from tinygpt.scheduler import get_lr_multiplier
 from tinygpt.utils import get_model_device
 
 
+def resolve_training_value(
+    name: str,
+    requested: int | float | None,
+    fallback: int | float,
+    *candidates: int | float | None,
+) -> int | float:
+    """Resolve an optional training value from CLI, checkpoint metadata, or a fallback."""
+    if requested is not None:
+        return requested
+    for candidate in candidates:
+        if candidate is not None:
+            print0(f"Inherited {name}={candidate} from pretrain checkpoint")
+            return candidate
+    print0(f"Using fallback {name}={fallback}")
+    return fallback
+
+
+def build_training_arguments(
+    *,
+    output_dir: str,
+    max_steps: int,
+    device_batch_size: int,
+    grad_accum_steps: int,
+    warmup_steps: int,
+    weight_decay: float,
+    grad_clip: float,
+    logging_steps: int,
+    eval_every: int,
+    save_steps: int,
+    run_name: str,
+    report_to: list[str],
+    device_type: str,
+    compute_dtype: torch.dtype,
+    disable_tqdm: bool,
+) -> TrainingArguments:
+    """Build the shared HuggingFace Trainer arguments for all training phases."""
+    evaluation_enabled = eval_every > 0
+    return TrainingArguments(
+        output_dir=output_dir,
+        max_steps=max_steps,
+        per_device_train_batch_size=device_batch_size,
+        gradient_accumulation_steps=grad_accum_steps,
+        warmup_steps=warmup_steps,
+        weight_decay=weight_decay,
+        max_grad_norm=grad_clip,
+        logging_steps=logging_steps,
+        eval_strategy="steps" if evaluation_enabled else "no",
+        eval_steps=eval_every if evaluation_enabled else None,
+        save_strategy="steps",
+        save_steps=save_steps,
+        remove_unused_columns=False,
+        dataloader_num_workers=0,
+        report_to=report_to,
+        run_name=run_name,
+        label_names=["labels"],
+        fsdp="",
+        use_cpu=device_type == "cpu",
+        bf16=compute_dtype == torch.bfloat16 and device_type == "cuda",
+        fp16=False,
+        prediction_loss_only=True,
+        disable_tqdm=disable_tqdm,
+    )
+
+
 class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
     """Wraps an infinite (inputs, targets) generator into an IterableDataset.
 
@@ -279,7 +343,9 @@ class RunMetadataCallback(TrainerCallback):
     def __init__(self, metadata: dict[str, Any]) -> None:
         self._metadata = metadata
 
-    def on_train_begin(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs: Any) -> None:
+    def on_train_begin(
+        self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs: Any
+    ) -> None:
         if not state.is_world_process_zero:
             return
         import wandb
