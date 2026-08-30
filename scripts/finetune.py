@@ -30,11 +30,13 @@ from tinygpt.dataloader import sft_data_loader
 from tinygpt.distributed import (
     compute_cleanup,
     compute_init,
+    get_dist_info,
     make_fsdp_mixed_precision,
     print0,
 )
 from tinygpt.model import Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.tracking import require_wandb_auth
 from tinygpt.train import TinyGPTTrainer
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
 
@@ -47,7 +49,7 @@ parser.add_argument(
 )
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 # Logging
-parser.add_argument("--run", type=str, default="", help="wandb run name ('dummy' disables wandb)")
+parser.add_argument("--run", type=str, default="", help="W&B run name")
 # Runtime
 parser.add_argument("--device-type", type=str, default="")
 parser.add_argument(
@@ -93,6 +95,10 @@ parser.add_argument(
 parser.add_argument("--mmlu-epochs", type=int, default=3)
 parser.add_argument("--gsm8k-epochs", type=int, default=4)
 args = parser.parse_args()
+
+dist_requested, preflight_rank, _, _ = get_dist_info()
+if preflight_rank == 0:
+    require_wandb_auth(interactive=not dist_requested)
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 is_dist, rank, local_rank, world_size, device = compute_init(device_type)
@@ -218,8 +224,7 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
 run_name = args.run_name if args.run_name else f"d{meta['model_config']['n_layer']}"
 checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="sft")
 wandb_run_name = args.run if args.run else run_name
-if wandb_run_name != "dummy":
-    os.environ.setdefault("WANDB_PROJECT", "tinygpt")
+os.environ.setdefault("WANDB_PROJECT", "tinygpt")
 
 training_args = TrainingArguments(
     output_dir=checkpoint_dir,
@@ -236,8 +241,8 @@ training_args = TrainingArguments(
     save_steps=args.eval_every if args.eval_every > 0 else num_iterations,
     remove_unused_columns=False,
     dataloader_num_workers=0,
-    report_to=["wandb"] if wandb_run_name != "dummy" and master_process else [],
-    run_name=wandb_run_name if wandb_run_name != "dummy" else None,
+    report_to=["wandb"] if master_process else [],
+    run_name=wandb_run_name,
     label_names=["labels"],
     fsdp="",
     use_cpu=(device_type == "cpu"),

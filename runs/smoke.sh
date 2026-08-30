@@ -21,10 +21,10 @@ uv sync
 # shellcheck source=/dev/null
 source .venv/bin/activate
 
-if [ -z "${WANDB_RUN:-}" ]; then
-    WANDB_RUN=dummy
-fi
+WANDB_RUN="${WANDB_RUN:-smoke}"
 DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
+
+python -m scripts.check_wandb
 
 CORPUS="data/smoke_corpus.txt"
 cat >"$CORPUS" <<'EOF'

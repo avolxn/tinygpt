@@ -30,6 +30,8 @@ NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
 REFERENCE_MODEL="${REFERENCE_MODEL:-karpathy/nanochat-d32}"
 
+python -m scripts.check_wandb
+
 if [ ! -d "data/pretrain_checkpoints/pretrain_reference_d32" ]; then
   echo "Student checkpoint not found: data/pretrain_checkpoints/pretrain_reference_d32"
   echo "Run bash runs/pretrain_reference_d32.sh first."

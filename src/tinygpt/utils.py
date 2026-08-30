@@ -111,18 +111,6 @@ def autodetect_device_type() -> str:
     return device_type
 
 
-class DummyWandb:
-    """Drop-in wandb replacement that silently ignores all calls."""
-
-    def log(self, *args: object, **kwargs: object) -> None:
-        """Silently ignore log calls."""
-        ...
-
-    def finish(self) -> None:
-        """Silently ignore finish calls."""
-        ...
-
-
 peak_flops_table: tuple[tuple[frozenset[str], float], ...] = (
     (frozenset({"gb200"}), 2.5e15),
     (frozenset({"grace blackwell"}), 2.5e15),

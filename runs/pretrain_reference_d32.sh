@@ -22,6 +22,8 @@ WANDB_RUN="${WANDB_RUN:-pretrain_reference_d32}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 REFERENCE_MODEL="${REFERENCE_MODEL:-karpathy/nanochat-d32}"
 
+python -m scripts.check_wandb
+
 if [ ! -f "data/tokenizer_reference_d32/tokenizer.json" ]; then
   echo "==> Converting reference tokenizer"
   python -m scripts.convert \

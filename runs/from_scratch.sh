@@ -24,6 +24,8 @@ source .venv/bin/activate
 WANDB_RUN="${WANDB_RUN:-from_scratch}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 
+python -m scripts.check_wandb
+
 echo "Training tokenizer"
 python -m scripts.train_tokenizer \
   --out-dir data/tokenizer_from_scratch

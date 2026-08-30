@@ -49,8 +49,10 @@ Typical outputs:
 
 The run scripts are intentionally simple. Only a small number of environment overrides are supported:
 
-- `WANDB_RUN`: Weights & Biases run name. Production scripts use a real run name by default; `runs/smoke.sh` defaults to `dummy`.
-- `WANDB_PROJECT`: Weights & Biases project name. Defaults to `tinygpt` when W&B is enabled.
+- `WANDB_RUN`: Weights & Biases run name. Each run script provides a stage-specific default.
+- `WANDB_PROJECT`: Required tracking project. Defaults to `tinygpt`.
+- `WANDB_ENTITY`: Optional W&B team or user entity.
+- `WANDB_BASE_URL`: Optional W&B Self-Managed server URL; public cloud is used by default.
 - `NPROC_PER_NODE`: Number of `torchrun` processes per node for GPU workflows.
 - `DEVICE_TYPE`: Runtime override for `runs/smoke.sh`, typically `cpu`, `cuda`, or `mps`.
 - `TEACHER_DEVICE`: Teacher placement override for `runs/distill_reference_d32.sh`.
@@ -65,7 +67,10 @@ WANDB_RUN=distill_d32 TEACHER_DEVICE=cpu bash runs/distill_reference_d32.sh
 DEVICE_TYPE=cpu bash runs/smoke.sh
 ```
 
-Set `WANDB_RUN=dummy` to disable Weights & Biases for any run script. The Python entry points follow the same rule through `--run dummy`; if `--run` is omitted, they use `--run-name`.
+Online W&B tracking is mandatory for pretraining, SFT, and distillation. Run
+`uv run wandb login --verify` before invoking a Python entry point directly.
+The shell workflows run the same verified login preflight automatically and
+stop before allocating training resources when authentication fails.
 
 ## Important Constraint
 

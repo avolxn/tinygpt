@@ -36,18 +36,20 @@ from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loa
 from tinygpt.distributed import (
     compute_cleanup,
     compute_init,
+    get_dist_info,
     make_fsdp_mixed_precision,
     print0,
 )
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import GPT, Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.tracking import require_wandb_auth
 from tinygpt.train import SamplerCallback, TinyGPTTrainer
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
 # Logging
-parser.add_argument("--run", type=str, default="", help="wandb run name ('dummy' disables wandb)")
+parser.add_argument("--run", type=str, default="", help="W&B run name")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # Distributed
@@ -101,6 +103,10 @@ parser.add_argument("--save-every", type=int, default=-1)
 parser.add_argument("--out-dir", type=str, default="data")
 parser.add_argument("--run-name", type=str, default="")
 args = parser.parse_args()
+
+dist_requested, preflight_rank, _, _ = get_dist_info()
+if preflight_rank == 0:
+    require_wandb_auth(interactive=not dist_requested)
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 is_dist, rank, local_rank, world_size, device = compute_init(device_type)
@@ -241,8 +247,7 @@ print0(f"weight_decay: {weight_decay:.6f}")
 run_name = args.run_name if args.run_name else f"d{args.depth}"
 checkpoint_dir = get_checkpoint_dir(args.out_dir, run_name, phase="pretrain")
 wandb_run_name = args.run if args.run else run_name
-if wandb_run_name != "dummy":
-    os.environ.setdefault("WANDB_PROJECT", "tinygpt")
+os.environ.setdefault("WANDB_PROJECT", "tinygpt")
 
 
 def make_loader(split: str):
@@ -340,8 +345,8 @@ training_args = TrainingArguments(
     save_steps=args.save_every if args.save_every > 0 else num_iterations,
     remove_unused_columns=False,
     dataloader_num_workers=0,
-    report_to=["wandb"] if wandb_run_name != "dummy" and master_process else [],
-    run_name=wandb_run_name if wandb_run_name != "dummy" else None,
+    report_to=["wandb"] if master_process else [],
+    run_name=wandb_run_name,
     label_names=["labels"],
     fsdp="",  # We pre-wrap with FSDP above
     use_cpu=(device_type == "cpu"),
