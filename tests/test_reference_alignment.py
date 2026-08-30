@@ -35,6 +35,29 @@ def test_climbmix_source_uses_last_shard_for_validation(monkeypatch):
     assert val_files == {"train": ["hf://datasets/karpathy/climbmix-400b-shuffle/shard_00002.parquet"]}
 
 
+def test_local_prepared_dataset_resolves_parquet_splits(tmp_path):
+    train_dir = tmp_path / "train"
+    validation_dir = tmp_path / "validation"
+    train_dir.mkdir()
+    validation_dir.mkdir()
+    (train_dir / "part-00001.parquet").touch()
+    (train_dir / "part-00000.parquet").touch()
+    (validation_dir / "part-00000.parquet").touch()
+
+    train_name, train_split, train_files = resolve_dataset_source(str(tmp_path), "train")
+    val_name, val_split, val_files = resolve_dataset_source(str(tmp_path), "val")
+
+    assert (train_name, train_split) == ("parquet", "train")
+    assert train_files == {
+        "train": [
+            str(train_dir / "part-00000.parquet"),
+            str(train_dir / "part-00001.parquet"),
+        ]
+    }
+    assert (val_name, val_split) == ("parquet", "train")
+    assert val_files == {"train": [str(validation_dir / "part-00000.parquet")]}
+
+
 def test_all_ignored_targets_return_zero_loss_not_nan():
     config = GPTConfig(sequence_len=8, vocab_size=64, n_layer=1, n_head=1, n_kv_head=1, n_embd=32, window_pattern="L")
     model = GPT(config)

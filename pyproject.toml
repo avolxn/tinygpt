@@ -92,6 +92,9 @@ cpu = [
 gpu = [
     "torch==2.9.1",
 ]
+spark = [
+    "pyspark==4.2.0",
+]
 
 [tool.uv]
 default-groups = []

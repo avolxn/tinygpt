@@ -105,3 +105,27 @@ Expected baseline:
 - PyTorch-compatible CPU, CUDA, or MPS runtime
 
 The run scripts create or reuse `.venv` and install dependencies via `uv sync`.
+
+## Optional Spark Data Preparation
+
+PySpark is isolated in the `spark` extra and is used only for offline ETL. It
+normalizes line endings, removes short and duplicate documents, creates a
+deterministic validation split, and writes versionable Parquet shards.
+
+Java 17 or newer is required outside Docker:
+
+```bash
+bash runs/prepare_data.sh \
+  --input 'data/raw/*.txt' \
+  --input-format text \
+  --output data/processed/corpus \
+  --master 'local[*]'
+```
+
+The resulting directory can be passed directly to tokenizer training and
+pretraining:
+
+```bash
+python -m scripts.train_tokenizer --dataset data/processed/corpus
+python -m scripts.pretrain --dataset data/processed/corpus
+```
