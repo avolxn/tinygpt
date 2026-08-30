@@ -28,6 +28,7 @@ import torch
 from datasets import load_dataset
 
 from tinygpt.dataloader import CLIMBMIX_DATASET
+from tinygpt.metrics import compute_token_bytes
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 parser = argparse.ArgumentParser(description="Train a BPE tokenizer")
@@ -95,17 +96,8 @@ if tokenizer.decode(encoded) != test_text:
     raise RuntimeError("Encode/decode round-trip failed!")
 print(f"Sanity check passed: {len(encoded)} tokens for {len(test_text)} chars")
 
-vocab_size = tokenizer.get_vocab_size()
-special_set = set(tokenizer.get_special_tokens())
-token_bytes_list = []
-for token_id in range(vocab_size):
-    token_str = tokenizer.decode([token_id])
-    if token_str in special_set:
-        token_bytes_list.append(0)
-    else:
-        token_bytes_list.append(len(token_str.encode("utf-8")))
-token_bytes = torch.tensor(token_bytes_list, dtype=torch.int32)
+token_bytes = compute_token_bytes(tokenizer)
 token_bytes_path = os.path.join(args.out_dir, "token_bytes.pt")
 torch.save(token_bytes, token_bytes_path)
 print(f"Saved token_bytes to {token_bytes_path}")
-print(f"Tokenizer vocab size: {vocab_size:,}")
+print(f"Tokenizer vocab size: {tokenizer.get_vocab_size():,}")

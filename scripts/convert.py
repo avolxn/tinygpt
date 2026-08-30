@@ -26,6 +26,8 @@ from tokenizers import Regex, Tokenizer, decoders, pre_tokenizers
 from tokenizers.models import BPE
 from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_NAME
 
+from tinygpt.checkpoint import TRAINER_STATE_NAME
+from tinygpt.metrics import compute_token_bytes
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 DEFAULT_PROBES = [
@@ -37,7 +39,6 @@ DEFAULT_PROBES = [
     "Punctuation: ()[]{}.,!?-_'\"",
 ]
 
-TRAINER_STATE_NAME = "trainer_state.json"
 _META_RE = re.compile(r"meta_(\d+)\.json$")
 
 
@@ -233,16 +234,7 @@ def convert_legacy_model_to_hf(
 
 def _save_token_bytes(tokenizer_dir: str) -> str:
     tokenizer = HuggingFaceTokenizer.from_directory(tokenizer_dir)
-    vocab_size = tokenizer.get_vocab_size()
-    special_set = set(tokenizer.get_special_tokens())
-    token_bytes_list = []
-    for token_id in range(vocab_size):
-        token_str = tokenizer.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
-        else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
-    token_bytes = torch.tensor(token_bytes_list, dtype=torch.int32)
+    token_bytes = compute_token_bytes(tokenizer)
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
     torch.save(token_bytes, token_bytes_path)
     return token_bytes_path
