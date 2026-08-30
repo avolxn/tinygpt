@@ -1,11 +1,11 @@
 import math
 
 import torch
+from tasks.sft import build_sft_task_lists
 
 from tinygpt.config import GPTConfig, compute_scaled_total_batch_size, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
 from tinygpt.model import GPT
-from tinygpt.sft_tasks import build_sft_task_lists
 
 
 def test_climbmix_source_uses_last_shard_for_validation(monkeypatch):

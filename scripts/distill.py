@@ -19,6 +19,7 @@ from functools import partial
 
 import torch
 from tasks.base import TaskMixture
+from tasks.sft import build_sft_task_lists
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
@@ -35,7 +36,6 @@ from tinygpt.distributed import (
     print0,
 )
 from tinygpt.model import Block
-from tinygpt.sft_tasks import build_sft_task_lists
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.train import TinyGPTTrainer
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
