@@ -1,4 +1,4 @@
-"""GPT model and shared training-run configuration."""
+"""Native Llama model and shared training-run configuration."""
 
 from __future__ import annotations
 
