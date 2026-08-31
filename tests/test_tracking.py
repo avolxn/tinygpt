@@ -1,42 +1,46 @@
-"""Tests for mandatory W&B authentication."""
+"""Tests for mandatory MLflow tracking setup."""
 
 from types import SimpleNamespace
 
 import pytest
-import wandb
 
-from tinygpt.tracking import WandbAuthError, require_wandb_auth
-
-
-def test_require_wandb_auth_verifies_configured_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    login_calls: list[dict[str, object]] = []
-    monkeypatch.delenv("WANDB_MODE", raising=False)
-    monkeypatch.setattr(wandb, "Api", lambda **_: SimpleNamespace(api_key="secret"))
-    monkeypatch.setattr(wandb, "login", lambda **kwargs: login_calls.append(kwargs) or True)
-
-    require_wandb_auth(interactive=False, timeout=3)
-
-    assert login_calls == [{"verify": True, "timeout": 3}]
+import tinygpt.tracking as tracking
 
 
-@pytest.mark.parametrize("mode", ["offline", "disabled"])
-def test_require_wandb_auth_rejects_non_online_modes(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
-    monkeypatch.setenv("WANDB_MODE", mode)
+def test_require_mlflow_tracking_configures_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str]] = []
+    fake_mlflow = SimpleNamespace(
+        set_tracking_uri=lambda uri: calls.append(("uri", uri)),
+        set_experiment=lambda name: calls.append(("experiment", name)),
+    )
+    monkeypatch.setattr(tracking, "mlflow", fake_mlflow)
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", "tinygpt-test")
 
-    with pytest.raises(WandbAuthError, match="requires online W&B"):
-        require_wandb_auth(interactive=True)
-
-
-def test_require_wandb_auth_requires_preconfigured_key_for_workers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("WANDB_MODE", raising=False)
-    monkeypatch.setattr(wandb, "Api", lambda **_: SimpleNamespace(api_key=None))
-
-    with pytest.raises(WandbAuthError, match="credentials are required"):
-        require_wandb_auth(interactive=False)
+    assert tracking.require_mlflow_tracking() == "http://mlflow:5000"
+    assert calls == [("uri", "http://mlflow:5000"), ("experiment", "tinygpt-test")]
 
 
-def test_require_wandb_auth_allows_interactive_login(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("WANDB_MODE", raising=False)
-    monkeypatch.setattr(wandb, "login", lambda **_: True)
+def test_require_mlflow_tracking_defaults_to_local_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    fake_mlflow = SimpleNamespace(
+        set_tracking_uri=lambda uri: calls.append(uri),
+        set_experiment=lambda name: None,
+    )
+    monkeypatch.setattr(tracking, "mlflow", fake_mlflow)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.delenv("MLFLOW_EXPERIMENT_NAME", raising=False)
 
-    require_wandb_auth(interactive=True)
+    assert tracking.require_mlflow_tracking() == "file:./mlruns"
+    assert calls == ["file:./mlruns"]
+
+
+def test_require_mlflow_tracking_wraps_backend_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_mlflow = SimpleNamespace(
+        set_tracking_uri=lambda uri: None,
+        set_experiment=lambda name: (_ for _ in ()).throw(ConnectionError("offline")),
+    )
+    monkeypatch.setattr(tracking, "mlflow", fake_mlflow)
+
+    with pytest.raises(tracking.MlflowTrackingError, match="unavailable"):
+        tracking.require_mlflow_tracking()

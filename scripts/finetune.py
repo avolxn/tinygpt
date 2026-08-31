@@ -36,9 +36,9 @@ from tinygpt.distributed import (
     wrap_fsdp,
 )
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.tracking import require_wandb_auth
+from tinygpt.tracking import require_mlflow_tracking
 from tinygpt.train import (
-    RunMetadataCallback,
+    MlflowMetadataCallback,
     TinyGPTTrainer,
     build_training_arguments,
     causal_lm_loss,
@@ -101,7 +101,7 @@ runtime_config = RuntimeConfig.from_namespace(args)
 
 dist_requested, preflight_rank, _, _ = get_dist_info()
 if preflight_rank == 0:
-    require_wandb_auth(interactive=not dist_requested)
+    require_mlflow_tracking()
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 is_dist, rank, local_rank, world_size, device = compute_init(device_type, seed=runtime_config.seed)
@@ -223,8 +223,7 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
 run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['num_hidden_layers']}"
 runtime_config = runtime_config.with_run_name(run_name)
 checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="sft")
-wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
-os.environ.setdefault("WANDB_PROJECT", "tinygpt")
+mlflow_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
 
 training_args = build_training_arguments(
     output_dir=checkpoint_dir,
@@ -237,8 +236,8 @@ training_args = build_training_arguments(
     logging_steps=50,
     eval_every=args.eval_every,
     save_steps=args.eval_every if args.eval_every > 0 else num_iterations,
-    run_name=wandb_run_name,
-    report_to=["wandb"] if master_process else [],
+    run_name=mlflow_run_name,
+    report_to=["mlflow"] if master_process else [],
     device_type=device_type,
     compute_dtype=compute_dtype,
     disable_tqdm=not master_process,
@@ -258,7 +257,7 @@ checkpoint_metadata = build_checkpoint_metadata(
 trainer = TinyGPTTrainer(
     model=model,
     args=training_args,
-    callbacks=[RunMetadataCallback(checkpoint_metadata)],
+    callbacks=[MlflowMetadataCallback(checkpoint_metadata)],
     eval_dataset=[0] if args.eval_every > 0 else None,
     matrix_lr=args.matrix_lr,
     embedding_lr=args.embedding_lr,

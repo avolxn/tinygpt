@@ -49,8 +49,8 @@ from tinygpt.distributed import (
 )
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.tracking import require_wandb_auth
-from tinygpt.train import RunMetadataCallback, TinyGPTTrainer, build_training_arguments
+from tinygpt.tracking import require_mlflow_tracking
+from tinygpt.train import MlflowMetadataCallback, TinyGPTTrainer, build_training_arguments
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
@@ -121,7 +121,7 @@ def scaling_param_counts(model: LlamaForCausalLM) -> dict[str, int]:
 
 dist_requested, preflight_rank, _, _ = get_dist_info()
 if preflight_rank == 0:
-    require_wandb_auth(interactive=not dist_requested)
+    require_mlflow_tracking()
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 is_dist, rank, local_rank, world_size, device = compute_init(device_type, seed=runtime_config.seed)
@@ -249,8 +249,7 @@ print0(f"weight_decay: {weight_decay:.6f}")
 run_name = runtime_config.run_name if runtime_config.run_name else f"d{args.depth}"
 runtime_config = runtime_config.with_run_name(run_name)
 checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="pretrain")
-wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
-os.environ.setdefault("WANDB_PROJECT", "tinygpt")
+mlflow_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
 
 
 def make_loader(split: str):
@@ -290,8 +289,8 @@ training_args = build_training_arguments(
     logging_steps=100,
     eval_every=args.eval_every,
     save_steps=args.save_every if args.save_every > 0 else num_iterations,
-    run_name=wandb_run_name,
-    report_to=["wandb"] if master_process else [],
+    run_name=mlflow_run_name,
+    report_to=["mlflow"] if master_process else [],
     device_type=device_type,
     compute_dtype=compute_dtype,
     disable_tqdm=not master_process,
@@ -308,7 +307,7 @@ checkpoint_metadata = build_checkpoint_metadata(
     num_iterations=num_iterations,
 )
 callbacks = [
-    RunMetadataCallback(checkpoint_metadata),
+    MlflowMetadataCallback(checkpoint_metadata),
 ]
 
 trainer = TinyGPTTrainer(

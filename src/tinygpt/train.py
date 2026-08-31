@@ -363,8 +363,8 @@ class TinyGPTTrainer(Trainer):
         )
 
 
-class RunMetadataCallback(TrainerCallback):
-    """Publish the checkpoint metadata to the active W&B run."""
+class MlflowMetadataCallback(TrainerCallback):
+    """Publish checkpoint metadata to the active MLflow run."""
 
     def __init__(self, metadata: dict[str, Any]) -> None:
         self._metadata = metadata
@@ -374,7 +374,7 @@ class RunMetadataCallback(TrainerCallback):
     ) -> None:
         if not state.is_world_process_zero:
             return
-        import wandb
+        import mlflow
 
-        if wandb.run is not None:
-            wandb.config.update(self._metadata, allow_val_change=True)  # type: ignore[no-untyped-call]
+        if mlflow.active_run() is not None:
+            mlflow.log_dict(self._metadata, "tinygpt_metadata.json")

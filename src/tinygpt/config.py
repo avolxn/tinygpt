@@ -44,7 +44,7 @@ class RuntimeConfig:
 
 def add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
     """Add the shared runtime arguments to a training CLI parser."""
-    parser.add_argument("--run", type=str, default=RuntimeConfig.run, help="W&B run name")
+    parser.add_argument("--run", type=str, default=RuntimeConfig.run, help="MLflow run name")
     parser.add_argument(
         "--device-type", type=str, default=RuntimeConfig.device_type, help="cuda|cpu|mps (empty = autodetect)"
     )
