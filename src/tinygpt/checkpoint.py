@@ -28,6 +28,7 @@ from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_NAME
 
 from tinygpt.config import GPTConfig, RuntimeConfig
 from tinygpt.model import GPT
+from tinygpt.tokenizer import SPECIAL_TOKENS
 
 logger = logging.getLogger(__name__)
 TRAINER_STATE_NAME = "trainer_state.json"
@@ -162,6 +163,17 @@ def save_model_checkpoint(
             source = os.path.join(tokenizer_dir, filename)
             if os.path.exists(source):
                 shutil.copy2(source, os.path.join(output_dir, filename))
+        tokenizer_config_path = os.path.join(output_dir, "tokenizer_config.json")
+        with open(tokenizer_config_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "tokenizer_class": "PreTrainedTokenizerFast",
+                    "bos_token": SPECIAL_TOKENS[0],
+                    "additional_special_tokens": SPECIAL_TOKENS[1:],
+                },
+                f,
+                indent=2,
+            )
 
 
 def build_model_from_checkpoint(
