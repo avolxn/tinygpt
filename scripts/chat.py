@@ -11,7 +11,7 @@ import os
 
 from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.distributed import compute_init
-from tinygpt.inference import Engine, VLLMClient
+from tinygpt.inference import VLLMClient
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.utils import autodetect_device_type
 
@@ -44,7 +44,6 @@ if args.backend == "native":
     init_info = compute_init(device_type)
     device = init_info[4]
     model, _metadata = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
-    engine = Engine(model, tokenizer)
 else:
     if not args.vllm_model:
         parser.error("--vllm-model is required with --backend vllm")
@@ -88,14 +87,12 @@ def run_turn(user_input: str) -> str:
         print(response, end="", flush=True)
     else:
         response_tokens = []
-        for token_column, _ in engine.generate(
+        for token in model.generate(
             prompt,
-            num_samples=1,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_k=args.top_k,
         ):
-            token = token_column[0]
             if token == assistant_end or token == bos:
                 break
             response_tokens.append(token)

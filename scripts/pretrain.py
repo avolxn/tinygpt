@@ -311,7 +311,6 @@ callbacks = [
     RunMetadataCallback(checkpoint_metadata),
     SamplerCallback(
         tokenizer=tokenizer,
-        device=device,
         sample_every=args.sample_every,
         master_process=master_process,
     ),

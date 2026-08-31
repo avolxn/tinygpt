@@ -26,7 +26,6 @@ from tasks.mmlu import MMLU
 from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loader_bestfit
 from tinygpt.distributed import compute_cleanup, compute_init, get_dist_info, print0
-from tinygpt.inference import Engine
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.utils import autodetect_device_type
@@ -58,8 +57,14 @@ args = parser.parse_args()
 eval_modes = {m.strip() for m in args.eval.split(",")}
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-_, rank, _, world_size, device = compute_init(device_type)
-is_dist, ddp_rank, _, ddp_world_size = get_dist_info()
+init_info = compute_init(device_type)
+rank = init_info[1]
+world_size = init_info[3]
+device = init_info[4]
+dist_info = get_dist_info()
+is_dist = dist_info[0]
+ddp_rank = dist_info[1]
+ddp_world_size = dist_info[3]
 
 model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
@@ -76,16 +81,16 @@ if "sample" in eval_modes and rank == 0:
     print0("\n" + "=" * 70)
     print0("Samples")
     print0("=" * 70)
-    engine = Engine(model, tokenizer)
     for prompt in [
         "The capital of France is",
         "The chemical symbol of gold is",
         "If yesterday was Friday, then tomorrow will be",
         "The opposite of hot is",
     ]:
-        tokens = tokenizer(prompt, prepend="<|bos|>")
-        sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=20, temperature=0)
-        print0(tokenizer.decode(sample[0]))
+        tokens = tokenizer.encode(prompt, prepend="<|bos|>")
+        sample = tokens.copy()
+        sample.extend(model.generate(tokens, max_tokens=20, temperature=0))
+        print0(tokenizer.decode(sample))
 
 # -----------------------------------------------------------------------------
 # BPB
@@ -134,20 +139,29 @@ def run_generative_eval(
     Returns:
         Pass rate (fraction of problems where any sample is correct).
     """
-    engine = Engine(model, tokenizer)
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
     num_passed, total = 0, 0
 
     for i in range(ddp_rank, num_problems, ddp_world_size):
         conversation = task_object[i]
         encoded_prompt = tokenizer.render_for_completion(conversation)
-        results, _ = engine.generate_batch(
-            encoded_prompt,
-            num_samples=num_samples,
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-            top_k=top_k,
-        )
+        stop_ids = {tokenizer.get_bos_token_id()}
+        assistant_end = tokenizer.encode_special("<|assistant_end|>")
+        if assistant_end is not None:
+            stop_ids.add(assistant_end)
+        results = []
+        for _sample_idx in range(num_samples):
+            generated = encoded_prompt.copy()
+            for token in model.generate(
+                encoded_prompt,
+                max_tokens=max_new_tokens,
+                temperature=temperature,
+                top_k=top_k,
+            ):
+                if token in stop_ids:
+                    break
+                generated.append(token)
+            results.append(generated)
         prefix_len = len(encoded_prompt)
         completions = [tokenizer.decode(r[prefix_len:]) for r in results]
         passed = any(task_object.evaluate(conversation, c) for c in completions)

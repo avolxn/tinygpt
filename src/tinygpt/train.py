@@ -22,7 +22,6 @@ from transformers import Trainer, TrainerCallback, TrainerControl, TrainerState,
 from tinygpt.checkpoint import save_model_checkpoint
 from tinygpt.distillation import masked_distillation_loss
 from tinygpt.distributed import print0
-from tinygpt.inference import Engine
 from tinygpt.optimizer import make_optimizer
 from tinygpt.scheduler import get_lr_multiplier
 from tinygpt.utils import get_model_device
@@ -368,13 +367,11 @@ class SamplerCallback(TrainerCallback):
     def __init__(
         self,
         tokenizer: Any,
-        device: torch.device,
         sample_every: int,
         master_process: bool,
         prompts: list[str] | None = None,
     ) -> None:
         self._tokenizer = tokenizer
-        self._device = device
         self._sample_every = sample_every
         self._master_process = master_process
         self._prompts = prompts or ["The capital of France is", "The chemical symbol of gold is"]
@@ -402,9 +399,10 @@ class SamplerCallback(TrainerCallback):
         if state.global_step % self._sample_every != 0:
             return
         model.eval()
-        engine = Engine(model, self._tokenizer)
+        model_to_sample: Any = getattr(model, "module", model)
         for prompt in self._prompts:
             tokens = self._tokenizer(prompt, prepend="<|bos|>")
-            sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=32, temperature=0.0)
-            print0(f"  [{prompt!r}] → {self._tokenizer.decode(sample[0])}")
+            sample = tokens.copy()
+            sample.extend(model_to_sample.generate(tokens, max_tokens=32, temperature=0.0))
+            print0(f"  [{prompt!r}] → {self._tokenizer.decode(sample)}")
         model.train()
