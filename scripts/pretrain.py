@@ -1,5 +1,5 @@
 """
-Pretrain a GPT model via HuggingFace Trainer + FSDP.
+Pretrain a Llama model via Transformers Trainer + native PyTorch FSDP.
 
 Single GPU:
     python -m scripts.pretrain
@@ -22,6 +22,8 @@ import argparse
 import json
 
 import torch
+from transformers import LlamaForCausalLM
+from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 from tinygpt.checkpoint import (
     build_checkpoint_metadata,
@@ -46,7 +48,6 @@ from tinygpt.distributed import (
     wrap_fsdp,
 )
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
-from tinygpt.model import GPT, LlamaDecoderLayer
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_wandb_auth
 from tinygpt.train import RunMetadataCallback, TinyGPTTrainer, build_training_arguments
@@ -67,7 +68,6 @@ parser.add_argument("--depth", type=int, default=20)
 parser.add_argument("--aspect-ratio", type=int, default=64)
 parser.add_argument("--head-dim", type=int, default=128)
 parser.add_argument("--max-seq-len", type=int, default=2048)
-parser.add_argument("--window-pattern", type=str, default="SSSL")
 # Data
 parser.add_argument("--dataset", type=str, default=CLIMBMIX_DATASET)
 parser.add_argument("--txt", type=str, default="", help="Local .txt file (overrides --dataset)")
@@ -104,6 +104,21 @@ parser.add_argument("--save-every", type=int, default=-1)
 args = parser.parse_args()
 runtime_config = RuntimeConfig.from_namespace(args)
 
+
+def scaling_param_counts(model: LlamaForCausalLM) -> dict[str, int]:
+    """Bucket native Llama parameters for the scaling-law calculation."""
+    counts = {
+        "wte": model.get_input_embeddings().weight.numel(),
+        "value_embeds": 0,
+        "lm_head": model.lm_head.weight.numel(),
+        "transformer_matrices": sum(
+            parameter.numel() for name, parameter in model.named_parameters() if name.startswith("model.layers.")
+        ),
+        "scalars": sum(parameter.numel() for parameter in model.parameters() if parameter.dim() < 2),
+    }
+    counts["total"] = sum(counts.values())
+    return counts
+
 dist_requested, preflight_rank, _, _ = get_dist_info()
 if preflight_rank == 0:
     require_wandb_auth(interactive=not dist_requested)
@@ -132,13 +147,12 @@ config = make_config(
     head_dim=args.head_dim,
     vocab_size=vocab_size,
     sequence_len=args.max_seq_len,
-    window_pattern=args.window_pattern,
 )
 model_config_kwargs = config.to_dict()
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 
 with torch.device("meta"):
-    model = GPT(config)
+    model = LlamaForCausalLM(config)
 model.to_empty(device=device)
 model.init_weights()
 
@@ -174,7 +188,7 @@ if device_type == "cuda" and is_dist:
     )
     print0(f"FSDP enabled with sharding strategy: {args.sharding_strategy}")
 
-param_counts = model.num_scaling_params() if hasattr(model, "num_scaling_params") else {}
+param_counts = scaling_param_counts(model)
 if param_counts:
     print0("Parameter counts:")
     for k, v in param_counts.items():
@@ -191,11 +205,10 @@ d12_config = make_config(
     head_dim=args.head_dim,
     vocab_size=vocab_size,
     sequence_len=args.max_seq_len,
-    window_pattern=args.window_pattern,
 )
 with torch.device("meta"):
-    d12_model = GPT(d12_config)
-d12_counts = d12_model.num_scaling_params()
+    d12_model = LlamaForCausalLM(d12_config)
+d12_counts = scaling_param_counts(d12_model)
 d12_scaling_params = d12_counts["transformer_matrices"] + d12_counts["lm_head"]
 target_tokens = int(args.target_param_data_ratio * scaling_params)
 d12_target_tokens = args.target_param_data_ratio * d12_scaling_params

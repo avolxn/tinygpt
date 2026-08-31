@@ -89,7 +89,7 @@ if needs_local_model:
     ddp_world_size = dist_info[3]
     model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
     token_bytes = compute_token_bytes(tokenizer, device=device)
-    sequence_len = meta["model_config"]["sequence_len"]
+    sequence_len = meta["model_config"]["max_position_embeddings"]
 else:
     rank, world_size, device = 0, 1, torch.device("cpu")
     is_dist, ddp_rank, ddp_world_size = False, 0, 1

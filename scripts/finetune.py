@@ -1,5 +1,5 @@
 """
-Supervised fine-tuning (SFT) via HuggingFace Trainer.
+Supervised fine-tuning (SFT) via Transformers Trainer and native FSDP.
 
 Loss is computed on assistant tokens only (mask = 1).
 
@@ -18,6 +18,7 @@ import math
 import torch
 from tasks.base import TaskMixture
 from tasks.sft import build_sft_task_lists
+from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 from tinygpt.checkpoint import (
     build_checkpoint_metadata,
@@ -34,10 +35,15 @@ from tinygpt.distributed import (
     print0,
     wrap_fsdp,
 )
-from tinygpt.model import LlamaDecoderLayer
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_wandb_auth
-from tinygpt.train import RunMetadataCallback, TinyGPTTrainer, build_training_arguments, resolve_training_value
+from tinygpt.train import (
+    RunMetadataCallback,
+    TinyGPTTrainer,
+    build_training_arguments,
+    causal_lm_loss,
+    resolve_training_value,
+)
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
 
 parser = argparse.ArgumentParser(description="Supervised fine-tuning")
@@ -108,7 +114,7 @@ resume_checkpoint = resolve_trainer_checkpoint(model_ref) if args.resume_from el
 if args.resume_from and resume_checkpoint is None:
     print0("No complete Trainer state found; continuing from weights only.")
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
-sequence_len = args.max_seq_len or meta["model_config"]["sequence_len"]
+sequence_len = args.max_seq_len or meta["model_config"]["max_position_embeddings"]
 pretrain_user_config = meta.get("user_config", {})
 
 
@@ -207,14 +213,14 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
     losses = []
     for _ in range(eval_steps):
         x, y = next(eval_loader)
-        loss = eval_model(x, y)
+        loss = causal_lm_loss(eval_model, x, y)
         losses.append(loss.item())
     sft_val_loss = sum(losses) / len(losses)
     print0(f"Step {step:05d} | SFT val loss: {sft_val_loss:.4f}")
     return {"sft_loss": sft_val_loss}
 
 
-run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['n_layer']}"
+run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['num_hidden_layers']}"
 runtime_config = runtime_config.with_run_name(run_name)
 checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="sft")
 wandb_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name

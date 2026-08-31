@@ -10,61 +10,6 @@ from typing import Any
 from transformers import LlamaConfig
 
 
-@dataclass(init=False)
-class GPTConfig(LlamaConfig):
-    """Llama configuration with tinygpt's concise architecture aliases."""
-
-    model_type = "llama"
-    sequence_len: int
-    n_layer: int
-    n_head: int
-    n_kv_head: int
-    n_embd: int
-    window_pattern: str
-
-    def __init__(
-        self,
-        sequence_len: int | None = None,
-        vocab_size: int | None = None,
-        n_layer: int | None = None,
-        n_head: int | None = None,
-        n_kv_head: int | None = None,
-        n_embd: int | None = None,
-        window_pattern: str = "SSSL",
-        **kwargs: Any,
-    ) -> None:
-        hf_sequence_len = kwargs.pop("max_position_embeddings", None)
-        hf_vocab_size = kwargs.pop("vocab_size", None)
-        hf_n_layer = kwargs.pop("num_hidden_layers", None)
-        hf_n_head = kwargs.pop("num_attention_heads", None)
-        hf_n_kv_head = kwargs.pop("num_key_value_heads", None)
-        hf_n_embd = kwargs.pop("hidden_size", None)
-        intermediate_size = int(kwargs.pop("intermediate_size", 4 * (n_embd or hf_n_embd or 768)))
-        sequence_len = sequence_len or int(hf_sequence_len or 2048)
-        vocab_size = vocab_size or int(hf_vocab_size or 32768)
-        n_layer = n_layer or int(hf_n_layer or 12)
-        n_head = n_head or int(hf_n_head or 6)
-        n_kv_head = n_kv_head or int(hf_n_kv_head or n_head)
-        n_embd = n_embd or int(hf_n_embd or 768)
-
-        super().__init__(  # type: ignore[no-untyped-call]
-            vocab_size=vocab_size,
-            max_position_embeddings=sequence_len,
-            hidden_size=n_embd,
-            intermediate_size=intermediate_size,
-            num_hidden_layers=n_layer,
-            num_attention_heads=n_head,
-            num_key_value_heads=n_kv_head,
-            **kwargs,
-        )
-        self.sequence_len = sequence_len
-        self.n_layer = n_layer
-        self.n_head = n_head
-        self.n_kv_head = n_kv_head
-        self.n_embd = n_embd
-        self.window_pattern = window_pattern
-
-
 @dataclass(frozen=True)
 class RuntimeConfig:
     """Common runtime settings shared by all training entry points."""
@@ -119,9 +64,8 @@ def make_config(
     head_dim: int = 128,
     vocab_size: int = 32768,
     sequence_len: int = 2048,
-    window_pattern: str = "SSSL",
-) -> GPTConfig:
-    """Build a GPTConfig from a depth scalar.
+) -> LlamaConfig:
+    """Build a native LlamaConfig from a depth scalar.
 
     model_dim is set to depth * aspect_ratio, rounded up to the next multiple
     of head_dim so that head_dim divides evenly.
@@ -132,22 +76,21 @@ def make_config(
         head_dim: Attention head dimension; model_dim is rounded up to a multiple.
         vocab_size: Vocabulary size.
         sequence_len: Maximum sequence length.
-        window_pattern: Sliding window pattern string (e.g. "SSSL").
-
     Returns:
-        A GPTConfig with n_layer, n_head, n_kv_head, and n_embd derived from depth.
+        A standard LlamaConfig.
     """
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
     num_heads = model_dim // head_dim
-    return GPTConfig(
-        sequence_len=sequence_len,
+    return LlamaConfig(  # type: ignore[no-untyped-call]
         vocab_size=vocab_size,
-        n_layer=depth,
-        n_head=num_heads,
-        n_kv_head=num_heads,
-        n_embd=model_dim,
-        window_pattern=window_pattern,
+        max_position_embeddings=sequence_len,
+        hidden_size=model_dim,
+        intermediate_size=4 * model_dim,
+        num_hidden_layers=depth,
+        num_attention_heads=num_heads,
+        num_key_value_heads=num_heads,
+        tie_word_embeddings=False,
     )
 
 

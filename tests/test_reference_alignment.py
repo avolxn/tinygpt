@@ -2,10 +2,11 @@ import math
 
 import torch
 from tasks.sft import build_sft_task_lists
+from transformers import LlamaForCausalLM
 
-from tinygpt.config import GPTConfig, compute_scaled_total_batch_size, make_config
+from tinygpt.config import compute_scaled_total_batch_size, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
-from tinygpt.model import GPT
+from tinygpt.train import causal_lm_loss
 
 
 def test_climbmix_source_uses_last_shard_for_validation(monkeypatch):
@@ -36,13 +37,12 @@ def test_climbmix_source_uses_last_shard_for_validation(monkeypatch):
 
 
 def test_all_ignored_targets_return_zero_loss_not_nan():
-    config = GPTConfig(sequence_len=8, vocab_size=64, n_layer=1, n_head=1, n_kv_head=1, n_embd=32, window_pattern="L")
-    model = GPT(config)
-    model.init_weights()
+    config = make_config(1, aspect_ratio=32, head_dim=32, vocab_size=64, sequence_len=8)
+    model = LlamaForCausalLM(config)
     idx = torch.randint(0, config.vocab_size, (2, 4))
     targets = torch.full((2, 4), -1, dtype=torch.long)
 
-    loss = model(idx, targets)
+    loss = causal_lm_loss(model, idx, targets)
 
     assert torch.isfinite(loss)
     assert loss.item() == 0.0
@@ -90,5 +90,5 @@ def test_reference_batch_size_scaling_matches_reference_formula():
     expected = 2 ** round(math.log2((2**19) * ((12 * 1_000_000) / (12 * 500_000)) ** 0.383))
 
     assert batch == expected
-    assert d12.n_embd == 768
-    assert d24.n_embd == 1536
+    assert d12.hidden_size == 768
+    assert d24.hidden_size == 1536

@@ -27,6 +27,34 @@ from tinygpt.scheduler import get_lr_multiplier
 from tinygpt.utils import get_model_device
 
 
+def model_logits(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+    """Run a Transformers causal LM and return its logits tensor."""
+    output = model(input_ids=input_ids)
+    logits = getattr(output, "logits", output)
+    if not isinstance(logits, torch.Tensor):
+        raise TypeError(f"Model output does not contain logits: {type(output)!r}")
+    return logits
+
+
+def causal_lm_loss(
+    model: nn.Module,
+    input_ids: torch.Tensor,
+    labels: torch.Tensor,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Compute loss against labels that are already shifted by the dataloader."""
+    logits = model_logits(model, input_ids)
+    if reduction == "mean" and not bool(labels.ne(-1).any()):
+        return logits.sum() * 0.0
+    loss = torch.nn.functional.cross_entropy(
+        logits.reshape(-1, logits.size(-1)),
+        labels.reshape(-1),
+        ignore_index=-1,
+        reduction=reduction,
+    )
+    return loss.reshape(labels.shape) if reduction == "none" else loss
+
+
 def resolve_training_value(
     name: str,
     requested: int | float | None,
@@ -82,7 +110,6 @@ def build_training_arguments(
         report_to=report_to,
         run_name=run_name,
         label_names=["labels"],
-        fsdp="",
         use_cpu=device_type == "cpu",
         bf16=compute_dtype == torch.bfloat16 and device_type == "cuda",
         fp16=False,
@@ -190,10 +217,10 @@ class TinyGPTTrainer(Trainer):
         return_outputs: bool = False,
         num_items_in_batch: torch.Tensor | int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Compute loss by calling model(input_ids, labels) directly.
+        """Compute loss against the dataloader's already-shifted labels.
 
         Args:
-            model: The GPT model.
+            model: A Transformers causal language model.
             inputs: Dict with 'input_ids' and 'labels' keys.
             return_outputs: If True, also return a dict with the loss.
             num_items_in_batch: Ignored; present for API compatibility.
@@ -205,10 +232,10 @@ class TinyGPTTrainer(Trainer):
         labels = inputs["labels"]
 
         if self._teacher_model is None or self._distill_alpha <= 0:
-            loss = model(input_ids, labels)
+            loss = causal_lm_loss(model, input_ids, labels)
             return (loss, {"loss": loss}) if return_outputs else loss
 
-        student_logits = model(input_ids)
+        student_logits = model_logits(model, input_ids)
         if bool(labels.ne(-1).any()):
             ce_loss = torch.nn.functional.cross_entropy(
                 student_logits.view(-1, student_logits.size(-1)),
@@ -221,7 +248,7 @@ class TinyGPTTrainer(Trainer):
         teacher_device = get_model_device(self._teacher_model)
         teacher_input_ids = input_ids.to(teacher_device)
         with torch.inference_mode():
-            teacher_logits = self._teacher_model(teacher_input_ids)
+            teacher_logits = model_logits(self._teacher_model, teacher_input_ids)
         teacher_logits = teacher_logits.to(student_logits.device)
 
         distill_loss = masked_distillation_loss(

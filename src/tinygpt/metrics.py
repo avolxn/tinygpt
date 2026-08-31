@@ -18,6 +18,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from tinygpt.train import causal_lm_loss
 from tinygpt.utils import get_model_device
 
 
@@ -32,7 +33,7 @@ def evaluate_bpb(
     Evaluate bits-per-byte on *steps* batches from *batches*.
 
     Args:
-        model: GPT model with forward(x, y, loss_reduction='none') interface
+        model: Transformers causal language model
         batches: iterable of (x, y) batches
         steps: number of batches to evaluate
         token_bytes: 1-D int tensor of shape (vocab_size,); entry i is the
@@ -46,7 +47,7 @@ def evaluate_bpb(
     total_bytes = torch.tensor(0, dtype=torch.int64, device=device)
 
     for x, y in itertools.islice(batches, steps):
-        loss2d = model(x, y, loss_reduction="none")
+        loss2d = causal_lm_loss(model, x, y, reduction="none")
         loss2d = loss2d.view(-1)
         y = y.view(-1)
 

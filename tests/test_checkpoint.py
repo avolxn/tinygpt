@@ -7,6 +7,7 @@ import os
 import tempfile
 
 import torch
+from transformers import LlamaForCausalLM
 
 from tinygpt.checkpoint import (
     CONFIG_NAME,
@@ -20,21 +21,17 @@ from tinygpt.checkpoint import (
     save_model_checkpoint,
 )
 from tinygpt.config import RuntimeConfig, make_config
-from tinygpt.model import GPT
 
 
-def make_test_model() -> GPT:
+def make_test_model() -> LlamaForCausalLM:
     config = make_config(
         depth=2,
         aspect_ratio=8,
         head_dim=8,
         vocab_size=32,
         sequence_len=16,
-        window_pattern="SL",
     )
-    model = GPT(config)
-    model.init_weights()
-    return model
+    return LlamaForCausalLM(config)
 
 
 def test_save_and_load_model_checkpoint_roundtrip() -> None:

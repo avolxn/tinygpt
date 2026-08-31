@@ -1,98 +1,51 @@
-"""
-Tests for the GPT model: forward pass, tensor shapes, weight init, generate.
-"""
+"""Tests for the native Transformers causal language model."""
 
 import pytest
 import torch
-
-from tinygpt.config import GPTConfig
-from tinygpt.model import GPT
+from transformers import LlamaConfig, LlamaForCausalLM
 
 
 @pytest.fixture()
-def tiny_config() -> GPTConfig:
-    """A tiny GPT config that runs quickly on CPU."""
-    return GPTConfig(
-        sequence_len=64,
+def tiny_config() -> LlamaConfig:
+    return LlamaConfig(
+        max_position_embeddings=64,
         vocab_size=256,
-        n_layer=2,
-        n_head=2,
-        n_kv_head=2,
-        n_embd=64,
-        window_pattern="L",
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=256,
     )
 
 
 @pytest.fixture()
-def tiny_model(tiny_config: GPTConfig) -> GPT:
-    model = GPT(tiny_config)
-    model.init_weights()
+def tiny_model(tiny_config: LlamaConfig) -> LlamaForCausalLM:
+    model = LlamaForCausalLM(tiny_config)
     model.eval()
     return model
 
 
-def test_forward_no_targets(tiny_model: GPT, tiny_config: GPTConfig) -> None:
-    """Forward without targets returns logits of correct shape."""
-    B, T = 2, 16
-    idx = torch.randint(0, tiny_config.vocab_size, (B, T))
-    logits = tiny_model(idx)
-    assert logits.shape == (B, T, tiny_config.vocab_size), f"Unexpected logits shape: {logits.shape}"
+def test_forward_no_labels(tiny_model: LlamaForCausalLM, tiny_config: LlamaConfig) -> None:
+    idx = torch.randint(0, tiny_config.vocab_size, (2, 16))
+    output = tiny_model(input_ids=idx)
+    assert output.logits.shape == (2, 16, tiny_config.vocab_size)
 
 
-def test_forward_with_targets(tiny_model: GPT, tiny_config: GPTConfig) -> None:
-    """Forward with targets returns a scalar mean loss."""
-    B, T = 2, 16
-    idx = torch.randint(0, tiny_config.vocab_size, (B, T))
-    targets = torch.randint(0, tiny_config.vocab_size, (B, T))
-    loss = tiny_model(idx, targets)
-    assert loss.shape == (), f"Loss should be scalar, got {loss.shape}"
-    assert loss.item() > 0, "Loss should be positive"
+def test_forward_with_labels(tiny_model: LlamaForCausalLM, tiny_config: LlamaConfig) -> None:
+    idx = torch.randint(0, tiny_config.vocab_size, (2, 16))
+    labels = torch.randint(0, tiny_config.vocab_size, (2, 16))
+    output = tiny_model(input_ids=idx, labels=labels)
+    assert output.loss is not None
+    assert output.loss.shape == ()
+    assert output.loss.item() > 0
 
 
-def test_forward_loss_reduction_none(tiny_model: GPT, tiny_config: GPTConfig) -> None:
-    """loss_reduction='none' returns per-token losses."""
-    B, T = 2, 16
-    idx = torch.randint(0, tiny_config.vocab_size, (B, T))
-    targets = torch.randint(0, tiny_config.vocab_size, (B, T))
-    loss = tiny_model(idx, targets, loss_reduction="none")
-    assert loss.shape == (B, T), f"Expected ({B}, {T}), got {loss.shape}"
+def test_native_generation_api(tiny_model: LlamaForCausalLM, tiny_config: LlamaConfig) -> None:
+    idx = torch.randint(0, tiny_config.vocab_size, (1, 4))
+    generated = tiny_model.generate(idx, max_new_tokens=3)
+    assert generated.shape == (1, 7)
 
 
-def test_forward_ignore_index(tiny_model: GPT, tiny_config: GPTConfig) -> None:
-    """Targets with -1 (ignore_index) don't raise errors."""
-    B, T = 2, 16
-    idx = torch.randint(0, tiny_config.vocab_size, (B, T))
-    targets = torch.randint(0, tiny_config.vocab_size, (B, T))
-    targets[0, :5] = -1  # mask first 5 tokens of first batch
-    loss = tiny_model(idx, targets)
-    assert loss.item() > 0
-
-
-def test_init_weights_not_nan(tiny_model: GPT) -> None:
-    """No NaN values after init_weights()."""
+def test_init_weights_not_nan(tiny_model: LlamaForCausalLM) -> None:
     for name, param in tiny_model.named_parameters():
         assert not torch.isnan(param).any(), f"NaN in parameter: {name}"
-
-
-def test_num_scaling_params(tiny_model: GPT) -> None:
-    """num_scaling_params() returns a dict summing to total param count."""
-    counts = tiny_model.num_scaling_params()
-    total = sum(p.numel() for p in tiny_model.parameters())
-    assert counts["total"] == total
-
-
-def test_window_sizes_last_layer_full(tiny_config: GPTConfig) -> None:
-    """The last layer always gets full context regardless of window_pattern."""
-    for pattern in ("L", "SL", "SSSL"):
-        config = GPTConfig(
-            sequence_len=64,
-            vocab_size=256,
-            n_layer=4,
-            n_head=2,
-            n_kv_head=2,
-            n_embd=64,
-            window_pattern=pattern,
-        )
-        model = GPT(config)
-        last_window = model.window_sizes[-1]
-        assert last_window == (64, 0), f"Last window wrong for pattern {pattern}: {last_window}"
