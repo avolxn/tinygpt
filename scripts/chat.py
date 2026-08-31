@@ -7,10 +7,11 @@ Usage:
 """
 
 import argparse
+import os
 
 from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.distributed import compute_init
-from tinygpt.inference import Engine
+from tinygpt.inference import Engine, VLLMClient
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.utils import autodetect_device_type
 
@@ -18,31 +19,49 @@ parser = argparse.ArgumentParser(description="Chat with tinygpt")
 parser.add_argument(
     "--checkpoint",
     type=str,
-    required=True,
+    default="",
     help="Path to a model directory or Trainer output directory",
 )
+parser.add_argument("--backend", choices=["native", "vllm"], default="native")
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 parser.add_argument("--prompt", type=str, default="", help="Single-turn prompt (interactive mode if empty)")
 parser.add_argument("--temperature", type=float, default=0.6)
 parser.add_argument("--top-k", type=int, default=50)
 parser.add_argument("--max-tokens", type=int, default=512)
 parser.add_argument("--device-type", type=str, default="", choices=["cuda", "cpu", "mps", ""])
+parser.add_argument("--vllm-url", type=str, default="http://localhost:8000/v1")
+parser.add_argument("--vllm-model", type=str, default="", help="Served model name for the vLLM backend")
+parser.add_argument("--vllm-api-key", type=str, default=os.getenv("VLLM_API_KEY"))
 
 
 args = parser.parse_args()
 
-device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-_, _, _, _, device = compute_init(device_type)
-
-model, _ = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
-engine = Engine(model, tokenizer)
+if args.backend == "native":
+    if not args.checkpoint:
+        parser.error("--checkpoint is required with --backend native")
+    device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+    init_info = compute_init(device_type)
+    device = init_info[4]
+    model, _metadata = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
+    engine = Engine(model, tokenizer)
+else:
+    if not args.vllm_model:
+        parser.error("--vllm-model is required with --backend vllm")
+    vllm = VLLMClient(args.vllm_url, args.vllm_model, args.vllm_api_key)
+
+def required_special(name: str) -> int:
+    token_id = tokenizer.encode_special(name)
+    if token_id is None:
+        raise RuntimeError(f"Tokenizer missing required special token: {name}")
+    return token_id
+
 
 bos = tokenizer.get_bos_token_id()
-user_start = tokenizer.encode_special("<|user_start|>")
-user_end = tokenizer.encode_special("<|user_end|>")
-assistant_start = tokenizer.encode_special("<|assistant_start|>")
-assistant_end = tokenizer.encode_special("<|assistant_end|>")
+user_start = required_special("<|user_start|>")
+user_end = required_special("<|user_end|>")
+assistant_start = required_special("<|assistant_start|>")
+assistant_end = required_special("<|assistant_end|>")
 
 print("\ntinygpt Interactive Chat")
 print("-" * 50)
@@ -56,21 +75,33 @@ def run_turn(user_input: str) -> str:
     global conversation_tokens
     user_ids = tokenizer.encode(user_input)
     prompt = conversation_tokens + [user_start] + user_ids + [user_end] + [assistant_start]
-    response_tokens: list[int] = []
-    for token_column, _ in engine.generate(
-        prompt,
-        num_samples=1,
-        max_tokens=args.max_tokens,
-        temperature=args.temperature,
-        top_k=args.top_k,
-    ):
-        token = token_column[0]
-        if token == assistant_end or token == bos:
-            break
-        response_tokens.append(token)
-        print(tokenizer.decode([token]), end="", flush=True)
+    if args.backend == "vllm":
+        response = vllm.generate(
+            tokenizer.decode(prompt),
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            stop=["<|assistant_end|>", "<|bos|>"],
+        )
+        response = response.split("<|assistant_end|>", 1)[0].split("<|bos|>", 1)[0]
+        response_tokens = tokenizer.encode(response)
+        print(response, end="", flush=True)
+    else:
+        response_tokens = []
+        for token_column, _ in engine.generate(
+            prompt,
+            num_samples=1,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_k=args.top_k,
+        ):
+            token = token_column[0]
+            if token == assistant_end or token == bos:
+                break
+            response_tokens.append(token)
+            print(tokenizer.decode([token]), end="", flush=True)
+        response = tokenizer.decode(response_tokens)
     print()
-    response = tokenizer.decode(response_tokens)
     conversation_tokens = (
         conversation_tokens
         + [user_start]
