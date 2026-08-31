@@ -18,11 +18,11 @@ uv sync
 # shellcheck source=/dev/null
 source .venv/bin/activate
 
-WANDB_RUN="${WANDB_RUN:-pretrain_reference_d32}"
+MLFLOW_RUN="${MLFLOW_RUN:-pretrain_reference_d32}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 REFERENCE_MODEL="${REFERENCE_MODEL:-karpathy/nanochat-d32}"
 
-python -m scripts.check_wandb
+python -m scripts.check_mlflow
 
 if [ ! -f "data/tokenizer_reference_d32/tokenizer.json" ]; then
   echo "==> Converting reference tokenizer"
@@ -42,7 +42,7 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
   --tokenizer-dir data/tokenizer_reference_d32 \
   --target-param-data-ratio 12 \
   --device-batch-size 32 \
-  --run "$WANDB_RUN" \
+  --run "$MLFLOW_RUN" \
   --run-name pretrain_reference_d32 \
   --out-dir data
 

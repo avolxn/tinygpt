@@ -25,12 +25,12 @@ uv sync
 # shellcheck source=/dev/null
 source .venv/bin/activate
 
-WANDB_RUN="${WANDB_RUN:-distill_reference_d32}"
+MLFLOW_RUN="${MLFLOW_RUN:-distill_reference_d32}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
 REFERENCE_MODEL="${REFERENCE_MODEL:-karpathy/nanochat-d32}"
 
-python -m scripts.check_wandb
+python -m scripts.check_mlflow
 
 if [ ! -d "data/pretrain_checkpoints/pretrain_reference_d32" ]; then
   echo "Student checkpoint not found: data/pretrain_checkpoints/pretrain_reference_d32"
@@ -64,7 +64,7 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.distill \
   --distill-temperature 1.5 \
   --tasks smoltalk,mmlu,gsm8k,identity,spelling \
   --identity-conversations data/identity_conversations.jsonl \
-  --run "$WANDB_RUN" \
+  --run "$MLFLOW_RUN" \
   --run-name distill_reference_d32 \
   --out-dir data
 

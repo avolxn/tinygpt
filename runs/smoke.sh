@@ -21,10 +21,10 @@ uv sync
 # shellcheck source=/dev/null
 source .venv/bin/activate
 
-WANDB_RUN="${WANDB_RUN:-smoke}"
+MLFLOW_RUN="${MLFLOW_RUN:-smoke}"
 DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
 
-python -m scripts.check_wandb
+python -m scripts.check_mlflow
 
 CORPUS="data/smoke_corpus.txt"
 cat >"$CORPUS" <<'EOF'
@@ -65,7 +65,7 @@ python -m scripts.pretrain \
   --dataset "" \
   --txt "$CORPUS" \
   --tokenizer-dir data/tokenizer_smoke \
-  --run "$WANDB_RUN" \
+  --run "$MLFLOW_RUN" \
   --run-name smoke \
   --out-dir data
 
@@ -80,7 +80,7 @@ python -m scripts.finetune \
   --eval-tokens 2048 \
   --tasks identity \
   --identity-conversations "$IDENTITY_JSONL" \
-  --run "$WANDB_RUN" \
+  --run "$MLFLOW_RUN" \
   --run-name smoke \
   --out-dir data
 

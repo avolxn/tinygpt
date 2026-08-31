@@ -33,7 +33,7 @@ COMMON_ENV = {
     "SFT_TASKS": "{{ params.sft_tasks }}",
     "CHAT_EVAL_TASKS": "{{ params.chat_eval_tasks }}",
     "MAX_EVAL_PROBLEMS": "{{ params.max_eval_problems }}",
-    "WANDB_RUN_GROUP": "{{ params.experiment }}-{{ ts_nodash }}",
+    "MLFLOW_RUN_GROUP": "{{ params.experiment }}-{{ ts_nodash }}",
 }
 
 
@@ -62,7 +62,7 @@ with DAG(
             "airflow-smoke",
             type="string",
             pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
-            description="Safe artifact and W&B run prefix",
+            description="Safe artifact and MLflow run prefix",
         ),
         "text_field": Param("text", type="string", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$"),
         "dataset": Param(
@@ -97,9 +97,9 @@ with DAG(
     },
     tags=["tinygpt", "training"],
 ) as dag:
-    verify_wandb = bash_task(
-        "verify_wandb",
-        'set -euo pipefail\n"$PYTHON_BIN" -m scripts.check_wandb --non-interactive',
+    verify_mlflow = bash_task(
+        "verify_mlflow",
+        'set -euo pipefail\n"$PYTHON_BIN" -m scripts.check_mlflow',
         retries=1,
     )
 
@@ -254,6 +254,6 @@ fi
         retries=1,
     )
 
-    verify_wandb >> [train_tokenizer, download_identity]
+    verify_mlflow >> [train_tokenizer, download_identity]
     train_tokenizer >> evaluate_tokenizer >> pretrain >> evaluate_base
     [evaluate_base, download_identity] >> finetune >> evaluate_chat

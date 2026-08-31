@@ -9,6 +9,9 @@ services:
         TINYGPT_EXTRA: cpu
     command: standalone
     restart: unless-stopped
+    depends_on:
+      mlflow:
+        condition: service_healthy
     ports:
       - "8081:8080"
     environment:
@@ -17,15 +20,37 @@ services:
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/simple_auth_manager_passwords.json.generated
       PYTHONPATH: /workspace/src:/workspace
-      WANDB_API_KEY: ${WANDB_API_KEY:?Set WANDB_API_KEY before starting Airflow}
-      WANDB_BASE_URL: ${WANDB_BASE_URL:-https://api.wandb.ai}
-      WANDB_ENTITY: ${WANDB_ENTITY:-}
-      WANDB_PROJECT: ${WANDB_PROJECT:-tinygpt}
-      WANDB_MODE: online
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+      MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-tinygpt}
     volumes:
       - airflow-state:/opt/airflow
       - ../..:/workspace
       - ./dags:/opt/airflow/dags:ro
 
+  mlflow:
+    build:
+      context: ../..
+      dockerfile: infra/airflow/Dockerfile
+      args:
+        TINYGPT_EXTRA: cpu
+    command: >-
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    restart: unless-stopped
+    user: "0"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-state:/mlflow
+
 volumes:
   airflow-state:
+  mlflow-state:

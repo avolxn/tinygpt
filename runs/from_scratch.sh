@@ -21,10 +21,10 @@ command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 source .venv/bin/activate
 
-WANDB_RUN="${WANDB_RUN:-from_scratch}"
+MLFLOW_RUN="${MLFLOW_RUN:-from_scratch}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 
-python -m scripts.check_wandb
+python -m scripts.check_mlflow
 
 echo "Training tokenizer"
 python -m scripts.train_tokenizer \
@@ -39,7 +39,7 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
   --tokenizer-dir data/tokenizer_from_scratch \
   --target-param-data-ratio 8 \
   --device-batch-size 16 \
-  --run "$WANDB_RUN" \
+  --run "$MLFLOW_RUN" \
   --run-name from_scratch \
   --out-dir data
 
@@ -58,7 +58,7 @@ echo "Running SFT"
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.finetune \
   --checkpoint data/pretrain_checkpoints/from_scratch \
   --tokenizer-dir data/tokenizer_from_scratch \
-  --run "$WANDB_RUN" \
+  --run "$MLFLOW_RUN" \
   --run-name from_scratch \
   --out-dir data
 

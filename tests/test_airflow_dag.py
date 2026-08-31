@@ -5,7 +5,7 @@ from pathlib import Path
 
 DAG_PATH = Path(__file__).parents[1] / "infra" / "airflow" / "dags" / "tinygpt_pipeline.py"
 EXPECTED_TASKS = {
-    "verify_wandb",
+    "verify_mlflow",
     "train_tokenizer",
     "evaluate_tokenizer",
     "pretrain",
