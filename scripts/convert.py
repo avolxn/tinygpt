@@ -1,32 +1,19 @@
-"""
-Convert legacy checkpoints and tokenizers into Hugging Face format.
-
-Usage:
-    python -m scripts.convert --input <model-or-path> --out-dir data/teacher_hf
-    python -m scripts.convert --input path/to/legacy_dir --out-dir data/model_hf
-    python -m scripts.convert --input path/to/tokenizer.pkl --out-dir data/tokenizer_hf --skip-model
-"""
+"""Convert a legacy tiktoken tokenizer into Hugging Face tokenizer format."""
 
 from __future__ import annotations
 
 import argparse
-import glob
-import json
 import os
 import pickle
-import re
 from collections.abc import Iterable
 from typing import Any
 
 import torch
-from huggingface_hub import hf_hub_download, snapshot_download
-from safetensors.torch import save_file as safe_save_file
+from huggingface_hub import hf_hub_download
 from tiktoken._educational import bpe_encode
 from tokenizers import Regex, Tokenizer, decoders, pre_tokenizers
 from tokenizers.models import BPE
-from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_NAME
 
-from tinygpt.checkpoint import TRAINER_STATE_NAME
 from tinygpt.metrics import compute_token_bytes
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
@@ -38,9 +25,6 @@ DEFAULT_PROBES = [
     "Whitespace:\n  indented line\n\nlast line.",
     "Punctuation: ()[]{}.,!?-_'\"",
 ]
-
-_META_RE = re.compile(r"meta_(\d+)\.json$")
-
 
 def _bytes_to_unicode() -> dict[int, str]:
     """Return the GPT-2 byte-to-unicode map used by ByteLevel tokenization."""
@@ -82,44 +66,6 @@ def _recover_merges(mergeable_ranks: dict[bytes, int]) -> list[tuple[bytes, byte
         known_ranks[token_bytes] = rank
 
     return merges
-
-
-def _patch_legacy_config_keys(model_config_kwargs: dict[str, Any]) -> None:
-    if "window_pattern" not in model_config_kwargs:
-        model_config_kwargs["window_pattern"] = "L"
-
-
-def _patch_legacy_weights(model_data: dict[str, torch.Tensor], n_layer: int) -> None:
-    if "resid_lambdas" not in model_data:
-        model_data["resid_lambdas"] = torch.ones(n_layer)
-    if "x0_lambdas" not in model_data:
-        model_data["x0_lambdas"] = torch.zeros(n_layer)
-
-
-def _find_latest_step(snapshot_dir: str) -> int:
-    meta_paths = glob.glob(os.path.join(snapshot_dir, "meta_*.json"))
-    if not meta_paths:
-        raise FileNotFoundError(f"No meta_*.json files found in {snapshot_dir}")
-    steps = [int(match.group(1)) for path in meta_paths if (match := _META_RE.search(os.path.basename(path)))]
-    if not steps:
-        raise FileNotFoundError(f"No valid meta_*.json files found in {snapshot_dir}")
-    return max(steps)
-
-
-def _resolve_legacy_model_paths(source: str, step: int | None = None) -> tuple[str, str, int]:
-    if os.path.isdir(source):
-        resolved_step = _find_latest_step(source) if step is None else step
-        meta_path = os.path.join(source, f"meta_{resolved_step}.json")
-        model_path = os.path.join(source, f"model_{resolved_step}.pt")
-        if not os.path.exists(meta_path) or not os.path.exists(model_path):
-            raise FileNotFoundError(f"Could not find legacy model files for step {resolved_step} in {source}")
-        return model_path, meta_path, resolved_step
-
-    snapshot_dir = snapshot_download(repo_id=source, allow_patterns=["meta_*.json"])
-    resolved_step = _find_latest_step(snapshot_dir) if step is None else step
-    meta_path = hf_hub_download(repo_id=source, filename=f"meta_{resolved_step}.json")
-    model_path = hf_hub_download(repo_id=source, filename=f"model_{resolved_step}.pt")
-    return model_path, meta_path, resolved_step
 
 
 def _resolve_tokenizer_pickle_path(source: str) -> str:
@@ -196,42 +142,6 @@ def convert_tokenizer_pickle_to_json(
     return out_path
 
 
-def convert_legacy_model_to_hf(
-    source: str,
-    out_dir: str,
-    *,
-    step: int | None = None,
-) -> str:
-    """Convert a legacy `model_*.pt` + `meta_*.json` checkpoint into HF model files."""
-    model_path, meta_path, resolved_step = _resolve_legacy_model_paths(source, step=step)
-    model_data = torch.load(model_path, map_location="cpu", weights_only=True)
-    with open(meta_path, encoding="utf-8") as f:
-        meta_data = json.load(f)
-
-    config_dict = dict(meta_data["model_config"])
-    _patch_legacy_config_keys(config_dict)
-    _patch_legacy_weights(model_data, int(config_dict["n_layer"]))
-
-    state_dict = {key.removeprefix("_orig_mod."): value.contiguous() for key, value in model_data.items()}
-
-    os.makedirs(out_dir, exist_ok=True)
-    config_path = os.path.join(out_dir, CONFIG_NAME)
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config_dict, f, indent=2)
-
-    weights_path = os.path.join(out_dir, SAFE_WEIGHTS_NAME)
-    safe_save_file(state_dict, weights_path, metadata={"format": "pt"})
-
-    trainer_state = {
-        "global_step": int(meta_data.get("step", resolved_step)),
-    }
-    trainer_state_path = os.path.join(out_dir, TRAINER_STATE_NAME)
-    with open(trainer_state_path, "w", encoding="utf-8") as f:
-        json.dump(trainer_state, f, indent=2)
-
-    return weights_path
-
-
 def _save_token_bytes(tokenizer_dir: str) -> str:
     tokenizer = HuggingFaceTokenizer.from_directory(tokenizer_dir)
     token_bytes = compute_token_bytes(tokenizer)
@@ -241,37 +151,27 @@ def _save_token_bytes(tokenizer_dir: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert legacy artifacts into Hugging Face format")
+    parser = argparse.ArgumentParser(description="Convert a legacy tokenizer into Hugging Face format")
     parser.add_argument(
         "--input",
         type=str,
         required=True,
-        help="Legacy source: local directory, Hub repo, or tokenizer.pkl file",
+        help="Local directory, Hub repo, or tokenizer.pkl file",
     )
     parser.add_argument("--out-dir", type=str, required=True, help="Output directory for Hugging Face artifacts")
-    parser.add_argument("--step", type=int, default=None, help="Specific legacy checkpoint step to convert")
-    parser.add_argument("--skip-model", action="store_true", help="Skip model conversion")
-    parser.add_argument("--skip-tokenizer", action="store_true", help="Skip tokenizer conversion")
     parser.add_argument("--skip-verify", action="store_true", help="Skip encode-equivalence checks on probe strings")
     args = parser.parse_args()
 
-    source_is_tokenizer_file = os.path.isfile(args.input) and args.input.endswith(".pkl")
+    tokenizer_pkl = _resolve_tokenizer_pickle_path(args.input)
+    out_path = convert_tokenizer_pickle_to_json(
+        tokenizer_pkl,
+        args.out_dir,
+        probe_texts=None if args.skip_verify else DEFAULT_PROBES,
+    )
+    print(f"Saved converted tokenizer to {out_path}")
 
-    if not args.skip_model and not source_is_tokenizer_file:
-        weights_path = convert_legacy_model_to_hf(args.input, args.out_dir, step=args.step)
-        print(f"Saved converted model weights to {weights_path}")
-
-    if not args.skip_tokenizer:
-        tokenizer_pkl = _resolve_tokenizer_pickle_path(args.input)
-        out_path = convert_tokenizer_pickle_to_json(
-            tokenizer_pkl,
-            args.out_dir,
-            probe_texts=None if args.skip_verify else DEFAULT_PROBES,
-        )
-        print(f"Saved converted tokenizer to {out_path}")
-
-        token_bytes_path = _save_token_bytes(args.out_dir)
-        print(f"Saved token_bytes to {token_bytes_path}")
+    token_bytes_path = _save_token_bytes(args.out_dir)
+    print(f"Saved token_bytes to {token_bytes_path}")
 
 
 if __name__ == "__main__":
