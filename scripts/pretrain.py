@@ -51,7 +51,7 @@ from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import GPT, Block
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_wandb_auth
-from tinygpt.train import RunMetadataCallback, SamplerCallback, TinyGPTTrainer, build_training_arguments
+from tinygpt.train import RunMetadataCallback, TinyGPTTrainer, build_training_arguments
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
@@ -100,7 +100,6 @@ parser.add_argument(
 # Evaluation / sampling
 parser.add_argument("--eval-every", type=int, default=250)
 parser.add_argument("--eval-tokens", type=int, default=80 * 524288)
-parser.add_argument("--sample-every", type=int, default=2000)
 parser.add_argument("--save-every", type=int, default=-1)
 
 
@@ -309,11 +308,6 @@ checkpoint_metadata = build_checkpoint_metadata(
 )
 callbacks = [
     RunMetadataCallback(checkpoint_metadata),
-    SamplerCallback(
-        tokenizer=tokenizer,
-        sample_every=args.sample_every,
-        master_process=master_process,
-    ),
 ]
 
 trainer = TinyGPTTrainer(

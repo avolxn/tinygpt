@@ -1,54 +1,50 @@
-import io
-import json
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from tinygpt.inference import VLLMClient, VLLMError
+from tinygpt.inference import VLLMNative
 
 
-class _Response:
-    def __init__(self, payload: dict[str, object]) -> None:
-        self.payload = payload
+def test_vllm_native_uses_offline_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
 
-    def __enter__(self) -> io.BytesIO:
-        return io.BytesIO(json.dumps(self.payload).encode())
+    class SamplingParams:
+        def __init__(self, **kwargs: object) -> None:
+            calls["sampling_params"] = kwargs
 
-    def __exit__(self, *args: object) -> None:
-        pass
+    class LLM:
+        def __init__(self, **kwargs: object) -> None:
+            calls["llm"] = kwargs
 
+        def generate(self, prompts: list[str], params: object, use_tqdm: bool) -> list[object]:
+            calls["generate"] = (prompts, params, use_tqdm)
+            return [SimpleNamespace(outputs=[SimpleNamespace(text=" answer")])]
 
-def test_vllm_client_posts_completion_request(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
+    monkeypatch.setitem(sys.modules, "vllm", ModuleType("vllm"))
+    vllm_module = sys.modules["vllm"]
+    vllm_module.LLM = LLM  # type: ignore[attr-defined]
+    vllm_module.SamplingParams = SamplingParams  # type: ignore[attr-defined]
 
-    def urlopen(request: object, timeout: float) -> _Response:
-        captured["request"] = request
-        captured["timeout"] = timeout
-        return _Response({"choices": [{"text": " answer"}]})
+    backend = VLLMNative("model", tensor_parallel_size=2, trust_remote_code=True)
+    result = backend.generate("prompt", max_tokens=8, temperature=0.2, top_k=4, stop=["<|end|>"])
 
-    monkeypatch.setattr("urllib.request.urlopen", urlopen)
-    client = VLLMClient("http://localhost:8000/v1/", "tinygpt", api_key="secret", timeout=12.0)
-
-    result = client.generate("prompt", max_tokens=8, temperature=0.2, top_k=4, stop=["<|end|>"])
-
-    request = captured["request"]
     assert result == " answer"
-    assert captured["timeout"] == 12.0
-    assert request.full_url == "http://localhost:8000/v1/completions"
-    assert request.get_header("Authorization") == "Bearer secret"
-    assert json.loads(request.data) == {
-        "model": "tinygpt",
-        "prompt": "prompt",
+    assert calls["llm"] == {"model": "model", "tensor_parallel_size": 2, "trust_remote_code": True}
+    assert calls["sampling_params"] == {
         "max_tokens": 8,
         "temperature": 0.2,
         "top_k": 4,
         "stop": ["<|end|>"],
     }
+    generate_call = calls["generate"]
+    assert isinstance(generate_call, tuple)
+    assert generate_call[0] == ["prompt"]
+    assert generate_call[2] is False
 
 
-def test_vllm_client_rejects_invalid_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: _Response({"choices": []}))
+def test_vllm_native_requires_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "vllm", None)
 
-    with pytest.raises(VLLMError, match="Invalid vLLM response"):
-        VLLMClient("http://localhost:8000/v1", "tinygpt").generate(
-            "prompt", max_tokens=8, temperature=0.0
-        )
+    with pytest.raises(RuntimeError, match="Install vLLM"):
+        VLLMNative("model")

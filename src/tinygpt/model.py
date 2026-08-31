@@ -19,7 +19,6 @@ Architecture summary:
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
 from typing import cast
 
 import torch
@@ -519,45 +518,3 @@ class GPT(nn.Module):
                 loss = loss.view(targets.shape)
             return loss
         return logits
-
-    @torch.inference_mode()
-    def generate(
-        self,
-        tokens: list[int],
-        max_tokens: int,
-        temperature: float = 1.0,
-        top_k: int | None = None,
-        seed: int = 42,
-    ) -> Iterator[int]:
-        """Naive autoregressive generation without a KV cache.
-
-        Args:
-            tokens: Prompt token ids.
-            max_tokens: Maximum number of new tokens to generate.
-            temperature: Sampling temperature; 0.0 selects the argmax greedily.
-            top_k: If set, restrict sampling to the top-k most probable tokens.
-            seed: RNG seed used when temperature > 0.
-
-        Yields:
-            Integer token ids, one per generation step.
-        """
-        device = self.get_device()
-        rng = None
-        if temperature > 0:
-            rng = torch.Generator(device=device)
-            rng.manual_seed(seed)
-        ids = torch.tensor([tokens], dtype=torch.long, device=device)
-        for _ in range(max_tokens):
-            logits = self.forward(ids)
-            logits = logits[:, -1, :]
-            if top_k is not None and top_k > 0:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float("Inf")
-            if temperature > 0:
-                logits = logits / temperature
-                probs = F.softmax(logits, dim=-1)
-                next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
-            else:
-                next_ids = torch.argmax(logits, dim=-1, keepdim=True)
-            ids = torch.cat((ids, next_ids), dim=1)
-            yield int(next_ids.item())

@@ -62,7 +62,6 @@ python -m scripts.pretrain \
   --num-iterations 20 \
   --eval-every 10 \
   --eval-tokens 2048 \
-  --sample-every -1 \
   --dataset "" \
   --txt "$CORPUS" \
   --tokenizer-dir data/tokenizer_smoke \

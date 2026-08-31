@@ -148,7 +148,6 @@ ARGS=(
   --total-batch-size "$TOTAL_BATCH_SIZE"
   --num-iterations "$PRETRAIN_ITERATIONS"
   --eval-every -1
-  --sample-every -1
   --out-dir "$ARTIFACT_DIR"
   --run-name "$RUN_NAME"
   --run "$RUN_NAME-pretrain"

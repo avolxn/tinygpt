@@ -81,15 +81,6 @@ def test_num_scaling_params(tiny_model: GPT) -> None:
     assert counts["total"] == total
 
 
-def test_naive_generate(tiny_model: GPT, tiny_config: GPTConfig) -> None:
-    """model.generate() yields tokens."""
-    tokens = [0, 1, 2, 3]
-    generated = list(tiny_model.generate(tokens, max_tokens=5, temperature=0))
-    assert len(generated) == 5
-    for tok in generated:
-        assert 0 <= tok < tiny_config.vocab_size
-
-
 def test_window_sizes_last_layer_full(tiny_config: GPTConfig) -> None:
     """The last layer always gets full context regardless of window_pattern."""
     for pattern in ("L", "SL", "SSSL"):

@@ -1,53 +1,34 @@
 """
-Interactive CLI chat with a fine-tuned tinygpt model.
+Interactive CLI chat with a vLLM model.
 
 Usage:
-    python -m scripts.chat --checkpoint data/sft_checkpoints/from_scratch
-    python -m scripts.chat --checkpoint data/sft_checkpoints/from_scratch --prompt "What is 2+2?"
+    python -m scripts.chat --vllm-model meta-llama/Llama-3.1-8B-Instruct
 """
 
 import argparse
-import os
 
-from tinygpt.checkpoint import build_model_from_checkpoint
-from tinygpt.distributed import compute_init
-from tinygpt.inference import VLLMClient
+from tinygpt.inference import VLLMNative
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.utils import autodetect_device_type
 
 parser = argparse.ArgumentParser(description="Chat with tinygpt")
-parser.add_argument(
-    "--checkpoint",
-    type=str,
-    default="",
-    help="Path to a model directory or Trainer output directory",
-)
-parser.add_argument("--backend", choices=["native", "vllm"], default="native")
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 parser.add_argument("--prompt", type=str, default="", help="Single-turn prompt (interactive mode if empty)")
 parser.add_argument("--temperature", type=float, default=0.6)
 parser.add_argument("--top-k", type=int, default=50)
 parser.add_argument("--max-tokens", type=int, default=512)
-parser.add_argument("--device-type", type=str, default="", choices=["cuda", "cpu", "mps", ""])
-parser.add_argument("--vllm-url", type=str, default="http://localhost:8000/v1")
-parser.add_argument("--vllm-model", type=str, default="", help="Served model name for the vLLM backend")
-parser.add_argument("--vllm-api-key", type=str, default=os.getenv("VLLM_API_KEY"))
+parser.add_argument("--vllm-model", type=str, required=True, help="Model path or Hugging Face ID")
+parser.add_argument("--vllm-tensor-parallel-size", type=int, default=1)
+parser.add_argument("--trust-remote-code", action="store_true")
 
 
 args = parser.parse_args()
 
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
-if args.backend == "native":
-    if not args.checkpoint:
-        parser.error("--checkpoint is required with --backend native")
-    device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-    init_info = compute_init(device_type)
-    device = init_info[4]
-    model, _metadata = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
-else:
-    if not args.vllm_model:
-        parser.error("--vllm-model is required with --backend vllm")
-    vllm = VLLMClient(args.vllm_url, args.vllm_model, args.vllm_api_key)
+vllm = VLLMNative(
+    args.vllm_model,
+    tensor_parallel_size=args.vllm_tensor_parallel_size,
+    trust_remote_code=args.trust_remote_code,
+)
 
 def required_special(name: str) -> int:
     token_id = tokenizer.encode_special(name)
@@ -74,30 +55,16 @@ def run_turn(user_input: str) -> str:
     global conversation_tokens
     user_ids = tokenizer.encode(user_input)
     prompt = conversation_tokens + [user_start] + user_ids + [user_end] + [assistant_start]
-    if args.backend == "vllm":
-        response = vllm.generate(
-            tokenizer.decode(prompt),
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            stop=["<|assistant_end|>", "<|bos|>"],
-        )
-        response = response.split("<|assistant_end|>", 1)[0].split("<|bos|>", 1)[0]
-        response_tokens = tokenizer.encode(response)
-        print(response, end="", flush=True)
-    else:
-        response_tokens = []
-        for token in model.generate(
-            prompt,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            top_k=args.top_k,
-        ):
-            if token == assistant_end or token == bos:
-                break
-            response_tokens.append(token)
-            print(tokenizer.decode([token]), end="", flush=True)
-        response = tokenizer.decode(response_tokens)
+    response = vllm.generate(
+        tokenizer.decode(prompt),
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+        top_k=args.top_k,
+        stop=["<|assistant_end|>", "<|bos|>"],
+    )
+    response = response.split("<|assistant_end|>", 1)[0].split("<|bos|>", 1)[0]
+    response_tokens = tokenizer.encode(response)
+    print(response, end="", flush=True)
     print()
     conversation_tokens = (
         conversation_tokens

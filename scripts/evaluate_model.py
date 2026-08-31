@@ -7,9 +7,9 @@ Supported modes (comma-separated via --eval):
   chat    : task accuracy on chat benchmarks (categorical + generative)
 
 Usage:
-    python -m scripts.evaluate_model --checkpoint data/pretrain_checkpoints/from_scratch
-    python -m scripts.evaluate_model --checkpoint data/pretrain_checkpoints/from_scratch --eval chat --tasks MMLU
-    torchrun --nproc_per_node=4 -m scripts.evaluate_model --checkpoint data/pretrain_checkpoints/from_scratch --eval chat
+    python -m scripts.evaluate_model --eval sample --vllm-model meta-llama/Llama-3.1-8B-Instruct
+    python -m scripts.evaluate_model --eval bpb --checkpoint data/pretrain_checkpoints/from_scratch
+    python -m scripts.evaluate_model --eval chat --vllm-model meta-llama/Llama-3.1-8B-Instruct --tasks MMLU
 """
 
 import argparse
@@ -26,6 +26,7 @@ from tasks.mmlu import MMLU
 from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loader_bestfit
 from tinygpt.distributed import compute_cleanup, compute_init, get_dist_info, print0
+from tinygpt.inference import VLLMNative
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.utils import autodetect_device_type
@@ -34,7 +35,7 @@ parser = argparse.ArgumentParser(description="Evaluate tinygpt model")
 parser.add_argument(
     "--checkpoint",
     type=str,
-    required=True,
+    default="",
     help="Path to a model directory or Trainer output directory",
 )
 parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
@@ -50,34 +51,58 @@ parser.add_argument("--temperature", type=float, default=0.0)
 parser.add_argument("--top-k", type=int, default=50)
 parser.add_argument("--max-problems", type=int, default=None, help="Cap number of problems per task")
 parser.add_argument("--device-type", type=str, default="")
+parser.add_argument("--vllm-model", type=str, default="", help="Model path or Hugging Face ID for sample/chat eval")
+parser.add_argument("--vllm-tensor-parallel-size", type=int, default=1)
+parser.add_argument("--trust-remote-code", action="store_true")
 
 
 args = parser.parse_args()
 
 eval_modes = {m.strip() for m in args.eval.split(",")}
+needs_local_model = "bpb" in eval_modes
+needs_vllm = bool(eval_modes & {"sample", "chat"})
+if needs_vllm and not args.vllm_model:
+    parser.error("--vllm-model is required for sample/chat evaluation")
+if needs_local_model and not args.checkpoint:
+    parser.error("--checkpoint is required for bpb evaluation")
 
-device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-init_info = compute_init(device_type)
-rank = init_info[1]
-world_size = init_info[3]
-device = init_info[4]
-dist_info = get_dist_info()
-is_dist = dist_info[0]
-ddp_rank = dist_info[1]
-ddp_world_size = dist_info[3]
-
-model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
-token_bytes = compute_token_bytes(tokenizer, device=device)
-sequence_len = meta["model_config"]["sequence_len"]
+vllm = (
+    VLLMNative(
+        args.vllm_model,
+        tensor_parallel_size=args.vllm_tensor_parallel_size,
+        trust_remote_code=args.trust_remote_code,
+    )
+    if needs_vllm
+    else None
+)
 
-print0(f"Loaded model from {args.checkpoint} (step {meta.get('step', '?')})")
+if needs_local_model:
+    device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+    init_info = compute_init(device_type)
+    rank = init_info[1]
+    world_size = init_info[3]
+    device = init_info[4]
+    dist_info = get_dist_info()
+    is_dist = dist_info[0]
+    ddp_rank = dist_info[1]
+    ddp_world_size = dist_info[3]
+    model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
+    token_bytes = compute_token_bytes(tokenizer, device=device)
+    sequence_len = meta["model_config"]["sequence_len"]
+else:
+    rank, world_size, device = 0, 1, torch.device("cpu")
+    is_dist, ddp_rank, ddp_world_size = False, 0, 1
+
+if needs_local_model:
+    print0(f"Loaded model from {args.checkpoint} (step {meta.get('step', '?')})")
 print0(f"Eval modes: {', '.join(sorted(eval_modes))}")
 
 # -----------------------------------------------------------------------------
 # Sampling
 
 if "sample" in eval_modes and rank == 0:
+    assert vllm is not None
     print0("\n" + "=" * 70)
     print0("Samples")
     print0("=" * 70)
@@ -88,9 +113,14 @@ if "sample" in eval_modes and rank == 0:
         "The opposite of hot is",
     ]:
         tokens = tokenizer.encode(prompt, prepend="<|bos|>")
-        sample = tokens.copy()
-        sample.extend(model.generate(tokens, max_tokens=20, temperature=0))
-        print0(tokenizer.decode(sample))
+        sample = vllm.generate(
+            tokenizer.decode(tokens),
+            max_tokens=20,
+            temperature=0,
+            top_k=args.top_k,
+            stop=["<|assistant_end|>", "<|bos|>"],
+        )
+        print0(sample)
 
 # -----------------------------------------------------------------------------
 # BPB
@@ -141,29 +171,18 @@ def run_generative_eval(
     """
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
     num_passed, total = 0, 0
+    assert vllm is not None
 
     for i in range(ddp_rank, num_problems, ddp_world_size):
         conversation = task_object[i]
         encoded_prompt = tokenizer.render_for_completion(conversation)
-        stop_ids = {tokenizer.get_bos_token_id()}
-        assistant_end = tokenizer.encode_special("<|assistant_end|>")
-        if assistant_end is not None:
-            stop_ids.add(assistant_end)
-        results = []
-        for _sample_idx in range(num_samples):
-            generated = encoded_prompt.copy()
-            for token in model.generate(
-                encoded_prompt,
-                max_tokens=max_new_tokens,
-                temperature=temperature,
-                top_k=top_k,
-            ):
-                if token in stop_ids:
-                    break
-                generated.append(token)
-            results.append(generated)
-        prefix_len = len(encoded_prompt)
-        completions = [tokenizer.decode(r[prefix_len:]) for r in results]
+        completions = vllm.generate_batch(
+            [tokenizer.decode(encoded_prompt)] * num_samples,
+            max_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            stop=["<|assistant_end|>", "<|bos|>"],
+        )
         passed = any(task_object.evaluate(conversation, c) for c in completions)
         total += 1
         num_passed += int(passed)
@@ -195,35 +214,25 @@ def run_categorical_eval(task_object: Any, batch_size: int, max_problems: int | 
     Returns:
         Accuracy (fraction of problems answered correctly).
     """
-    bos = tokenizer.get_bos_token_id()
+    assert vllm is not None
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
     num_batches = -(-num_problems // batch_size)  # ceil_div
-    letter_cache: dict[str, int] = {}
     num_passed, total = 0, 0
 
     for i in range(ddp_rank, num_batches, ddp_world_size):
         i0, i1 = i * batch_size, min((i + 1) * batch_size, num_problems)
         conversations = [task_object[ii] for ii in range(i0, i1)]
         prompt_ids = [tokenizer.render_for_completion(conv) for conv in conversations]
-        max_len = max(len(ids) for ids in prompt_ids)
-        answer_positions = [len(ids) - 1 for ids in prompt_ids]
-        padded = [ids + [bos] * (max_len - len(ids)) for ids in prompt_ids]
-        input_t = torch.tensor(padded, dtype=torch.long, device=device)
+        completions = vllm.generate_batch(
+            [tokenizer.decode(ids) for ids in prompt_ids],
+            max_tokens=1,
+            temperature=0.0,
+        )
 
-        with torch.no_grad():
-            logits = model(input_t)  # (B, T, V)
-
-        for idx, conversation in enumerate(conversations):
+        for conversation, completion in zip(conversations, completions, strict=True):
             letters: list[str] = conversation["letters"]
-            letter_ids: list[int] = []
-            for letter in letters:
-                if letter not in letter_cache:
-                    encoded = tokenizer.encode(letter)
-                    assert len(encoded) == 1, f"Letter {letter!r} must be a single token"
-                    letter_cache[letter] = encoded[0]
-                letter_ids.append(letter_cache[letter])
-            focus = logits[idx, answer_positions[idx], letter_ids]
-            predicted = letters[int(focus.argmax(dim=-1).item())]
+            normalized = completion.strip()
+            predicted = next((letter for letter in letters if normalized.startswith(letter)), normalized[:1])
             num_passed += int(task_object.evaluate(conversation, predicted))
             total += 1
 
