@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Distillation run:
-# 1. convert the reference teacher locally
+# 1. verify a Transformers-compatible teacher
 # 2. load the student trained with the same tokenizer
 # 3. run online KL + CE distillation on chat tasks
 # 4. run a chat eval pass
@@ -28,7 +28,7 @@ source .venv/bin/activate
 MLFLOW_RUN="${MLFLOW_RUN:-distill_reference_d32}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
-REFERENCE_MODEL="${REFERENCE_MODEL:-karpathy/nanochat-d32}"
+TEACHER_MODEL="${TEACHER_MODEL:?Set TEACHER_MODEL to a Transformers-compatible teacher checkpoint}"
 
 python -m scripts.check_mlflow
 
@@ -36,15 +36,6 @@ if [ ! -d "data/pretrain_checkpoints/pretrain_reference_d32" ]; then
   echo "Student checkpoint not found: data/pretrain_checkpoints/pretrain_reference_d32"
   echo "Run bash runs/pretrain_reference_d32.sh first."
   exit 1
-fi
-
-if [ ! -f "data/teacher_reference_d32/config.json" ] || [ ! -f "data/teacher_reference_d32/model.safetensors" ]; then
-  echo "==> Converting reference teacher"
-  python -m scripts.convert \
-    --input "$REFERENCE_MODEL" \
-    --out-dir data/teacher_reference_d32
-else
-  echo "==> Reusing converted teacher at data/teacher_reference_d32"
 fi
 
 if [ ! -f "data/identity_conversations.jsonl" ]; then
@@ -56,8 +47,8 @@ echo "==> Distilling data/pretrain_checkpoints/pretrain_reference_d32 from data/
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.distill \
   --checkpoint data/pretrain_checkpoints/pretrain_reference_d32 \
   --tokenizer-dir data/tokenizer_reference_d32 \
-  --teacher-model data/teacher_reference_d32 \
-  --teacher-tokenizer data/teacher_reference_d32 \
+  --teacher-model "$TEACHER_MODEL" \
+  --teacher-tokenizer data/tokenizer_reference_d32 \
   --teacher-device "$TEACHER_DEVICE" \
   --eval-every 500 \
   --distill-alpha 0.75 \
