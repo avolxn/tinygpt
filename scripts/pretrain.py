@@ -20,11 +20,9 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import argparse
 import json
-from dataclasses import asdict
 
 import torch
 
-from tinygpt.attention import flash_attn_available, flash_attn_backend, use_flash_attn
 from tinygpt.checkpoint import (
     build_checkpoint_metadata,
     build_model_from_checkpoint,
@@ -48,7 +46,7 @@ from tinygpt.distributed import (
     wrap_fsdp,
 )
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
-from tinygpt.model import GPT, Block
+from tinygpt.model import GPT, LlamaDecoderLayer
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_wandb_auth
 from tinygpt.train import RunMetadataCallback, TinyGPTTrainer, build_training_arguments
@@ -123,16 +121,6 @@ else:
 
 print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
 
-if use_flash_attn:
-    print0(f"Using {flash_attn_backend}.")
-else:
-    print0("!" * 70)
-    if flash_attn_available and compute_dtype != torch.bfloat16:
-        print0(f"WARNING: flash-attn available but requires bf16, compute_dtype={compute_dtype}. Using SDPA.")
-    else:
-        print0("WARNING: flash-attn not available (install flash-attn-4 / kernels / flash-attn). Using SDPA fallback.")
-    print0("!" * 70)
-
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
 vocab_size = tokenizer.get_vocab_size()
 token_bytes = compute_token_bytes(tokenizer, device=device)
@@ -146,7 +134,7 @@ config = make_config(
     sequence_len=args.max_seq_len,
     window_pattern=args.window_pattern,
 )
-model_config_kwargs = asdict(config)
+model_config_kwargs = config.to_dict()
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 
 with torch.device("meta"):
@@ -182,7 +170,7 @@ if device_type == "cuda" and is_dist:
         sharding_strategy=args.sharding_strategy,
         compute_dtype_override=compute_dtype,
         local_rank=local_rank,
-        transformer_layer_cls=Block,
+        transformer_layer_cls=LlamaDecoderLayer,
     )
     print0(f"FSDP enabled with sharding strategy: {args.sharding_strategy}")
 

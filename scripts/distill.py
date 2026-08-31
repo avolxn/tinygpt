@@ -20,7 +20,6 @@ import torch
 from tasks.base import TaskMixture
 from tasks.sft import build_sft_task_lists
 
-from tinygpt.attention import flash_attn_available
 from tinygpt.checkpoint import (
     build_checkpoint_metadata,
     build_model_from_checkpoint,
@@ -37,7 +36,7 @@ from tinygpt.distributed import (
     print0,
     wrap_fsdp,
 )
-from tinygpt.model import Block
+from tinygpt.model import LlamaDecoderLayer
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_wandb_auth
 from tinygpt.train import RunMetadataCallback, TinyGPTTrainer, build_training_arguments, resolve_training_value
@@ -127,8 +126,6 @@ is_dist, rank, local_rank, world_size, device = compute_init(device_type, seed=r
 master_process = rank == 0
 
 print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
-if not flash_attn_available:
-    print0("WARNING: FA2 not available, using SDPA fallback.")
 
 if not 0.0 <= args.distill_alpha <= 1.0:
     raise ValueError(f"--distill-alpha must be in [0, 1], got {args.distill_alpha}")
@@ -209,7 +206,7 @@ model = wrap_fsdp(
     sharding_strategy=args.sharding_strategy,
     compute_dtype_override=compute_dtype,
     local_rank=local_rank,
-    transformer_layer_cls=Block,
+    transformer_layer_cls=LlamaDecoderLayer,
 )
 
 task_names = {t.strip() for t in args.tasks.split(",") if t.strip()}

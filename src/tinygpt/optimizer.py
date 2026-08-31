@@ -31,10 +31,10 @@ def make_param_groups(
     Split model parameters into MuonAdamW-friendly groups.
 
     Groups:
-      - matrix_params   : 2-D transformer block weights → Muon (weight decay)
-      - lm_head_params  : lm_head weight                → AdamW (weight decay)
-      - embedding_params: wte + value_embeds            → AdamW (no decay)
-      - scalar_params   : 1-D params (biases, lambdas)  → AdamW (no decay)
+      - matrix_params   : 2-D transformer weights → Muon (weight decay)
+      - lm_head_params  : lm_head weight          → AdamW (weight decay)
+      - embedding_params: token embeddings       → AdamW (no decay)
+      - scalar_params   : 1-D params (norms)      → AdamW (no decay)
 
     Works with both unwrapped and FSDP-wrapped models because filtering is
     done by parameter name rather than module reference.
@@ -45,10 +45,6 @@ def make_param_groups(
     matrix_params: list[nn.Parameter] = []
     lm_head_params: list[nn.Parameter] = []
     embedding_params: list[nn.Parameter] = []
-    value_embeds_params: list[nn.Parameter] = []
-    resid_params: list[nn.Parameter] = []
-    x0_params: list[nn.Parameter] = []
-    smear_params: list[nn.Parameter] = []
     misc_scalar_params: list[nn.Parameter] = []
 
     seen: set[int] = set()
@@ -57,24 +53,16 @@ def make_param_groups(
             continue
         seen.add(id(param))
 
-        if "wte" in name:
+        if "embed_tokens" in name:
             embedding_params.append(param)
-        elif "value_embeds" in name:
-            value_embeds_params.append(param)
         elif "lm_head" in name:
             lm_head_params.append(param)
-        elif "resid_lambdas" in name:
-            resid_params.append(param)
-        elif "x0_lambdas" in name:
-            x0_params.append(param)
-        elif "smear_gate" in name or "smear_lambda" in name or "backout_lambda" in name:
-            smear_params.append(param)
         elif param.dim() < 2:
             misc_scalar_params.append(param)
         else:
             matrix_params.append(param)
 
-    model_dim = getattr(getattr(model, "config", None), "n_embd", 768)
+    model_dim = getattr(getattr(model, "config", None), "hidden_size", 768)
     dmodel_lr_scale = (model_dim / 768) ** -0.5
 
     groups: list[dict[str, Any]] = []
@@ -97,50 +85,6 @@ def make_param_groups(
                 "lr": embedding_lr * dmodel_lr_scale,
                 "weight_decay": 0.001,
                 "betas": (0.8, 0.995),
-                "eps": 1e-10,
-            }
-        )
-    if value_embeds_params:
-        groups.append(
-            {
-                "kind": "adamw",
-                "params": value_embeds_params,
-                "lr": embedding_lr * dmodel_lr_scale * 0.5,
-                "weight_decay": 0.01,
-                "betas": (0.8, 0.995),
-                "eps": 1e-10,
-            }
-        )
-    if resid_params:
-        groups.append(
-            {
-                "kind": "adamw",
-                "params": resid_params,
-                "lr": scalar_lr * 0.01,
-                "weight_decay": 0.05,
-                "betas": (0.8, 0.95),
-                "eps": 1e-10,
-            }
-        )
-    if x0_params:
-        groups.append(
-            {
-                "kind": "adamw",
-                "params": x0_params,
-                "lr": scalar_lr,
-                "weight_decay": 0.0,
-                "betas": (0.96, 0.95),
-                "eps": 1e-10,
-            }
-        )
-    if smear_params:
-        groups.append(
-            {
-                "kind": "adamw",
-                "params": smear_params,
-                "lr": 0.2,
-                "weight_decay": 0.0,
-                "betas": (0.8, 0.95),
                 "eps": 1e-10,
             }
         )

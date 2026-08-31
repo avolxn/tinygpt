@@ -18,7 +18,6 @@ import platform
 import shutil
 import subprocess
 import sys
-from dataclasses import asdict
 from typing import Any, cast
 
 import torch
@@ -139,7 +138,9 @@ def save_model_checkpoint(
     """Save model weights and config in a Hugging Face style directory."""
     os.makedirs(output_dir, exist_ok=True)
     inner: Any = model.module if hasattr(model, "module") else model
-    config_dict: dict[str, Any] = asdict(inner.config) if hasattr(inner, "config") else {}
+    config_dict: dict[str, Any] = inner.config.to_dict() if hasattr(inner, "config") else {}
+    config_dict["architectures"] = ["LlamaForCausalLM"]
+    config_dict["model_type"] = "llama"
 
     config_path = os.path.join(output_dir, CONFIG_NAME)
     with open(config_path, "w", encoding="utf-8") as f:
@@ -171,7 +172,7 @@ def build_model_from_checkpoint(
     """Instantiate a GPT model from a model directory or Trainer output directory."""
     model_dir = resolve_model_directory(model_ref)
     config_dict = _load_json(os.path.join(model_dir, CONFIG_NAME))
-    config = GPTConfig(**config_dict)
+    config = GPTConfig.from_dict(config_dict)
 
     with torch.device("meta"):
         model = GPT(config)
@@ -180,7 +181,7 @@ def build_model_from_checkpoint(
     model.load_state_dict(_load_state_dict(_weights_path(model_dir), device), strict=True, assign=True)
 
     if phase == "eval":
-        model.eval()
+        model.eval()  # type: ignore[no-untyped-call]
     else:
         model.train()
 
