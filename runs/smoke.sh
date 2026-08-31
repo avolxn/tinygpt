@@ -55,7 +55,6 @@ python -m scripts.pretrain \
   --depth 4 \
   --aspect-ratio 32 \
   --head-dim 32 \
-  --window-pattern L \
   --max-seq-len 128 \
   --device-batch-size 2 \
   --total-batch-size 512 \
@@ -85,9 +84,12 @@ python -m scripts.finetune \
   --out-dir data
 
 echo "==> One chat prompt"
+if [[ "$DEVICE_TYPE" != "cuda" ]]; then
+  echo "Skipping vLLM chat smoke test on non-CUDA workers"
+  exit 0
+fi
 python -m scripts.chat \
-  --device-type "$DEVICE_TYPE" \
-  --checkpoint data/sft_checkpoints/smoke \
+  --vllm-model data/sft_checkpoints/smoke \
   --tokenizer-dir data/tokenizer_smoke \
   --prompt "Say hello in one short sentence." \
   --temperature 0.0 \

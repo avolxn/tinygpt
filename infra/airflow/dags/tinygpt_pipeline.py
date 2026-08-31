@@ -167,9 +167,12 @@ fi
         "evaluate_base",
         """set -euo pipefail
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
-EVAL_MODES="bpb,sample"
+EVAL_MODES="bpb"
 if [[ -n "$TXT_INPUT" ]]; then
   EVAL_MODES="sample"
+  [[ "$DEVICE_TYPE" == "cuda" ]] || EVAL_MODES=""
+elif [[ "$DEVICE_TYPE" == "cuda" ]]; then
+  EVAL_MODES="bpb,sample"
 fi
 ARGS=(
   -m scripts.evaluate_model
@@ -182,6 +185,9 @@ ARGS=(
   --split-tokens "$EVAL_TOKENS"
   --eval "$EVAL_MODES"
 )
+if [[ "$DEVICE_TYPE" == "cuda" && -n "$EVAL_MODES" ]]; then
+  ARGS+=(--vllm-model "$ARTIFACT_DIR/pretrain_checkpoints/$RUN_NAME")
+fi
 if [[ "$NPROC_PER_NODE" -eq 1 ]]; then
   "$PYTHON_BIN" "${ARGS[@]}"
 else
@@ -234,6 +240,10 @@ fi
     evaluate_chat = bash_task(
         "evaluate_chat",
         """set -euo pipefail
+if [[ "$DEVICE_TYPE" != "cuda" ]]; then
+  echo "Skipping vLLM chat evaluation on non-CUDA workers"
+  exit 0
+fi
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 ARGS=(
   -m scripts.evaluate_model
@@ -242,6 +252,7 @@ ARGS=(
   --device-type "$DEVICE_TYPE"
   --device-batch-size "$DEVICE_BATCH_SIZE"
   --eval chat
+  --vllm-model "$ARTIFACT_DIR/sft_checkpoints/$RUN_NAME"
   --tasks "$CHAT_EVAL_TASKS"
   --max-problems "$MAX_EVAL_PROBLEMS"
 )

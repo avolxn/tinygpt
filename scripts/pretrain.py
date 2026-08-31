@@ -112,7 +112,9 @@ def scaling_param_counts(model: LlamaForCausalLM) -> dict[str, int]:
         "value_embeds": 0,
         "lm_head": model.lm_head.weight.numel(),
         "transformer_matrices": sum(
-            parameter.numel() for name, parameter in model.named_parameters() if name.startswith("model.layers.")
+            parameter.numel()
+            for name, parameter in model.named_parameters()
+            if name.startswith("model.layers.") and parameter.dim() >= 2
         ),
         "scalars": sum(parameter.numel() for parameter in model.parameters() if parameter.dim() < 2),
     }
@@ -154,7 +156,7 @@ print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 with torch.device("meta"):
     model = LlamaForCausalLM(config)
 model.to_empty(device=device)
-model.init_weights()
+model.apply(model._init_weights)  # type: ignore[attr-defined]
 
 start_step = 0
 resume_checkpoint = None

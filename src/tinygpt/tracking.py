@@ -13,7 +13,7 @@ class MlflowTrackingError(RuntimeError):
 
 def require_mlflow_tracking() -> str:
     """Configure and verify the MLflow tracking backend before training."""
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "file:./mlruns")
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
     experiment_name = os.environ.get("MLFLOW_EXPERIMENT_NAME", "tinygpt")
     try:
         mlflow.set_tracking_uri(tracking_uri)

@@ -31,8 +31,8 @@ def test_require_mlflow_tracking_defaults_to_local_store(monkeypatch: pytest.Mon
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
     monkeypatch.delenv("MLFLOW_EXPERIMENT_NAME", raising=False)
 
-    assert tracking.require_mlflow_tracking() == "file:./mlruns"
-    assert calls == ["file:./mlruns"]
+    assert tracking.require_mlflow_tracking() == "sqlite:///mlflow.db"
+    assert calls == ["sqlite:///mlflow.db"]
 
 
 def test_require_mlflow_tracking_wraps_backend_errors(monkeypatch: pytest.MonkeyPatch) -> None:

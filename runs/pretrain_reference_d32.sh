@@ -28,8 +28,7 @@ if [ ! -f "data/tokenizer_reference_d32/tokenizer.json" ]; then
   echo "==> Converting reference tokenizer"
   python -m scripts.convert \
     --input "$REFERENCE_MODEL" \
-    --out-dir data/tokenizer_reference_d32 \
-    --skip-model
+    --out-dir data/tokenizer_reference_d32
 else
   echo "==> Reusing tokenizer at data/tokenizer_reference_d32"
 fi
