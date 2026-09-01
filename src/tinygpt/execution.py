@@ -239,7 +239,10 @@ def execute_code(
     Returns:
         ExecutionResult with success status, captured output, and error info.
     """
-    ctx = multiprocessing.get_context("fork") if hasattr(os, "fork") else multiprocessing.get_context()
+    # ``fork`` can deadlock after libraries such as PyTorch initialize worker
+    # threads.  A fresh interpreter keeps code execution independent of the
+    # training process on every supported platform.
+    ctx = multiprocessing.get_context("spawn")
     result_queue: multiprocessing.Queue[dict[str, object]] = ctx.Queue(maxsize=1)
     result_dict: dict[str, object] = {}
 
