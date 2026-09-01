@@ -70,11 +70,12 @@ tokenizer_ref = args.checkpoint or args.vllm_model
 if not tokenizer_ref:
     parser.error("--checkpoint or --vllm-model is required to load the tokenizer")
 tokenizer_dir = resolve_model_directory(tokenizer_ref)
+vllm_model_dir = resolve_model_directory(args.vllm_model) if needs_vllm else ""
 
 tokenizer = HuggingFaceTokenizer.from_directory(tokenizer_dir)
 vllm = (
     VLLM(
-        args.vllm_model,
+        vllm_model_dir,
         tensor_parallel_size=args.vllm_tensor_parallel_size,
         trust_remote_code=args.trust_remote_code,
     )

@@ -23,9 +23,10 @@ parser.add_argument("--trust-remote-code", action="store_true")
 
 args = parser.parse_args()
 
-tokenizer = HuggingFaceTokenizer.from_directory(resolve_model_directory(args.vllm_model))
+model_dir = resolve_model_directory(args.vllm_model)
+tokenizer = HuggingFaceTokenizer.from_directory(model_dir)
 vllm = VLLM(
-    args.vllm_model,
+    model_dir,
     tensor_parallel_size=args.vllm_tensor_parallel_size,
     trust_remote_code=args.trust_remote_code,
 )
