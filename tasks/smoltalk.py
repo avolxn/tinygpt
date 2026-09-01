@@ -14,7 +14,7 @@ from tasks.base import Task
 
 
 class SmolTalk(Task):
-    """Multi-turn conversational data for general SFT.
+    """Multi-turn conversational data for general distillation.
 
     Args:
         split: Either 'train' or 'test'.

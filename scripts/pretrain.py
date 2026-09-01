@@ -11,7 +11,8 @@ Small CPU/MPS test:
     python -m scripts.pretrain --depth 4 --max-seq-len 512 \
         --device-batch-size 1 --total-batch-size 512 \
         --num-iterations 20 --eval-every -1 \
-        --dataset "" --txt data/shakespeare.txt
+        --dataset "" --txt data/shakespeare.txt \
+        --teacher-model data/teacher
 """
 
 import os
@@ -39,7 +40,7 @@ from tinygpt.config import (
     compute_scaled_weight_decay,
     make_config,
 )
-from tinygpt.dataloader import CLIMBMIX_DATASET, text_data_loader, tokenizing_distributed_data_loader_bestfit
+from tinygpt.dataloader import CLIMBMIX_DATASET, streaming_data_loader, text_data_loader
 from tinygpt.distributed import (
     compute_cleanup,
     compute_init,
@@ -55,6 +56,12 @@ from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_r
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
 add_runtime_arguments(parser)
+parser.add_argument(
+    "--teacher-model",
+    type=str,
+    required=True,
+    help="Prepared Hugging Face teacher directory; its tokenizer initializes the student",
+)
 # Distributed
 parser.add_argument(
     "--sharding-strategy",
@@ -138,7 +145,7 @@ else:
 
 print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
 
-tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
+tokenizer = HuggingFaceTokenizer.from_directory(args.teacher_model)
 vocab_size = tokenizer.get_vocab_size()
 token_bytes = compute_token_bytes(tokenizer, device=device)
 print0(f"Vocab size: {vocab_size:,}")
@@ -257,7 +264,7 @@ mlflow_run_name = runtime_config.run if runtime_config.run else runtime_config.r
 def make_loader(split: str):
     if args.txt:
         return text_data_loader(tokenizer, args.txt, args.device_batch_size, args.max_seq_len, device)
-    return tokenizing_distributed_data_loader_bestfit(
+    return streaming_data_loader(
         tokenizer,
         args.device_batch_size,
         args.max_seq_len,
@@ -327,7 +334,7 @@ trainer = TinyGPTTrainer(
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
-    tokenizer_dir=args.tokenizer_dir,
+    tokenizer_dir=args.teacher_model,
     checkpoint_metadata=checkpoint_metadata,
 )
 

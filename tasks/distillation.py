@@ -1,4 +1,4 @@
-"""SFT task construction shared by finetune and distillation scripts."""
+"""Task construction shared by the distillation pipeline."""
 
 from __future__ import annotations
 
@@ -10,19 +10,14 @@ from tasks.smoltalk import SmolTalk
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 
-def build_sft_task_lists(
+def build_distillation_tasks(
     task_names: set[str],
     *,
     identity_conversations: str,
     mmlu_epochs: int,
     gsm8k_epochs: int,
 ) -> tuple[list[Task], list[Task]]:
-    """Build reference-compatible train/eval task lists.
-
-    The default full mixture evaluates on SmolTalk/MMLU/GSM8K for the full task mixture.
-    Narrow local runs, for example identity-only smoke tests, evaluate on the
-    same narrow task set so they don't fetch unrelated datasets.
-    """
+    """Build train and validation task lists for distillation."""
     train_tasks: list[Task] = []
 
     if "smoltalk" in task_names:

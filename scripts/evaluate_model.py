@@ -7,9 +7,9 @@ Supported modes (comma-separated via --eval):
   chat    : task accuracy on chat benchmarks (categorical + generative)
 
 Usage:
-    python -m scripts.evaluate_model --eval sample --vllm-model meta-llama/Llama-3.1-8B-Instruct
-    python -m scripts.evaluate_model --eval bpb --checkpoint data/pretrain_checkpoints/from_scratch
-    python -m scripts.evaluate_model --eval chat --vllm-model meta-llama/Llama-3.1-8B-Instruct --tasks MMLU
+    python -m scripts.evaluate_model --eval sample --vllm-model data/distill_checkpoints/student
+    python -m scripts.evaluate_model --eval bpb --checkpoint data/distill_checkpoints/student
+    python -m scripts.evaluate_model --eval chat --vllm-model data/distill_checkpoints/student --tasks MMLU
 """
 
 import argparse
@@ -23,8 +23,8 @@ from tasks.gsm8k import GSM8K
 from tasks.humaneval import HumanEval
 from tasks.mmlu import MMLU
 
-from tinygpt.checkpoint import build_model_from_checkpoint
-from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loader_bestfit
+from tinygpt.checkpoint import build_model_from_checkpoint, resolve_model_directory
+from tinygpt.dataloader import CLIMBMIX_DATASET, streaming_data_loader
 from tinygpt.distributed import compute_cleanup, compute_init, get_dist_info, print0
 from tinygpt.inference import VLLM
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
@@ -38,7 +38,6 @@ parser.add_argument(
     default="",
     help="Path to a model directory or Trainer output directory",
 )
-parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 parser.add_argument("--eval", type=str, default="bpb,sample", help="Comma-separated modes: bpb,sample,chat")
 parser.add_argument("--tasks", type=str, default="", help="Tasks for chat eval, pipe-separated. Default = all.")
 parser.add_argument("--dataset", type=str, default=CLIMBMIX_DATASET)
@@ -51,7 +50,9 @@ parser.add_argument("--temperature", type=float, default=0.0)
 parser.add_argument("--top-k", type=int, default=50)
 parser.add_argument("--max-problems", type=int, default=None, help="Cap number of problems per task")
 parser.add_argument("--device-type", type=str, default="")
-parser.add_argument("--vllm-model", type=str, default="", help="Model path or Hugging Face ID for sample/chat eval")
+parser.add_argument(
+    "--vllm-model", type=str, default="", help="Prepared model directory or Trainer checkpoint for sample/chat eval"
+)
 parser.add_argument("--vllm-tensor-parallel-size", type=int, default=1)
 parser.add_argument("--trust-remote-code", action="store_true")
 
@@ -65,8 +66,12 @@ if needs_vllm and not args.vllm_model:
     parser.error("--vllm-model is required for sample/chat evaluation")
 if needs_local_model and not args.checkpoint:
     parser.error("--checkpoint is required for bpb evaluation")
+tokenizer_ref = args.checkpoint or args.vllm_model
+if not tokenizer_ref:
+    parser.error("--checkpoint or --vllm-model is required to load the tokenizer")
+tokenizer_dir = resolve_model_directory(tokenizer_ref)
 
-tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
+tokenizer = HuggingFaceTokenizer.from_directory(tokenizer_dir)
 vllm = (
     VLLM(
         args.vllm_model,
@@ -132,7 +137,7 @@ if "bpb" in eval_modes:
     tokens_per_step = args.device_batch_size * sequence_len * world_size
     steps = max(1, args.split_tokens // tokens_per_step)
     for split in ("train", "val"):
-        loader = tokenizing_distributed_data_loader_bestfit(
+        loader = streaming_data_loader(
             tokenizer,
             args.device_batch_size,
             sequence_len,

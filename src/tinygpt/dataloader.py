@@ -144,7 +144,7 @@ def _bestfit_batches(
         yield inputs, targets
 
 
-def tokenizing_distributed_data_loader_bestfit(
+def streaming_data_loader(
     tokenizer: Any,
     B: int,
     T: int,
@@ -225,14 +225,14 @@ def text_data_loader(
     )
 
 
-def sft_data_loader(
+def conversation_data_loader(
     tokenizer: Any,
     task: Any,
     B: int,
     T: int,
     device: torch.device | str = "cuda",
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
-    """SFT dataloader that packs tokenized conversations with loss masking.
+    """Conversation dataloader that packs tokenized examples with loss masking.
 
     Targets are -1 (ignore_index) for non-assistant tokens so the model only
     learns to predict assistant responses.

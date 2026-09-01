@@ -16,7 +16,6 @@ class RuntimeConfig:
 
     run: str = ""
     device_type: str = ""
-    tokenizer_dir: str = "data/tokenizer"
     out_dir: str = "data"
     run_name: str = ""
     seed: int = 42
@@ -27,7 +26,6 @@ class RuntimeConfig:
         return cls(
             run=str(args.run),
             device_type=str(args.device_type),
-            tokenizer_dir=str(args.tokenizer_dir),
             out_dir=str(args.out_dir),
             run_name=str(args.run_name),
             seed=int(args.seed),
@@ -48,7 +46,6 @@ def add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--device-type", type=str, default=RuntimeConfig.device_type, help="cuda|cpu|mps (empty = autodetect)"
     )
-    parser.add_argument("--tokenizer-dir", type=str, default=RuntimeConfig.tokenizer_dir)
     parser.add_argument("--out-dir", type=str, default=RuntimeConfig.out_dir)
     parser.add_argument("--run-name", type=str, default=RuntimeConfig.run_name)
     parser.add_argument("--seed", type=int, default=RuntimeConfig.seed, help="Random seed for training")

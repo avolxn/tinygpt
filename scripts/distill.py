@@ -5,8 +5,8 @@ Loss is computed on assistant tokens only (mask = 1) and combines
 supervised CE with online KL distillation from a teacher model.
 
 Usage:
-    python -m scripts.distill --checkpoint data/pretrain_checkpoints/pretrain_reference_d32 --teacher-model data/teacher_reference_d32
-    torchrun --nproc_per_node=8 -m scripts.distill --checkpoint data/pretrain_checkpoints/pretrain_reference_d32 --teacher-model data/teacher_reference_d32
+    python -m scripts.distill --checkpoint data/pretrain_checkpoints/student --teacher-model data/teacher
+    torchrun --nproc_per_node=8 -m scripts.distill --checkpoint data/pretrain_checkpoints/student --teacher-model data/teacher
 """
 
 import os
@@ -18,7 +18,7 @@ import math
 
 import torch
 from tasks.base import TaskMixture
-from tasks.sft import build_sft_task_lists
+from tasks.distillation import build_distillation_tasks
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 from tinygpt.checkpoint import (
@@ -28,7 +28,7 @@ from tinygpt.checkpoint import (
     resolve_trainer_checkpoint,
 )
 from tinygpt.config import RuntimeConfig, add_runtime_arguments
-from tinygpt.dataloader import sft_data_loader
+from tinygpt.dataloader import conversation_data_loader
 from tinygpt.distillation import load_teacher_model, validate_teacher_tokenizer_compatibility
 from tinygpt.distributed import (
     compute_cleanup,
@@ -86,13 +86,7 @@ parser.add_argument(
     "--teacher-model",
     type=str,
     required=True,
-    help="Local directory containing the teacher model in Hugging Face format",
-)
-parser.add_argument(
-    "--teacher-tokenizer",
-    type=str,
-    default="",
-    help="Local directory containing the teacher tokenizer (defaults to --teacher-model)",
+    help="Prepared local teacher directory in Hugging Face format",
 )
 parser.add_argument(
     "--teacher-device",
@@ -143,7 +137,8 @@ model, meta = build_model_from_checkpoint(model_ref, device, phase="train")
 resume_checkpoint = resolve_trainer_checkpoint(model_ref) if args.resume_from else None
 if args.resume_from and resume_checkpoint is None:
     print0("No complete Trainer state found; continuing from weights only.")
-tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
+student_dir = meta["model_dir"]
+tokenizer = HuggingFaceTokenizer.from_directory(student_dir)
 sequence_len = args.max_seq_len or meta["model_config"]["max_position_embeddings"]
 pretrain_user_config = meta.get("user_config", {})
 
@@ -200,9 +195,14 @@ def resolve_teacher_device() -> torch.device:
 teacher_device = resolve_teacher_device()
 print0(f"Loading teacher model from {args.teacher_model} on {teacher_device}")
 teacher_model, teacher_meta = load_teacher_model(args.teacher_model, device=teacher_device)
-teacher_tokenizer_ref = args.teacher_tokenizer or args.teacher_model
-teacher_tokenizer = HuggingFaceTokenizer.from_directory(teacher_tokenizer_ref)
+teacher_tokenizer = HuggingFaceTokenizer.from_directory(args.teacher_model)
 validate_teacher_tokenizer_compatibility(tokenizer, teacher_tokenizer)
+if meta["model_config"]["vocab_size"] != teacher_meta["model_config"]["vocab_size"]:
+    raise ValueError(
+        "Student/teacher model vocab sizes differ. "
+        f"student={meta['model_config']['vocab_size']}, "
+        f"teacher={teacher_meta['model_config']['vocab_size']}"
+    )
 print0(f"Loaded teacher with vocab size {teacher_meta['model_config']['vocab_size']:,}")
 
 model = wrap_fsdp(
@@ -216,7 +216,7 @@ model = wrap_fsdp(
 )
 
 task_names = {t.strip() for t in args.tasks.split(",") if t.strip()}
-task_list, val_task_list = build_sft_task_lists(
+task_list, val_task_list = build_distillation_tasks(
     task_names,
     identity_conversations=args.identity_conversations,
     mmlu_epochs=args.mmlu_epochs,
@@ -230,7 +230,7 @@ task = TaskMixture(task_list)
 print0(f"Task mixture: {len(task):,} examples from {task_names}")
 
 val_task = TaskMixture(val_task_list) if args.eval_every > 0 else None
-train_loader = sft_data_loader(tokenizer, task, args.device_batch_size, sequence_len, device)
+train_loader = conversation_data_loader(tokenizer, task, args.device_batch_size, sequence_len, device)
 
 tokens_per_fwdbwd = args.device_batch_size * sequence_len
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * world_size
@@ -256,17 +256,17 @@ eval_steps = max(1, args.eval_tokens // args.total_batch_size)
 
 
 def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
-    """Evaluate distillation/SFT loss on the held-out validation mixture."""
+    """Evaluate distillation loss on the held-out validation mixture."""
     assert val_task is not None
-    eval_loader = sft_data_loader(tokenizer, val_task, args.device_batch_size, sequence_len, device)
+    eval_loader = conversation_data_loader(tokenizer, val_task, args.device_batch_size, sequence_len, device)
     losses = []
     for _ in range(eval_steps):
         x, y = next(eval_loader)
         loss = causal_lm_loss(eval_model, x, y)
         losses.append(loss.item())
-    sft_val_loss = sum(losses) / len(losses)
-    print0(f"Step {step:05d} | distill val loss: {sft_val_loss:.4f}")
-    return {"distill_loss": sft_val_loss}
+    distill_val_loss = sum(losses) / len(losses)
+    print0(f"Step {step:05d} | distill val loss: {distill_val_loss:.4f}")
+    return {"distill_loss": distill_val_loss}
 
 
 run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['num_hidden_layers']}"
@@ -319,7 +319,7 @@ trainer = TinyGPTTrainer(
     teacher_model=teacher_model,
     distill_alpha=args.distill_alpha,
     distill_temperature=args.distill_temperature,
-    tokenizer_dir=args.tokenizer_dir,
+    tokenizer_dir=args.teacher_model,
     checkpoint_metadata=checkpoint_metadata,
 )
 

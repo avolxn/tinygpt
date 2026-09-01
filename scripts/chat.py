@@ -2,28 +2,28 @@
 Interactive CLI chat with a vLLM model.
 
 Usage:
-    python -m scripts.chat --vllm-model meta-llama/Llama-3.1-8B-Instruct
+    python -m scripts.chat --vllm-model data/distill_checkpoints/student
 """
 
 import argparse
 
+from tinygpt.checkpoint import resolve_model_directory
 from tinygpt.inference import VLLM
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 parser = argparse.ArgumentParser(description="Chat with tinygpt")
-parser.add_argument("--tokenizer-dir", type=str, default="data/tokenizer")
 parser.add_argument("--prompt", type=str, default="", help="Single-turn prompt (interactive mode if empty)")
 parser.add_argument("--temperature", type=float, default=0.6)
 parser.add_argument("--top-k", type=int, default=50)
 parser.add_argument("--max-tokens", type=int, default=512)
-parser.add_argument("--vllm-model", type=str, required=True, help="Model path or Hugging Face ID")
+parser.add_argument("--vllm-model", type=str, required=True, help="Prepared model directory or Trainer checkpoint")
 parser.add_argument("--vllm-tensor-parallel-size", type=int, default=1)
 parser.add_argument("--trust-remote-code", action="store_true")
 
 
 args = parser.parse_args()
 
-tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
+tokenizer = HuggingFaceTokenizer.from_directory(resolve_model_directory(args.vllm_model))
 vllm = VLLM(
     args.vllm_model,
     tensor_parallel_size=args.vllm_tensor_parallel_size,

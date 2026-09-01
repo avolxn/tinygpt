@@ -8,8 +8,8 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+from transformers import AutoModelForCausalLM
 
-from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.tokenizer import SPECIAL_TOKENS
 
 _TOKENIZER_PROBES = (
@@ -25,11 +25,17 @@ def load_teacher_model(
     model_ref: str,
     device: torch.device,
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
-    """Load an inference-only teacher model from a local model directory."""
-    model, metadata = build_model_from_checkpoint(model_ref, device=device, phase="eval")
+    """Load an inference-only teacher from a prepared local directory."""
+    model: Any = AutoModelForCausalLM.from_pretrained(
+        model_ref,
+        local_files_only=True,
+        torch_dtype="auto",
+    )
+    model.to(device)
+    model.eval()
     for param in model.parameters():
         param.requires_grad_(False)
-    return model, metadata
+    return model, {"model_config": model.config.to_dict(), "model_dir": model_ref}
 
 
 def validate_teacher_tokenizer_compatibility(

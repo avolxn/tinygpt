@@ -6,7 +6,7 @@ TinyGPTTrainer subclasses transformers.Trainer to plug in:
 - tinygpt's warmup + cosine LR schedule (get_lr_multiplier)
 - Pre-batched infinite iterators as data sources (no re-batching)
 - tinygpt's Hugging Face style model directory format
-- Pluggable eval_fn for bpb / SFT-loss evaluation
+- Pluggable eval_fn for bpb / distillation-loss evaluation
 """
 
 from __future__ import annotations
@@ -152,7 +152,7 @@ class TinyGPTTrainer(Trainer):
         final_lr_frac: LR at the end as a fraction of peak LR.
         train_loader: Infinite iterator yielding (inputs, targets) batches.
         eval_fn: Optional callable (model, step) -> dict[str, float] for
-            custom evaluation metrics (e.g. bpb or SFT loss).
+        custom evaluation metrics (e.g. bpb or distillation loss).
     """
 
     def __init__(

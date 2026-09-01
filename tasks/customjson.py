@@ -16,7 +16,7 @@ from tasks.base import Task
 
 
 class CustomJSON(Task):
-    """Load conversations from a JSONL file for SFT training.
+    """Load conversations from a JSONL file for distillation.
 
     Args:
         filepath: Path to the .jsonl file. If the file does not exist, an

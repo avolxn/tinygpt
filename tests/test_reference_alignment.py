@@ -1,7 +1,7 @@
 import math
 
 import torch
-from tasks.sft import build_sft_task_lists
+from tasks.distillation import build_distillation_tasks
 from transformers import LlamaForCausalLM
 
 from tinygpt.config import compute_scaled_total_batch_size, make_config
@@ -48,14 +48,14 @@ def test_all_ignored_targets_return_zero_loss_not_nan():
     assert loss.item() == 0.0
 
 
-def test_identity_only_sft_validation_uses_identity_dataset(tmp_path):
+def test_identity_only_distillation_validation_uses_identity_dataset(tmp_path):
     identity_path = tmp_path / "identity.jsonl"
     identity_path.write_text(
         '[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello."}]\n',
         encoding="utf-8",
     )
 
-    train_tasks, val_tasks = build_sft_task_lists(
+    train_tasks, val_tasks = build_distillation_tasks(
         {"identity"},
         identity_conversations=str(identity_path),
         mmlu_epochs=3,
@@ -67,8 +67,8 @@ def test_identity_only_sft_validation_uses_identity_dataset(tmp_path):
     assert all(type(task).__name__ == "CustomJSON" for task in train_tasks + val_tasks)
 
 
-def test_default_sft_validation_matches_reference_core_mix():
-    _, val_tasks = build_sft_task_lists(
+def test_default_distillation_validation_matches_reference_core_mix():
+    _, val_tasks = build_distillation_tasks(
         {"smoltalk", "mmlu", "gsm8k", "identity", "spelling"},
         identity_conversations="missing.jsonl",
         mmlu_epochs=3,
