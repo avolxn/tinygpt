@@ -91,6 +91,6 @@ fi
 python -c "import vllm"
 python -m scripts.evaluate_model \
   --checkpoint data/distill_checkpoints/smoke \
-  --eval chat \
+  --eval sample \
   --vllm-model data/distill_checkpoints/smoke \
-  --max-problems 2
+  --max-new-tokens 8

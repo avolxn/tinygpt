@@ -239,8 +239,8 @@ def run_categorical_eval(task_object: Any, batch_size: int, max_problems: int | 
         for conversation, completion in zip(conversations, completions, strict=True):
             letters: list[str] = conversation["letters"]
             normalized = completion.strip()
-            predicted = next((letter for letter in letters if normalized.startswith(letter)), normalized[:1])
-            num_passed += int(task_object.evaluate(conversation, predicted))
+            predicted = next((letter for letter in letters if normalized.startswith(letter)), None)
+            num_passed += int(predicted is not None and task_object.evaluate(conversation, predicted))
             total += 1
 
     if is_dist:
