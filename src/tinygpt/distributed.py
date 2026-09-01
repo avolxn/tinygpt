@@ -164,6 +164,7 @@ def wrap_fsdp(
     return FSDP(
         model,
         sharding_strategy=resolved_strategy,
+        use_orig_params=True,
         mixed_precision=make_fsdp_mixed_precision(compute_dtype_override),
         auto_wrap_policy=wrap_policy,
         device_id=local_rank,
