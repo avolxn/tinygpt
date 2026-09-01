@@ -205,7 +205,7 @@ if meta["model_config"]["vocab_size"] != teacher_meta["model_config"]["vocab_siz
     )
 print0(f"Loaded teacher with vocab size {teacher_meta['model_config']['vocab_size']:,}")
 
-model = wrap_fsdp(
+student_model = wrap_fsdp(
     model,
     device_type=device_type,
     is_dist=is_dist,
@@ -304,7 +304,7 @@ checkpoint_metadata = build_checkpoint_metadata(
 )
 
 trainer = TinyGPTTrainer(
-    model=model,
+    model=student_model,
     args=training_args,
     callbacks=[MlflowMetadataCallback(checkpoint_metadata)],
     eval_dataset=[0] if args.eval_every > 0 else None,

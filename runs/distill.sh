@@ -31,8 +31,6 @@ DISTILL_RUN="${DISTILL_RUN:-distill}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
 
-python -m scripts.check_mlflow
-
 if [ ! -f "$TEACHER_DIR/config.json" ] || [ ! -f "$TEACHER_DIR/tokenizer.json" ]; then
   python -m scripts.prepare_teacher \
     --model "$TEACHER_MODEL" \

@@ -22,8 +22,6 @@ DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
 TEACHER_MODEL="${TEACHER_MODEL:-hf-internal-testing/tiny-random-LlamaForCausalLM}"
 TEACHER_DIR="${TEACHER_DIR:-data/teacher_smoke}"
 
-python -m scripts.check_mlflow
-
 if [ ! -f "$TEACHER_DIR/config.json" ] || [ ! -f "$TEACHER_DIR/tokenizer.json" ]; then
   python -m scripts.prepare_teacher \
     --model "$TEACHER_MODEL" \

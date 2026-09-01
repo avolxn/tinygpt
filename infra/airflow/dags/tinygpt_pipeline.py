@@ -97,12 +97,6 @@ with DAG(
     },
     tags=["tinygpt", "distillation"],
 ) as dag:
-    verify_mlflow = bash_task(
-        "verify_mlflow",
-        'set -euo pipefail\n"$PYTHON_BIN" -m scripts.check_mlflow',
-        retries=1,
-    )
-
     prepare_teacher = bash_task(
         "prepare_teacher",
         """set -euo pipefail
@@ -235,6 +229,5 @@ fi
         retries=1,
     )
 
-    verify_mlflow >> [prepare_teacher, download_identity]
     prepare_teacher >> pretrain >> evaluate_base >> distill >> evaluate_chat
-    download_identity >> distill
+    prepare_teacher >> download_identity >> distill
