@@ -1,5 +1,5 @@
 """
-Supervised fine-tuning (SFT) via Transformers Trainer and native FSDP.
+Supervised fine-tuning (SFT) via Transformers Trainer and FSDP.
 
 Loss is computed on assistant tokens only (mask = 1).
 

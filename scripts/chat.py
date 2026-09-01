@@ -7,7 +7,7 @@ Usage:
 
 import argparse
 
-from tinygpt.inference import VLLMNative
+from tinygpt.inference import VLLM
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 parser = argparse.ArgumentParser(description="Chat with tinygpt")
@@ -24,7 +24,7 @@ parser.add_argument("--trust-remote-code", action="store_true")
 args = parser.parse_args()
 
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
-vllm = VLLMNative(
+vllm = VLLM(
     args.vllm_model,
     tensor_parallel_size=args.vllm_tensor_parallel_size,
     trust_remote_code=args.trust_remote_code,

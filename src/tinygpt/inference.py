@@ -1,9 +1,9 @@
-"""Native vLLM inference integration."""
+"""vLLM inference integration."""
 
 from typing import Any
 
 
-class VLLMNative:
+class VLLM:
     """Thin adapter around vLLM's offline ``LLM`` API."""
 
     def __init__(
@@ -34,7 +34,7 @@ class VLLMNative:
         top_k: int | None = None,
         stop: list[str] | None = None,
     ) -> str:
-        """Generate one completion with vLLM's native offline engine."""
+        """Generate one completion with vLLM's offline engine."""
         return self.generate_batch(
             [prompt],
             max_tokens=max_tokens,
@@ -52,7 +52,7 @@ class VLLMNative:
         top_k: int | None = None,
         stop: list[str] | None = None,
     ) -> list[str]:
-        """Generate one completion for each prompt with vLLM's native engine."""
+        """Generate one completion for each prompt with vLLM's engine."""
         params: dict[str, Any] = {
             "max_tokens": max_tokens,
             "temperature": temperature,

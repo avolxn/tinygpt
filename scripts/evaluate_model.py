@@ -26,7 +26,7 @@ from tasks.mmlu import MMLU
 from tinygpt.checkpoint import build_model_from_checkpoint
 from tinygpt.dataloader import CLIMBMIX_DATASET, tokenizing_distributed_data_loader_bestfit
 from tinygpt.distributed import compute_cleanup, compute_init, get_dist_info, print0
-from tinygpt.inference import VLLMNative
+from tinygpt.inference import VLLM
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.utils import autodetect_device_type
@@ -68,7 +68,7 @@ if needs_local_model and not args.checkpoint:
 
 tokenizer = HuggingFaceTokenizer.from_directory(args.tokenizer_dir)
 vllm = (
-    VLLMNative(
+    VLLM(
         args.vllm_model,
         tensor_parallel_size=args.vllm_tensor_parallel_size,
         trust_remote_code=args.trust_remote_code,

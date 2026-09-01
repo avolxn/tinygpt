@@ -1,4 +1,4 @@
-"""Native Llama model and shared training-run configuration."""
+"""Llama model and shared training-run configuration."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def make_config(
     vocab_size: int = 32768,
     sequence_len: int = 2048,
 ) -> LlamaConfig:
-    """Build a native LlamaConfig from a depth scalar.
+    """Build a LlamaConfig from a depth scalar.
 
     model_dim is set to depth * aspect_ratio, rounded up to the next multiple
     of head_dim so that head_dim divides evenly.

@@ -1,5 +1,5 @@
 """
-Pretrain a Llama model via Transformers Trainer + native PyTorch FSDP.
+Pretrain a Llama model via Transformers Trainer + PyTorch FSDP.
 
 Single GPU:
     python -m scripts.pretrain
@@ -106,7 +106,7 @@ runtime_config = RuntimeConfig.from_namespace(args)
 
 
 def scaling_param_counts(model: LlamaForCausalLM) -> dict[str, int]:
-    """Bucket native Llama parameters for the scaling-law calculation."""
+    """Bucket Llama parameters for the scaling-law calculation."""
     counts = {
         "wte": model.get_input_embeddings().weight.numel(),
         "value_embeds": 0,

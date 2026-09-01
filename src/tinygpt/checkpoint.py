@@ -156,7 +156,7 @@ def build_model_from_checkpoint(
     device: torch.device,
     phase: str = "eval",
 ) -> tuple[LlamaForCausalLM, dict[str, Any]]:
-    """Load a native Llama model from a directory or Trainer output."""
+    """Load a Llama model from a directory or Trainer output."""
     model_dir = resolve_model_directory(model_ref)
     config_dict = _load_json(os.path.join(model_dir, CONFIG_NAME))
     model = LlamaForCausalLM.from_pretrained(model_dir, torch_dtype=torch.float32)

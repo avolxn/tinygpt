@@ -1,4 +1,4 @@
-"""Tests for the native Transformers causal language model."""
+"""Tests for the Transformers causal language model."""
 
 import pytest
 import torch
@@ -40,7 +40,7 @@ def test_forward_with_labels(tiny_model: LlamaForCausalLM, tiny_config: LlamaCon
     assert output.loss.item() > 0
 
 
-def test_native_generation_api(tiny_model: LlamaForCausalLM, tiny_config: LlamaConfig) -> None:
+def test_generation_api(tiny_model: LlamaForCausalLM, tiny_config: LlamaConfig) -> None:
     idx = torch.randint(0, tiny_config.vocab_size, (1, 4))
     generated = tiny_model.generate(idx, max_new_tokens=3)
     assert generated.shape == (1, 7)
