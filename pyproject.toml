@@ -18,7 +18,6 @@ dependencies = [
     "psutil>=7.1.0",
     "transformers>=4.40.0",
     "huggingface-hub>=0.30.0",
-    "tiktoken>=0.11.0",
 ]
 
 [build-system]

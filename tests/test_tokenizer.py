@@ -7,6 +7,7 @@ import os
 import tempfile
 
 import pytest
+from tests.helpers import make_test_tokenizer
 
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
@@ -20,7 +21,7 @@ def tokenizer() -> HuggingFaceTokenizer:
         "Numbers: 1, 2, 3, 42, 100.",
         "Special: @#$%^&*()",
     ]
-    return HuggingFaceTokenizer.train_from_iterator(iter(texts * 10), vocab_size=512)
+    return make_test_tokenizer(texts * 10)
 
 
 def test_encode_decode_roundtrip(tokenizer: HuggingFaceTokenizer) -> None:

@@ -4,18 +4,14 @@ BPE tokenizers used by tinygpt.
 On-disk runtime format:
 - `tokenizer.json`: HuggingFace tokenizers BPE
 
-Special tokens and the GPT-4 split pattern are fixed by tinygpt.
+Teacher preparation adds the special tokens required by tinygpt.
 """
 
 import copy
 import os
-from collections.abc import Iterator
 from typing import Any, cast, overload
 
-from tokenizers import Regex, decoders, pre_tokenizers
 from tokenizers import Tokenizer as HFTokenizer
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
 
 SPECIAL_TOKENS = [
     "<|bos|>",
@@ -29,28 +25,11 @@ SPECIAL_TOKENS = [
     "<|output_end|>",
 ]
 
-SPLIT_PATTERN = (
-    r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
-)
-
-
 class HuggingFaceTokenizer:
-    """Light wrapper around HuggingFace Tokenizer with SFT rendering utilities."""
+    """Light wrapper around Hugging Face Tokenizer with conversation utilities."""
 
     def __init__(self, tokenizer: HFTokenizer) -> None:
         self.tokenizer = tokenizer
-
-    @classmethod
-    def from_pretrained(cls, hf_path: str) -> "HuggingFaceTokenizer":
-        """Load a tokenizer from a HuggingFace Hub repository.
-
-        Args:
-            hf_path: HuggingFace Hub repository identifier.
-
-        Returns:
-            A HuggingFaceTokenizer loaded from the Hub.
-        """
-        return cls(HFTokenizer.from_pretrained(hf_path))
 
     @classmethod
     def from_directory(cls, tokenizer_dir: str) -> "HuggingFaceTokenizer":
@@ -64,38 +43,6 @@ class HuggingFaceTokenizer:
         """
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
         return cls(HFTokenizer.from_file(tokenizer_path))
-
-    @classmethod
-    def train_from_iterator(cls, text_iterator: Iterator[str], vocab_size: int) -> "HuggingFaceTokenizer":
-        """Train a BPE tokenizer from a text iterator.
-
-        Args:
-            text_iterator: Iterator yielding training text strings.
-            vocab_size: Target vocabulary size including special tokens.
-
-        Returns:
-            A newly trained HuggingFaceTokenizer.
-        """
-        tokenizer = HFTokenizer(BPE(byte_fallback=True, unk_token=None, fuse_unk=False))
-        tokenizer.normalizer = None
-        gpt4_regex = Regex(SPLIT_PATTERN)
-        tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
-            [
-                pre_tokenizers.Split(pattern=gpt4_regex, behavior="isolated", invert=False),
-                pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False),
-            ]
-        )
-        tokenizer.decoder = decoders.ByteLevel()
-        tokenizer.post_processor = None
-        trainer = BpeTrainer(
-            vocab_size=vocab_size,
-            show_progress=True,
-            min_frequency=0,
-            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
-            special_tokens=SPECIAL_TOKENS,
-        )
-        tokenizer.train_from_iterator(text_iterator, trainer)
-        return cls(tokenizer)
 
     def get_vocab_size(self) -> int:
         """Return the total vocabulary size including special tokens.

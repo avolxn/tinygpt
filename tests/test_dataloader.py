@@ -6,6 +6,7 @@ Tests for the dataloader:
 
 import pytest
 import torch
+from tests.helpers import make_test_tokenizer
 
 from tinygpt.dataloader import text_data_loader
 from tinygpt.tokenizer import HuggingFaceTokenizer
@@ -19,7 +20,7 @@ def tokenizer() -> HuggingFaceTokenizer:
         "The quick brown fox. " * 20,
         "1 2 3 4 5 6 7 8 9 10. " * 20,
     ]
-    return HuggingFaceTokenizer.train_from_iterator(iter(texts * 20), vocab_size=512)
+    return make_test_tokenizer(texts * 20)
 
 
 def make_in_memory_loader(tokenizer, docs, B, T, device="cpu"):
