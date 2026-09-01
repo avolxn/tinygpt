@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Cheap smoke test for CPU or a low-end GPU:
-# 1. train a tiny tokenizer on a local corpus
-# 2. run a very small pretrain job
-# 3. run a tiny local SFT pass
-# 4. issue one chat prompt
+# Cheap teacher-to-student smoke test for CPU or a low-end GPU.
 #
 # From repo root:
 #   bash runs/smoke.sh
@@ -23,8 +19,16 @@ source .venv/bin/activate
 
 MLFLOW_RUN="${MLFLOW_RUN:-smoke}"
 DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
+TEACHER_MODEL="${TEACHER_MODEL:-hf-internal-testing/tiny-random-LlamaForCausalLM}"
+TEACHER_DIR="${TEACHER_DIR:-data/teacher_smoke}"
 
 python -m scripts.check_mlflow
+
+if [ ! -f "$TEACHER_DIR/config.json" ] || [ ! -f "$TEACHER_DIR/tokenizer.json" ]; then
+  python -m scripts.prepare_teacher \
+    --model "$TEACHER_MODEL" \
+    --out-dir "$TEACHER_DIR"
+fi
 
 CORPUS="data/smoke_corpus.txt"
 cat >"$CORPUS" <<'EOF'
@@ -32,26 +36,18 @@ TinyGPT smoke test.
 The sky is blue because shorter wavelengths scatter more strongly.
 Paris is the capital of France.
 Two plus two equals four.
-Writing small tests catches obvious integration issues early.
 EOF
 
 IDENTITY_JSONL="data/smoke_identity.jsonl"
 cat >"$IDENTITY_JSONL" <<'EOF'
 [{"role":"user","content":"Say hello in one sentence."},{"role":"assistant","content":"Hello from TinyGPT."}]
 [{"role":"user","content":"What is 2 + 2?"},{"role":"assistant","content":"2 + 2 = 4."}]
-[{"role":"user","content":"What color is the daytime sky?"},{"role":"assistant","content":"The daytime sky usually looks blue."}]
 EOF
-
-echo "==> Training smoke tokenizer"
-python -m scripts.train_tokenizer \
-  --txt "$CORPUS" \
-  --max-chars 200000 \
-  --vocab-size 2048 \
-  --out-dir data/tokenizer_smoke
 
 echo "==> Tiny local pretrain"
 python -m scripts.pretrain \
   --device-type "$DEVICE_TYPE" \
+  --teacher-model "$TEACHER_DIR" \
   --depth 4 \
   --aspect-ratio 32 \
   --head-dim 32 \
@@ -63,17 +59,18 @@ python -m scripts.pretrain \
   --eval-tokens 2048 \
   --dataset "" \
   --txt "$CORPUS" \
-  --tokenizer-dir data/tokenizer_smoke \
   --run "$MLFLOW_RUN" \
   --run-name smoke \
   --out-dir data
 
-echo "==> Tiny local SFT"
-python -m scripts.finetune \
+echo "==> Tiny local distillation"
+python -m scripts.distill \
   --device-type "$DEVICE_TYPE" \
   --checkpoint data/pretrain_checkpoints/smoke \
-  --tokenizer-dir data/tokenizer_smoke \
+  --teacher-model "$TEACHER_DIR" \
+  --teacher-device cpu \
   --device-batch-size 1 \
+  --total-batch-size 512 \
   --num-iterations 20 \
   --eval-every 10 \
   --eval-tokens 2048 \
@@ -83,14 +80,13 @@ python -m scripts.finetune \
   --run-name smoke \
   --out-dir data
 
-echo "==> One chat prompt"
-if [[ "$DEVICE_TYPE" != "cuda" ]]; then
+if [ "$DEVICE_TYPE" != "cuda" ]; then
   echo "Skipping vLLM chat smoke test on non-CUDA workers"
   exit 0
 fi
-python -m scripts.chat \
-  --vllm-model data/sft_checkpoints/smoke \
-  --tokenizer-dir data/tokenizer_smoke \
-  --prompt "Say hello in one short sentence." \
-  --temperature 0.0 \
-  --max-tokens 24
+
+python -m scripts.evaluate_model \
+  --checkpoint data/distill_checkpoints/smoke \
+  --eval chat \
+  --vllm-model data/distill_checkpoints/smoke \
+  --max-problems 2
