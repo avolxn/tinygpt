@@ -13,14 +13,19 @@ mkdir -p data
 
 command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
-uv sync
-# shellcheck source=/dev/null
-source .venv/bin/activate
 
 MLFLOW_RUN="${MLFLOW_RUN:-smoke}"
 DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
 TEACHER_MODEL="${TEACHER_MODEL:-hf-internal-testing/tiny-random-LlamaForCausalLM}"
 TEACHER_DIR="${TEACHER_DIR:-data/teacher_smoke}"
+
+if [ "$DEVICE_TYPE" = "cuda" ]; then
+  uv sync --extra gpu
+else
+  uv sync --extra cpu
+fi
+# shellcheck source=/dev/null
+source .venv/bin/activate
 
 if [ ! -f "$TEACHER_DIR/config.json" ] || [ ! -f "$TEACHER_DIR/tokenizer.json" ]; then
   python -m scripts.prepare_teacher \
@@ -83,6 +88,7 @@ if [ "$DEVICE_TYPE" != "cuda" ]; then
   exit 0
 fi
 
+python -c "import vllm"
 python -m scripts.evaluate_model \
   --checkpoint data/distill_checkpoints/smoke \
   --eval chat \

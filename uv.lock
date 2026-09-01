@@ -5546,6 +5546,7 @@ cpu = [
 ]
 gpu = [
     { name = "torch", version = "2.9.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "vllm", marker = "sys_platform == 'linux'" },
 ]
 vllm = [
     { name = "vllm", marker = "sys_platform == 'linux' or (extra == 'extra-7-tinygpt-cpu' and extra == 'extra-7-tinygpt-gpu')" },
@@ -5577,6 +5578,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'cpu'", specifier = "==2.9.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "tinygpt", extra = "cpu" } },
     { name = "torch", marker = "extra == 'gpu'", specifier = "==2.9.1", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "tinygpt", extra = "gpu" } },
     { name = "transformers", specifier = ">=4.40.0" },
+    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'gpu'", specifier = ">=0.14.0,<0.17.0" },
     { name = "vllm", marker = "sys_platform == 'linux' and extra == 'vllm'", specifier = ">=0.14.0,<0.17.0" },
 ]
 provides-extras = ["cpu", "gpu", "vllm"]

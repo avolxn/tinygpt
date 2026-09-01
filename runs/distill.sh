@@ -18,9 +18,6 @@ mkdir -p data
 
 command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
-uv sync
-# shellcheck source=/dev/null
-source .venv/bin/activate
 
 MLFLOW_RUN="${MLFLOW_RUN:-distill}"
 DEVICE_TYPE="${DEVICE_TYPE:-cuda}"
@@ -30,6 +27,14 @@ STUDENT_RUN="${STUDENT_RUN:-student}"
 DISTILL_RUN="${DISTILL_RUN:-distill}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
+
+if [ "$DEVICE_TYPE" = "cuda" ]; then
+  uv sync --extra gpu
+else
+  uv sync --extra cpu
+fi
+# shellcheck source=/dev/null
+source .venv/bin/activate
 
 if [ ! -f "$TEACHER_DIR/config.json" ] || [ ! -f "$TEACHER_DIR/tokenizer.json" ]; then
   python -m scripts.prepare_teacher \
