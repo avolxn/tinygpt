@@ -10,6 +10,7 @@ from airflow.sdk import DAG, Param
 PYTHON_BIN = "/opt/tinygpt/.venv/bin/python"
 TORCHRUN_BIN = "/opt/tinygpt/.venv/bin/torchrun"
 WORKSPACE = "/workspace"
+TEACHER_MODEL = "karpathy/nanochat-d32"
 
 COMMON_ENV = {
     "PYTHON_BIN": PYTHON_BIN,
@@ -62,7 +63,7 @@ with DAG(
             description="Safe artifact and MLflow run prefix",
         ),
         "teacher_model": Param(
-            "hf-internal-testing/tiny-random-LlamaForCausalLM",
+            TEACHER_MODEL,
             type="string",
             minLength=1,
             description="Hugging Face teacher model ID",

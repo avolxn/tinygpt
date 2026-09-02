@@ -16,7 +16,7 @@ command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 MLFLOW_RUN="${MLFLOW_RUN:-smoke}"
 DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
-TEACHER_MODEL="${TEACHER_MODEL:-hf-internal-testing/tiny-random-LlamaForCausalLM}"
+TEACHER_MODEL="${TEACHER_MODEL:-karpathy/nanochat-d32}"
 TEACHER_DIR="${TEACHER_DIR:-data/teacher_smoke}"
 
 if [ "$DEVICE_TYPE" = "cuda" ]; then
