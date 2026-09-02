@@ -18,6 +18,7 @@ MLFLOW_RUN="${MLFLOW_RUN:-smoke}"
 DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
 TEACHER_MODEL="${TEACHER_MODEL:-karpathy/nanochat-d32}"
 TEACHER_DIR="${TEACHER_DIR:-data/teacher_smoke}"
+TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
 
 if [ "$DEVICE_TYPE" = "cuda" ]; then
   uv sync --extra gpu
@@ -71,7 +72,7 @@ python -m scripts.distill \
   --device-type "$DEVICE_TYPE" \
   --checkpoint data/pretrain_checkpoints/smoke \
   --teacher-model "$TEACHER_DIR" \
-  --teacher-device cpu \
+  --teacher-device "$TEACHER_DEVICE" \
   --device-batch-size 1 \
   --total-batch-size 512 \
   --num-iterations 20 \
