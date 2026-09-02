@@ -205,7 +205,7 @@ def run_generative_eval(
         num_passed = int(passed_t.item())
         total = int(total_t.item())
 
-    acc = num_passed / total
+    acc = num_passed / total if total else 0.0
     print0(f"Final: {num_passed}/{total} ({100 * acc:.2f}%)")
     return acc
 
@@ -251,7 +251,7 @@ def run_categorical_eval(task_object: Any, batch_size: int, max_problems: int | 
         num_passed = int(passed_t.item())
         total = int(total_t.item())
 
-    acc = num_passed / total
+    acc = num_passed / total if total else 0.0
     print0(f"Final: {num_passed}/{total} ({100 * acc:.2f}%)")
     return acc
 
@@ -274,6 +274,9 @@ if __name__ == "__main__":
         }
 
         task_names = list(ALL_TASKS.keys()) if not args.tasks else args.tasks.split("|")
+        unknown_tasks = set(task_names) - ALL_TASKS.keys()
+        if unknown_tasks:
+            raise ValueError(f"Unknown evaluation tasks: {', '.join(sorted(unknown_tasks))}")
 
         print0("\n" + "=" * 70)
         print0("Chat Evaluation")

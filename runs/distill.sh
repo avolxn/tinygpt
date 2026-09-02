@@ -78,9 +78,10 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.distill \
 
 if [ "${DEVICE_TYPE:-cuda}" = "cuda" ]; then
   echo "==> Evaluating data/distill_checkpoints/$DISTILL_RUN"
-  torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.evaluate_model \
+  python -m scripts.evaluate_model \
     --checkpoint "data/distill_checkpoints/$DISTILL_RUN" \
     --eval chat \
     --device-batch-size 32 \
+    --vllm-tensor-parallel-size "$NPROC_PER_NODE" \
     --vllm-model "data/distill_checkpoints/$DISTILL_RUN"
 fi

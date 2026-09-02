@@ -126,6 +126,7 @@ def build_training_arguments(
         disable_tqdm=disable_tqdm,
         fsdp=fsdp,
         fsdp_config=fsdp_config,
+        ddp_find_unused_parameters=False,
     )
 
 

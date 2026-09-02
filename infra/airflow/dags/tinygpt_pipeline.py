@@ -154,11 +154,7 @@ ARGS=(
   --eval sample
   --vllm-model "$ARTIFACT_DIR/pretrain_checkpoints/$RUN_NAME"
 )
-if [[ "$NPROC_PER_NODE" -eq 1 ]]; then
-  "$PYTHON_BIN" "${ARGS[@]}"
-else
-  "$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" "${ARGS[@]}"
-fi
+"$PYTHON_BIN" "${ARGS[@]}" --vllm-tensor-parallel-size "$NPROC_PER_NODE"
 """,
         retries=1,
     )
@@ -220,11 +216,7 @@ ARGS=(
   --tasks "$CHAT_EVAL_TASKS"
   --max-problems "$MAX_EVAL_PROBLEMS"
 )
-if [[ "$NPROC_PER_NODE" -eq 1 ]]; then
-  "$PYTHON_BIN" "${ARGS[@]}"
-else
-  "$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" "${ARGS[@]}"
-fi
+"$PYTHON_BIN" "${ARGS[@]}" --vllm-tensor-parallel-size "$NPROC_PER_NODE"
 """,
         retries=1,
     )

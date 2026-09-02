@@ -125,3 +125,7 @@ def test_resolve_trainer_checkpoint_requires_training_state() -> None:
         for filename in (TRAINER_STATE_NAME, "optimizer.pt", "scheduler.pt"):
             open(os.path.join(checkpoint, filename), "w", encoding="utf-8").close()
         assert resolve_trainer_checkpoint(checkpoint) == checkpoint
+
+        os.remove(os.path.join(checkpoint, "optimizer.pt"))
+        open(os.path.join(checkpoint, "optimizer.bin"), "w", encoding="utf-8").close()
+        assert resolve_trainer_checkpoint(checkpoint) == checkpoint
