@@ -22,11 +22,10 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import argparse
 import json
 from collections.abc import Iterator
-from typing import Any, cast
+from typing import Any
 
 import torch
 from transformers import LlamaForCausalLM
-from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 from tinygpt.checkpoint import (
     build_checkpoint_metadata,
@@ -48,7 +47,6 @@ from tinygpt.distributed import (
     compute_init,
     get_dist_info,
     print0,
-    wrap_fsdp,
 )
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
@@ -184,27 +182,8 @@ if args.resume_from:
 param_counts = scaling_param_counts(model)
 scaling_params = param_counts["transformer_matrices"] + param_counts["lm_head"]
 
-if device_type == "cuda" and is_dist:
-    if args.sharding_strategy != "NO_SHARD":
-        print0("!" * 70)
-        print0(f"WARNING: sharding_strategy={args.sharding_strategy} shards parameters along")
-        print0("         the first dimension. Muon's Newton-Schulz orthogonalization")
-        print0("         requires full matrices — results will be INCORRECT with sharding.")
-        print0("         Use --sharding-strategy NO_SHARD for correct Muon behavior.")
-        print0("!" * 70)
-    model = cast(
-        LlamaForCausalLM,
-        wrap_fsdp(
-            model,
-            device_type=device_type,
-            is_dist=is_dist,
-            sharding_strategy=args.sharding_strategy,
-            compute_dtype_override=compute_dtype,
-            local_rank=local_rank,
-            transformer_layer_cls=LlamaDecoderLayer,
-        ),
-    )
-    print0(f"FSDP enabled with sharding strategy: {args.sharding_strategy}")
+if args.optimizer == "muon" and is_dist and args.sharding_strategy != "NO_SHARD":
+    raise ValueError("Muon requires --sharding-strategy NO_SHARD; use --optimizer adamw with sharded FSDP")
 
 if param_counts:
     print0("Parameter counts:")
@@ -308,6 +287,7 @@ training_args = build_training_arguments(
     device_type=device_type,
     compute_dtype=compute_dtype,
     disable_tqdm=not master_process,
+    fsdp_sharding_strategy=args.sharding_strategy if device_type == "cuda" and is_dist else None,
 )
 
 checkpoint_metadata = build_checkpoint_metadata(

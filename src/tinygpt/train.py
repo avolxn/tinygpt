@@ -89,9 +89,18 @@ def build_training_arguments(
     device_type: str,
     compute_dtype: torch.dtype,
     disable_tqdm: bool,
+    fsdp_sharding_strategy: str | None = None,
 ) -> TrainingArguments:
     """Build the shared HuggingFace Trainer arguments for all training phases."""
     evaluation_enabled = eval_every > 0
+    fsdp = None
+    fsdp_config: dict[str, Any] | None = None
+    if fsdp_sharding_strategy is not None:
+        fsdp = f"{fsdp_sharding_strategy.lower()} auto_wrap"
+        fsdp_config = {
+            "transformer_layer_cls_to_wrap": ["LlamaDecoderLayer"],
+            "use_orig_params": True,
+        }
     return TrainingArguments(
         output_dir=output_dir,
         max_steps=max_steps,
@@ -115,6 +124,8 @@ def build_training_arguments(
         fp16=False,
         prediction_loss_only=True,
         disable_tqdm=disable_tqdm,
+        fsdp=fsdp,
+        fsdp_config=fsdp_config,
     )
 
 

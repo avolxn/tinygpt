@@ -19,7 +19,6 @@ import math
 import torch
 from tasks.base import TaskMixture
 from tasks.distillation import build_distillation_tasks
-from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 from tinygpt.checkpoint import (
     build_checkpoint_metadata,
@@ -35,7 +34,6 @@ from tinygpt.distributed import (
     compute_init,
     get_dist_info,
     print0,
-    wrap_fsdp,
 )
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_mlflow_tracking
@@ -132,6 +130,8 @@ if not 0.0 <= args.distill_alpha <= 1.0:
     raise ValueError(f"--distill-alpha must be in [0, 1], got {args.distill_alpha}")
 if args.distill_temperature <= 0:
     raise ValueError(f"--distill-temperature must be > 0, got {args.distill_temperature}")
+if args.optimizer == "muon" and is_dist and args.sharding_strategy != "NO_SHARD":
+    raise ValueError("Muon requires --sharding-strategy NO_SHARD; use --optimizer adamw with sharded FSDP")
 
 model_ref = args.resume_from or args.checkpoint
 model, meta = build_model_from_checkpoint(model_ref, device, phase="train")
@@ -206,15 +206,7 @@ if meta["model_config"]["vocab_size"] != teacher_meta["model_config"]["vocab_siz
     )
 print0(f"Loaded teacher with vocab size {teacher_meta['model_config']['vocab_size']:,}")
 
-student_model = wrap_fsdp(
-    model,
-    device_type=device_type,
-    is_dist=is_dist,
-    sharding_strategy=args.sharding_strategy,
-    compute_dtype_override=compute_dtype,
-    local_rank=local_rank,
-    transformer_layer_cls=LlamaDecoderLayer,
-)
+student_model = model
 
 task_names = {t.strip() for t in args.tasks.split(",") if t.strip()}
 task_list, val_task_list = build_distillation_tasks(
@@ -291,6 +283,7 @@ training_args = build_training_arguments(
     device_type=device_type,
     compute_dtype=compute_dtype,
     disable_tqdm=not master_process,
+    fsdp_sharding_strategy=args.sharding_strategy if device_type == "cuda" and is_dist else None,
 )
 
 checkpoint_metadata = build_checkpoint_metadata(
