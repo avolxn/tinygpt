@@ -119,11 +119,15 @@ def save_model_checkpoint(
     tokenizer_dir: str | None = None,
 ) -> None:
     """Save a model with the standard Transformers serialization API."""
+    state_dict = _sanitize_state_dict_for_save(model)
+    if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
+        return
+
     os.makedirs(output_dir, exist_ok=True)
     inner: Any = model.module if hasattr(model, "module") else model
     inner.save_pretrained(
         output_dir,
-        state_dict=_sanitize_state_dict_for_save(model),
+        state_dict=state_dict,
         safe_serialization=True,
     )
     logger.info("Saved Transformers model to: %s", output_dir)
