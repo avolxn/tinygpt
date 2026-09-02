@@ -287,7 +287,7 @@ training_args = build_training_arguments(
     device_type=device_type,
     compute_dtype=compute_dtype,
     disable_tqdm=not master_process,
-    fsdp_sharding_strategy=args.sharding_strategy if device_type == "cuda" and is_dist else None,
+    fsdp_sharding_strategy=(args.sharding_strategy if device_type == "cuda" and is_dist else None),
 )
 
 checkpoint_metadata = build_checkpoint_metadata(

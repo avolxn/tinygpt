@@ -95,7 +95,7 @@ def build_training_arguments(
     evaluation_enabled = eval_every > 0
     fsdp = None
     fsdp_config: dict[str, Any] | None = None
-    if fsdp_sharding_strategy is not None:
+    if fsdp_sharding_strategy in {"FULL_SHARD", "SHARD_GRAD_OP"}:
         fsdp = f"{fsdp_sharding_strategy.lower()} auto_wrap"
         fsdp_config = {
             "transformer_layer_cls_to_wrap": ["LlamaDecoderLayer"],
