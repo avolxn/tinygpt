@@ -159,7 +159,7 @@ def build_model_from_checkpoint(
     """Load a Llama model from a directory or Trainer output."""
     model_dir = resolve_model_directory(model_ref)
     config_dict = _load_json(os.path.join(model_dir, CONFIG_NAME))
-    model = LlamaForCausalLM.from_pretrained(model_dir, torch_dtype=torch.float32)
+    model: Any = LlamaForCausalLM.from_pretrained(model_dir, dtype=torch.float32)
     model.to(device)
 
     if phase == "eval":
@@ -173,4 +173,4 @@ def build_model_from_checkpoint(
         metadata["step"] = metadata["global_step"]
     metadata["model_config"] = config_dict
     metadata["model_dir"] = model_dir
-    return model, metadata
+    return cast(LlamaForCausalLM, model), metadata

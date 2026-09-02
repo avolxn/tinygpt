@@ -21,6 +21,8 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import argparse
 import json
+from collections.abc import Iterator
+from typing import Any, cast
 
 import torch
 from transformers import LlamaForCausalLM
@@ -70,6 +72,7 @@ parser.add_argument(
     choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"],
     help="FSDP sharding strategy",
 )
+parser.add_argument("--optimizer", choices=["adamw", "muon"], default="adamw")
 # Model architecture
 parser.add_argument("--depth", type=int, default=20)
 parser.add_argument("--aspect-ratio", type=int, default=64)
@@ -112,7 +115,7 @@ args = parser.parse_args()
 runtime_config = RuntimeConfig.from_namespace(args)
 
 
-def scaling_param_counts(model: LlamaForCausalLM) -> dict[str, int]:
+def scaling_param_counts(model: Any) -> dict[str, int]:
     """Bucket Llama parameters for the scaling-law calculation."""
     counts = {
         "wte": model.get_input_embeddings().weight.numel(),
@@ -161,9 +164,9 @@ model_config_kwargs = config.to_dict()
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 
 with torch.device("meta"):
-    model = LlamaForCausalLM(config)
+    model = LlamaForCausalLM(config)  # type: ignore[no-untyped-call]
 model.to_empty(device=device)
-model.apply(model._init_weights)  # type: ignore[attr-defined]
+model.apply(model._init_weights)
 
 start_step = 0
 resume_checkpoint = None
@@ -186,14 +189,17 @@ if device_type == "cuda" and is_dist:
         print0("         requires full matrices — results will be INCORRECT with sharding.")
         print0("         Use --sharding-strategy NO_SHARD for correct Muon behavior.")
         print0("!" * 70)
-    model = wrap_fsdp(
-        model,
-        device_type=device_type,
-        is_dist=is_dist,
-        sharding_strategy=args.sharding_strategy,
-        compute_dtype_override=compute_dtype,
-        local_rank=local_rank,
-        transformer_layer_cls=LlamaDecoderLayer,
+    model = cast(
+        LlamaForCausalLM,
+        wrap_fsdp(
+            model,
+            device_type=device_type,
+            is_dist=is_dist,
+            sharding_strategy=args.sharding_strategy,
+            compute_dtype_override=compute_dtype,
+            local_rank=local_rank,
+            transformer_layer_cls=LlamaDecoderLayer,
+        ),
     )
     print0(f"FSDP enabled with sharding strategy: {args.sharding_strategy}")
 
@@ -216,7 +222,7 @@ d12_config = make_config(
     sequence_len=args.max_seq_len,
 )
 with torch.device("meta"):
-    d12_model = LlamaForCausalLM(d12_config)
+    d12_model = LlamaForCausalLM(d12_config)  # type: ignore[no-untyped-call]
 d12_counts = scaling_param_counts(d12_model)
 d12_scaling_params = d12_counts["transformer_matrices"] + d12_counts["lm_head"]
 target_tokens = int(args.target_param_data_ratio * scaling_params)
@@ -261,7 +267,7 @@ checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_n
 mlflow_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
 
 
-def make_loader(split: str):
+def make_loader(split: str) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     if args.txt:
         return text_data_loader(tokenizer, args.txt, args.device_batch_size, args.max_seq_len, device)
     return streaming_data_loader(
@@ -330,6 +336,7 @@ trainer = TinyGPTTrainer(
     lm_head_lr=args.lm_head_lr,
     muon_momentum=args.muon_momentum,
     muon_ns_steps=args.muon_ns_steps,
+    optimizer_name=args.optimizer,
     warmdown_ratio=args.warmdown_ratio,
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,

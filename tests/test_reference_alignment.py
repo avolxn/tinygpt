@@ -1,11 +1,13 @@
 import math
 
+import pytest
 import torch
 from tasks.distillation import build_distillation_tasks
 from transformers import LlamaForCausalLM
 
-from tinygpt.config import compute_scaled_total_batch_size, make_config
+from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weight_decay, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
+from tinygpt.scheduler import get_lr_multiplier
 from tinygpt.train import causal_lm_loss
 
 
@@ -92,3 +94,28 @@ def test_reference_batch_size_scaling_matches_reference_formula():
     assert batch == expected
     assert d12.hidden_size == 768
     assert d24.hidden_size == 1536
+
+
+def test_scaling_rejects_zero_reference_counts():
+    with pytest.raises(ValueError, match="positive"):
+        compute_scaled_total_batch_size(
+            scaling_params=0,
+            d12_scaling_params=1,
+            target_param_data_ratio=12,
+            requested_total_batch_size=-1,
+        )
+    with pytest.raises(ValueError, match="positive"):
+        compute_scaled_weight_decay(
+            base_weight_decay=0.1,
+            total_batch_size=1,
+            target_tokens=0,
+            d12_target_tokens=1,
+        )
+
+
+def test_scheduler_handles_zero_warmup_and_warmdown():
+    assert get_lr_multiplier(0, 10, warmup_steps=0, warmdown_ratio=0) == 1.0
+    assert get_lr_multiplier(10, 10, warmup_steps=0, warmdown_ratio=0.5, final_lr_frac=0.1) == 0.1
+
+    with pytest.raises(ValueError, match="warmdown_ratio"):
+        get_lr_multiplier(0, 10, warmup_steps=0, warmdown_ratio=1.1)

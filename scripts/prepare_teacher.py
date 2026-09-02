@@ -17,7 +17,7 @@ parser.add_argument("--trust-remote-code", action="store_true")
 args = parser.parse_args()
 
 print(f"Downloading teacher from {args.model}")
-tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+tokenizer = AutoTokenizer.from_pretrained(
     args.model,
     revision=args.revision,
     trust_remote_code=args.trust_remote_code,
@@ -34,7 +34,7 @@ model = AutoModelForCausalLM.from_pretrained(
     args.model,
     revision=args.revision,
     trust_remote_code=args.trust_remote_code,
-    torch_dtype="auto",
+    dtype="auto",
 )
 if model.get_input_embeddings().num_embeddings != len(tokenizer):
     model.resize_token_embeddings(len(tokenizer))

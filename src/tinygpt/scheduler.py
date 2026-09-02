@@ -30,13 +30,24 @@ def get_lr_multiplier(
     Returns:
         Multiplier in (0, 1] to be applied to each group's initial_lr.
     """
+    if num_steps <= 0:
+        raise ValueError(f"num_steps must be positive, got {num_steps}")
+    if warmup_steps < 0:
+        raise ValueError(f"warmup_steps must be non-negative, got {warmup_steps}")
+    if not 0.0 <= warmdown_ratio <= 1.0:
+        raise ValueError(f"warmdown_ratio must be in [0, 1], got {warmdown_ratio}")
+    if not 0.0 <= final_lr_frac <= 1.0:
+        raise ValueError(f"final_lr_frac must be in [0, 1], got {final_lr_frac}")
+
     warmdown_steps = round(warmdown_ratio * num_steps)
     decay_start = num_steps - warmdown_steps
 
-    if step < warmup_steps:
+    if step < 0:
+        raise ValueError(f"step must be non-negative, got {step}")
+    if warmup_steps > 0 and step < warmup_steps:
         return (step + 1) / warmup_steps
-    elif step <= decay_start:
+    if warmdown_steps == 0 or step <= decay_start:
         return 1.0
     else:
         progress = (num_steps - step) / warmdown_steps
-        return final_lr_frac + (1.0 - final_lr_frac) * progress
+        return final_lr_frac + (1.0 - final_lr_frac) * max(0.0, progress)

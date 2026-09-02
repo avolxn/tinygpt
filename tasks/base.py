@@ -19,9 +19,12 @@ class Task:
             stop: One past the last physical index; None means use all examples.
             step: Stride between successive physical indices.
         """
-        assert start >= 0, f"start must be non-negative, got {start}"
-        assert stop is None or stop >= start, "stop must be >= start"
-        assert step >= 1, f"step must be >= 1, got {step}"
+        if start < 0:
+            raise ValueError(f"start must be non-negative, got {start}")
+        if stop is not None and stop < start:
+            raise ValueError("stop must be >= start")
+        if step < 1:
+            raise ValueError(f"step must be >= 1, got {step}")
         self.start = start
         self.stop = stop
         self.step = step
@@ -69,7 +72,7 @@ class Task:
             Number of examples accessible through this Task's slice.
         """
         start = self.start
-        stop = self.num_examples() if self.stop is None else self.stop
+        stop = self.num_examples() if self.stop is None else min(self.stop, self.num_examples())
         span = stop - start
         return max(0, (span + self.step - 1) // self.step)
 
@@ -82,7 +85,10 @@ class Task:
         Returns:
             The conversation dict at the corresponding physical index.
         """
-        assert isinstance(index, int), f"Index must be int, got {type(index)}"
+        if not isinstance(index, int):
+            raise TypeError(f"Index must be int, got {type(index)}")
+        if index < 0 or index >= len(self):
+            raise IndexError(f"Task index out of range: {index}")
         physical = self.start + index * self.step
         return self.get_example(physical)
 
@@ -129,7 +135,8 @@ class TaskMixture(Task):
         Returns:
             The conversation dict from the appropriate sub-task.
         """
-        assert 0 <= index < self.num_conversations
+        if index < 0 or index >= self.num_conversations:
+            raise IndexError(f"Task mixture index out of range: {index}")
         task_idx, local_idx = self.index_map[index]
         return self.tasks[task_idx][local_idx]
 

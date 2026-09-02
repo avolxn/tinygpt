@@ -43,14 +43,19 @@ class CustomJSON(Task):
                     line = line.strip()
                     if not line:
                         continue
-                    messages: list[dict[str, str]] = json.loads(line)
-                    assert isinstance(messages, list), f"Expected list of messages, got {type(messages)}"
-                    assert len(messages) >= 2, f"Conversation must have >= 2 messages, got {len(messages)}"
+                    messages = json.loads(line)
+                    if not isinstance(messages, list):
+                        raise ValueError(f"Expected list of messages, got {type(messages)}")
+                    if len(messages) < 2:
+                        raise ValueError(f"Conversation must have >= 2 messages, got {len(messages)}")
                     for i, msg in enumerate(messages):
-                        assert "role" in msg and "content" in msg, f"Message {i} missing role or content"
+                        if not isinstance(msg, dict) or "role" not in msg or "content" not in msg:
+                            raise ValueError(f"Message {i} missing role or content")
                         expected = "user" if i % 2 == 0 else "assistant"
-                        assert msg["role"] == expected, f"Message {i} role {msg['role']!r} != {expected!r}"
-                        assert isinstance(msg["content"], str), f"Message {i} content must be a string"
+                        if msg["role"] != expected:
+                            raise ValueError(f"Message {i} role {msg['role']!r} != {expected!r}")
+                        if not isinstance(msg["content"], str):
+                            raise ValueError(f"Message {i} content must be a string")
                     self.conversations.append(messages)
 
     @property

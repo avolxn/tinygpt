@@ -22,7 +22,7 @@ from transformers import Trainer, TrainerCallback, TrainerControl, TrainerState,
 from tinygpt.checkpoint import save_model_checkpoint
 from tinygpt.distillation import masked_distillation_loss
 from tinygpt.distributed import print0
-from tinygpt.optimizer import make_optimizer
+from tinygpt.optimizer import make_adamw_optimizer, make_optimizer
 from tinygpt.scheduler import get_lr_multiplier
 from tinygpt.utils import get_model_device
 
@@ -134,8 +134,8 @@ class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         for inputs, targets in self._loader:
             yield {
-                "input_ids": inputs.cpu(),
-                "labels": targets.cpu(),
+                "input_ids": inputs,
+                "labels": targets,
             }
 
 
@@ -164,6 +164,7 @@ class TinyGPTTrainer(Trainer):
         lm_head_lr: float | None = None,
         muon_momentum: float = 0.95,
         muon_ns_steps: int = 5,
+        optimizer_name: str = "adamw",
         warmdown_ratio: float = 0.65,
         final_lr_frac: float = 0.05,
         train_loader: Iterator[tuple[torch.Tensor, torch.Tensor]],
@@ -182,6 +183,7 @@ class TinyGPTTrainer(Trainer):
         self._lm_head_lr = lm_head_lr
         self._muon_momentum = muon_momentum
         self._muon_ns_steps = muon_ns_steps
+        self._optimizer_name = optimizer_name
         self._warmdown_ratio = warmdown_ratio
         self._final_lr_frac = final_lr_frac
         self._train_loader = train_loader
@@ -275,16 +277,28 @@ class TinyGPTTrainer(Trainer):
             MuonAdamW optimizer with Muon for matrix params and AdamW for rest.
         """
         assert self.model is not None
-        self.optimizer = make_optimizer(
-            self.model,
-            matrix_lr=self._matrix_lr,
-            embedding_lr=self._embedding_lr,
-            scalar_lr=self._scalar_lr,
-            lm_head_lr=self._lm_head_lr,
-            weight_decay=self.args.weight_decay,
-            muon_momentum=self._muon_momentum,
-            muon_ns_steps=self._muon_ns_steps,
-        )
+        if self._optimizer_name == "adamw":
+            self.optimizer = make_adamw_optimizer(
+                self.model,
+                matrix_lr=self._matrix_lr,
+                embedding_lr=self._embedding_lr,
+                scalar_lr=self._scalar_lr,
+                lm_head_lr=self._lm_head_lr,
+                weight_decay=self.args.weight_decay,
+            )
+        elif self._optimizer_name == "muon":
+            self.optimizer = make_optimizer(
+                self.model,
+                matrix_lr=self._matrix_lr,
+                embedding_lr=self._embedding_lr,
+                scalar_lr=self._scalar_lr,
+                lm_head_lr=self._lm_head_lr,
+                weight_decay=self.args.weight_decay,
+                muon_momentum=self._muon_momentum,
+                muon_ns_steps=self._muon_ns_steps,
+            )
+        else:
+            raise ValueError(f"Unknown optimizer: {self._optimizer_name}")
         return self.optimizer
 
     def create_scheduler(
@@ -336,9 +350,11 @@ class TinyGPTTrainer(Trainer):
             return {}
         assert self.model is not None
         self.model.eval()
-        with torch.no_grad():
-            metrics = self._eval_fn(self.model, self.state.global_step)
-        self.model.train()
+        try:
+            with torch.no_grad():
+                metrics = self._eval_fn(self.model, self.state.global_step)
+        finally:
+            self.model.train()
         prefixed = {f"{metric_key_prefix}/{k}": v for k, v in metrics.items()}
         self.log(prefixed)
         return prefixed

@@ -76,10 +76,20 @@ def make_config(
     Returns:
         A standard LlamaConfig.
     """
+    for name, value in (
+        ("depth", depth),
+        ("aspect_ratio", aspect_ratio),
+        ("head_dim", head_dim),
+        ("vocab_size", vocab_size),
+        ("sequence_len", sequence_len),
+    ):
+        if value <= 0:
+            raise ValueError(f"{name} must be positive, got {value}")
+
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
     num_heads = model_dim // head_dim
-    return LlamaConfig(  # type: ignore[no-untyped-call]
+    return LlamaConfig(  # type: ignore[call-arg]
         vocab_size=vocab_size,
         max_position_embeddings=sequence_len,
         hidden_size=model_dim,
@@ -101,6 +111,10 @@ def compute_scaled_total_batch_size(
     """Return the total token batch size using the reference scaling law."""
     if requested_total_batch_size > 0:
         return requested_total_batch_size
+    if scaling_params <= 0 or d12_scaling_params <= 0:
+        raise ValueError("scaling parameter counts must be positive")
+    if target_param_data_ratio <= 0:
+        raise ValueError("target_param_data_ratio must be positive when batch size is inferred")
     target_tokens = target_param_data_ratio * scaling_params
     d12_target_tokens = target_param_data_ratio * d12_scaling_params
     batch_size_ratio = target_tokens / d12_target_tokens
@@ -116,4 +130,6 @@ def compute_scaled_weight_decay(
     d12_target_tokens: float,
 ) -> float:
     """Return the reference scaled pretraining weight decay."""
+    if total_batch_size <= 0 or target_tokens <= 0 or d12_target_tokens <= 0:
+        raise ValueError("batch size and target token counts must be positive")
     return base_weight_decay * math.sqrt(total_batch_size / REFERENCE_BATCH_SIZE) * (d12_target_tokens / target_tokens)

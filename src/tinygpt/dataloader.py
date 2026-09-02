@@ -80,7 +80,6 @@ def document_batches(
             split=resolved_split,
             data_files=data_files,
             streaming=True,
-            trust_remote_code=True,
         )
         if world_size > 1:
             ds = ds.shard(num_shards=world_size, index=rank)
@@ -100,6 +99,11 @@ def _bestfit_batches(
     refill_buffer: Callable[[list[list[int]]], bool],
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     """Pack tokenized documents into full BOS-aligned batches."""
+    if B <= 0 or T <= 0:
+        raise ValueError(f"B and T must be positive, got B={B}, T={T}")
+    if buffer_size <= 0:
+        raise ValueError(f"buffer_size must be positive, got {buffer_size}")
+
     doc_buffer: list[list[int]] = []
     row_capacity = T + 1
     use_cuda = torch.device(device).type == "cuda"
@@ -116,8 +120,10 @@ def _bestfit_batches(
         for row_idx in range(B):
             pos = 0
             while pos < row_capacity:
-                while len(doc_buffer) < buffer_size and refill_buffer(doc_buffer):
-                    pass
+                while len(doc_buffer) < buffer_size:
+                    if not refill_buffer(doc_buffer):
+                        break
+                    doc_buffer[:] = [doc for doc in doc_buffer if doc]
                 if not doc_buffer:
                     raise RuntimeError("Data source yielded no tokenized documents")
 
@@ -172,6 +178,8 @@ def streaming_data_loader(
         An (inputs, targets) tuple of (B, T) long tensors where targets are
         inputs shifted by one position.
     """
+    if tokenizer_batch_size <= 0:
+        raise ValueError(f"tokenizer_batch_size must be positive, got {tokenizer_batch_size}")
     _, rank, _, world_size = get_dist_info()
 
     batches = document_batches(dataset_name, split, rank, world_size, tokenizer_batch_size, text_field)
@@ -184,8 +192,9 @@ def streaming_data_loader(
             return False
         if isinstance(token_lists[0], int):
             token_lists = [token_lists]
-        doc_buffer.extend(token_lists)
-        return True
+        non_empty = [tokens for tokens in token_lists if tokens]
+        doc_buffer.extend(non_empty)
+        return bool(non_empty)
 
     yield from _bestfit_batches(
         B=B,
@@ -204,17 +213,34 @@ def text_data_loader(
     device: torch.device | str,
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     """Yield BOS-aligned best-fit batches from a local text file."""
-    with open(path, encoding="utf-8") as f:
-        lines = [line.strip() for line in f if line.strip()]
-    if not lines:
-        raise ValueError(f"Text data file contains no non-empty lines: {path}")
+    def line_batches() -> Iterator[list[str]]:
+        while True:
+            batch: list[str] = []
+            saw_data = False
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    text = line.strip()
+                    if text:
+                        saw_data = True
+                        batch.append(text)
+                        if len(batch) == 200:
+                            yield batch
+                            batch = []
+                if batch:
+                    yield batch
+            if not saw_data:
+                raise ValueError(f"Text data file contains no non-empty lines: {path}")
+
+    batches = line_batches()
 
     bos_token = tokenizer.get_bos_token_id()
 
     def refill_buffer(doc_buffer: list[list[int]]) -> bool:
-        for line in lines:
-            doc_buffer.append(tokenizer.encode(line, prepend=bos_token))
-        return bool(lines)
+        lines = next(batches)
+        for tokens in tokenizer.encode(lines, prepend=bos_token):
+            if tokens:
+                doc_buffer.append(tokens)
+        return bool(doc_buffer)
 
     yield from _bestfit_batches(
         B=B,
@@ -250,6 +276,10 @@ def conversation_data_loader(
     """
     _, rank, _, world_size = get_dist_info()
     n = len(task)
+    if n == 0:
+        raise ValueError("conversation task is empty")
+    if B <= 0 or T <= 0:
+        raise ValueError(f"B and T must be positive, got B={B}, T={T}")
     indices = list(range(rank, n, world_size))
 
     bos_token = tokenizer.get_bos_token_id()
@@ -302,9 +332,16 @@ def conversation_data_loader(
                         best_len = conv_len
 
                 if best_idx < 0:
-                    break
+                    shortest_idx = min(range(len(conv_buffer)), key=lambda i: len(conv_buffer[i][0]))
+                    ids, mask = conv_buffer.pop(shortest_idx)
+                    ids = ids[:remaining]
+                    mask = mask[:remaining]
+                    best_len = len(ids)
+                    if best_len == 0:
+                        continue
 
-                ids, mask = conv_buffer.pop(best_idx)
+                else:
+                    ids, mask = conv_buffer.pop(best_idx)
                 row_buffer[row_idx, pos : pos + best_len] = torch.tensor(ids, dtype=torch.long)
                 target_buffer[row_idx, pos : pos + best_len] = torch.tensor(
                     [token_id if mask_val else -1 for token_id, mask_val in zip(ids, mask, strict=True)],

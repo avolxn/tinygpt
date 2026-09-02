@@ -29,7 +29,7 @@ def load_teacher_model(
     model: Any = AutoModelForCausalLM.from_pretrained(
         model_ref,
         local_files_only=True,
-        torch_dtype="auto",
+        dtype="auto",
     )
     model.to(device)
     model.eval()

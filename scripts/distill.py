@@ -60,6 +60,7 @@ parser.add_argument("--resume-from", type=str, default="", help="Distillation mo
 parser.add_argument(
     "--sharding-strategy", type=str, default="FULL_SHARD", choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"]
 )
+parser.add_argument("--optimizer", choices=["adamw", "muon"], default="adamw")
 # Training horizon
 parser.add_argument("--num-iterations", type=int, default=-1, help="Optimization steps (-1 = approximate one epoch)")
 # Batch sizes (default: inherit from pretrain metadata when available)
@@ -314,6 +315,7 @@ trainer = TinyGPTTrainer(
     lm_head_lr=args.lm_head_lr,
     warmdown_ratio=args.warmdown_ratio,
     final_lr_frac=args.final_lr_frac,
+    optimizer_name=args.optimizer,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
     teacher_model=teacher_model,

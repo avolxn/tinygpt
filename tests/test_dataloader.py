@@ -8,7 +8,7 @@ import pytest
 import torch
 from tests.helpers import make_test_tokenizer
 
-from tinygpt.dataloader import text_data_loader
+from tinygpt.dataloader import conversation_data_loader, text_data_loader
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 
@@ -146,3 +146,28 @@ def test_text_data_loader_reads_local_documents(tmp_path, tokenizer: HuggingFace
     assert inputs.shape == (2, 16)
     assert targets.shape == (2, 16)
     assert (inputs[:, 0] == tokenizer.get_bos_token_id()).all()
+
+
+def test_conversation_loader_crops_oversized_conversations() -> None:
+    class Tokenizer:
+        def get_bos_token_id(self) -> int:
+            return 0
+
+        def render_conversation(self, conversation, max_tokens):
+            return list(range(10)), [1] * 10
+
+    task = [{"messages": []}]
+    loader = conversation_data_loader(Tokenizer(), task, B=1, T=4, device="cpu")
+    inputs, targets = next(loader)
+
+    assert inputs.shape == (1, 4)
+    assert targets.shape == (1, 4)
+    assert (targets >= 0).all()
+
+
+def test_text_data_loader_rejects_empty_files(tmp_path, tokenizer: HuggingFaceTokenizer) -> None:
+    source = tmp_path / "empty.txt"
+    source.write_text("\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no non-empty lines"):
+        next(text_data_loader(tokenizer, str(source), B=1, T=4, device="cpu"))

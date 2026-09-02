@@ -213,3 +213,31 @@ def make_optimizer(
     for group in optimizer.param_groups:
         group["initial_lr"] = group["lr"]
     return optimizer
+
+
+def make_adamw_optimizer(
+    model: nn.Module,
+    *,
+    matrix_lr: float = 0.02,
+    embedding_lr: float = 0.3,
+    scalar_lr: float = 0.5,
+    lm_head_lr: float | None = None,
+    weight_decay: float = 0.1,
+) -> torch.optim.AdamW:
+    """Create an AdamW optimizer that is compatible with fully sharded FSDP."""
+    param_groups = make_param_groups(
+        model,
+        matrix_lr=matrix_lr,
+        embedding_lr=embedding_lr,
+        scalar_lr=scalar_lr,
+        lm_head_lr=lm_head_lr,
+        weight_decay=weight_decay,
+    )
+    adamw_groups = [
+        {key: value for key, value in group.items() if key not in {"kind", "momentum", "ns_steps"}}
+        for group in param_groups
+    ]
+    optimizer = torch.optim.AdamW(adamw_groups)
+    for group in optimizer.param_groups:
+        group["initial_lr"] = group["lr"]
+    return optimizer
