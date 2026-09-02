@@ -61,8 +61,32 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     eval_modes = {m.strip() for m in args.eval.split(",")}
+    allowed_modes = {"bpb", "sample", "chat"}
+    unknown_modes = eval_modes - allowed_modes
+    if not eval_modes or unknown_modes:
+        parser.error(f"--eval must contain only bpb,sample,chat; unknown: {', '.join(sorted(unknown_modes))}")
+    if args.device_batch_size <= 0:
+        parser.error("--device-batch-size must be positive")
+    if args.split_tokens <= 0:
+        parser.error("--split-tokens must be positive")
+    if args.num_samples <= 0:
+        parser.error("--num-samples must be positive")
+    if args.max_new_tokens <= 0:
+        parser.error("--max-new-tokens must be positive")
+    if args.top_k <= 0:
+        parser.error("--top-k must be positive")
+    if args.temperature < 0:
+        parser.error("--temperature must be non-negative")
+    if args.max_problems is not None and args.max_problems <= 0:
+        parser.error("--max-problems must be positive")
+    if args.vllm_tensor_parallel_size <= 0:
+        parser.error("--vllm-tensor-parallel-size must be positive")
+
     needs_local_model = "bpb" in eval_modes
     needs_vllm = bool(eval_modes & {"sample", "chat"})
+    dist_requested, _, _, _ = get_dist_info()
+    if needs_vllm and dist_requested:
+        parser.error("sample/chat evaluation must run as a single Python process; use vLLM tensor parallelism instead")
     if needs_vllm and not args.vllm_model:
         parser.error("--vllm-model is required for sample/chat evaluation")
     if needs_local_model and not args.checkpoint:
@@ -176,6 +200,16 @@ def run_generative_eval(
     Returns:
         Pass rate (fraction of problems where any sample is correct).
     """
+    if num_samples <= 0:
+        raise ValueError(f"num_samples must be positive, got {num_samples}")
+    if max_new_tokens <= 0:
+        raise ValueError(f"max_new_tokens must be positive, got {max_new_tokens}")
+    if temperature < 0:
+        raise ValueError(f"temperature must be non-negative, got {temperature}")
+    if top_k <= 0:
+        raise ValueError(f"top_k must be positive, got {top_k}")
+    if max_problems is not None and max_problems <= 0:
+        raise ValueError(f"max_problems must be positive, got {max_problems}")
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
     num_passed, total = 0, 0
     assert vllm is not None
@@ -221,6 +255,10 @@ def run_categorical_eval(task_object: Any, batch_size: int, max_problems: int | 
     Returns:
         Accuracy (fraction of problems answered correctly).
     """
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+    if max_problems is not None and max_problems <= 0:
+        raise ValueError(f"max_problems must be positive, got {max_problems}")
     assert vllm is not None
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
     num_batches = -(-num_problems // batch_size)  # ceil_div
