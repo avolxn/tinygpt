@@ -9,7 +9,6 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.1.0",
-    "torch==2.11.0",
     "tokenizers>=0.22.0",
     "datasets>=4.0.0",
     "filelock>=3.12.0",
