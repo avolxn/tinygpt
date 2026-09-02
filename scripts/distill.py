@@ -317,5 +317,7 @@ trainer = TinyGPTTrainer(
     checkpoint_metadata=checkpoint_metadata,
 )
 
-trainer.train(resume_from_checkpoint=resume_checkpoint)
-compute_cleanup()
+try:
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
+finally:
+    compute_cleanup()

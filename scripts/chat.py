@@ -21,7 +21,6 @@ if __name__ == "__main__":
     parser.add_argument("--vllm-tensor-parallel-size", type=int, default=1)
     parser.add_argument("--trust-remote-code", action="store_true")
 
-
     args = parser.parse_args()
 
     model_dir = resolve_model_directory(args.vllm_model)
@@ -38,7 +37,6 @@ if __name__ == "__main__":
             raise RuntimeError(f"Tokenizer missing required special token: {name}")
         return token_id
 
-
     bos = tokenizer.get_bos_token_id()
     user_start = required_special("<|user_start|>")
     user_end = required_special("<|user_end|>")
@@ -52,9 +50,7 @@ if __name__ == "__main__":
 
     conversation_tokens = [bos]
 
-
     def run_turn(user_input: str) -> str:
-        global conversation_tokens
         user_ids = tokenizer.encode(user_input)
         prompt = conversation_tokens + [user_start] + user_ids + [user_end] + [assistant_start]
         response = vllm.generate(
@@ -68,14 +64,8 @@ if __name__ == "__main__":
         response_tokens = tokenizer.encode(response)
         print(response, end="", flush=True)
         print()
-        conversation_tokens = (
-            conversation_tokens
-            + [user_start]
-            + user_ids
-            + [user_end]
-            + [assistant_start]
-            + response_tokens
-            + [assistant_end]
+        conversation_tokens.extend(
+            [user_start, *user_ids, user_end, assistant_start, *response_tokens, assistant_end]
         )
         return response
 
@@ -96,7 +86,7 @@ if __name__ == "__main__":
                 print("Goodbye!")
                 break
             if user_input.lower() == "clear":
-                conversation_tokens = [bos]
+                conversation_tokens[:] = [bos]
                 print("[Conversation cleared]")
                 continue
 
