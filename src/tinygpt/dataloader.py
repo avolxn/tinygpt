@@ -213,6 +213,7 @@ def text_data_loader(
     device: torch.device | str,
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     """Yield BOS-aligned best-fit batches from a local text file."""
+
     def line_batches() -> Iterator[list[str]]:
         while True:
             batch: list[str] = []

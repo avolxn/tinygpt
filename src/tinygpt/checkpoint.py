@@ -91,7 +91,9 @@ def resolve_model_directory(model_ref: str) -> str:
 def resolve_trainer_checkpoint(model_ref: str) -> str | None:
     """Return a full Trainer checkpoint path when optimizer state is present."""
     model_dir = resolve_model_directory(model_ref)
-    has_optimizer = any(os.path.exists(os.path.join(model_dir, filename)) for filename in ("optimizer.pt", "optimizer.bin"))
+    has_optimizer = any(
+        os.path.exists(os.path.join(model_dir, filename)) for filename in ("optimizer.pt", "optimizer.bin")
+    )
     required_files = (TRAINER_STATE_NAME, "scheduler.pt")
     if has_optimizer and all(os.path.exists(os.path.join(model_dir, filename)) for filename in required_files):
         return model_dir

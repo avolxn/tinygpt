@@ -19,7 +19,5 @@ def require_mlflow_tracking() -> str:
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(experiment_name)
     except Exception as exc:
-        raise MlflowTrackingError(
-            f"MLflow tracking is required but unavailable at {tracking_uri!r}: {exc}"
-        ) from exc
+        raise MlflowTrackingError(f"MLflow tracking is required but unavailable at {tracking_uri!r}: {exc}") from exc
     return tracking_uri

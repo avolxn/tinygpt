@@ -89,7 +89,7 @@ def make_config(
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
     num_heads = model_dim // head_dim
-    return LlamaConfig(  # type: ignore[no-untyped-call]
+    return LlamaConfig(
         vocab_size=vocab_size,
         max_position_embeddings=sequence_len,
         hidden_size=model_dim,

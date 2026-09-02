@@ -17,7 +17,7 @@ jobs:
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra cpu --group dev
       - run: uv run ruff check src/
 
   format:
@@ -30,7 +30,7 @@ jobs:
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra cpu --group dev
       - run: uv run ruff format --check src/
 
   typecheck:
@@ -43,7 +43,7 @@ jobs:
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra cpu --group dev
       - run: uv run mypy src/
 
   test:
@@ -58,7 +58,7 @@ jobs:
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-3.12-${{ hashFiles('**/uv.lock') }}
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra cpu --group dev
       - run: uv run pytest tests/ -v --cov=src --cov-report=xml --cov-report=term-missing
       - name: Upload coverage
         uses: codecov/codecov-action@v4

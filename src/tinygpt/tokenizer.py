@@ -25,6 +25,7 @@ SPECIAL_TOKENS = [
     "<|output_end|>",
 ]
 
+
 class HuggingFaceTokenizer:
     """Light wrapper around Hugging Face Tokenizer with conversation utilities."""
 
