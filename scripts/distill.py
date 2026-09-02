@@ -216,10 +216,9 @@ task_list, val_task_list = build_distillation_tasks(
     gsm8k_epochs=args.gsm8k_epochs,
 )
 
-if not task_list:
-    raise ValueError(f"No valid tasks found in: {args.tasks}")
-
 task = TaskMixture(task_list)
+if len(task) == 0:
+    raise ValueError(f"Distillation task mixture is empty: {args.tasks}")
 print0(f"Task mixture: {len(task):,} examples from {task_names}")
 
 val_task = TaskMixture(val_task_list) if args.eval_every > 0 else None

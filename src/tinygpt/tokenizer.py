@@ -241,6 +241,9 @@ class HuggingFaceTokenizer:
             TypeError: If a user message has non-string content.
             RuntimeError: If a required special token is missing from the tokenizer.
         """
+        if max_tokens <= 0:
+            raise ValueError(f"max_tokens must be positive, got {max_tokens}")
+
         ids: list[int] = []
         mask: list[int] = []
 
@@ -329,6 +332,8 @@ class HuggingFaceTokenizer:
         """
         conversation = copy.deepcopy(conversation)
         messages = conversation["messages"]
+        if not messages:
+            raise ValueError("Conversation must contain at least one assistant message")
         if messages[-1]["role"] != "assistant":
             raise ValueError("Last message must be from assistant")
         messages.pop()

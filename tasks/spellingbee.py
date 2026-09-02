@@ -87,7 +87,10 @@ def _load_words() -> list[str]:
     filename = WORD_LIST_URL.rsplit("/", 1)[-1]
     word_list_path = download_file_with_lock(WORD_LIST_URL, filename)
     with open(word_list_path, encoding="utf-8") as f:
-        return [line.strip() for line in f if line.strip()]
+        words = [line.strip() for line in f if line.strip()]
+    if not words:
+        raise ValueError(f"Word list is empty: {word_list_path}")
+    return words
 
 
 class SpellingBee(Task):
@@ -95,6 +98,8 @@ class SpellingBee(Task):
 
     def __init__(self, size: int = 1000, split: str = "train", **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        if size <= 0:
+            raise ValueError(f"SpellingBee size must be positive, got {size}")
         if split not in ("train", "test"):
             raise ValueError("SpellingBee split must be train|test")
         self.size = size
@@ -177,6 +182,8 @@ class SimpleSpelling(Task):
 
     def __init__(self, size: int = 1000, split: str = "train", **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        if size <= 0:
+            raise ValueError(f"SimpleSpelling size must be positive, got {size}")
         if split not in ("train", "test"):
             raise ValueError("SimpleSpelling split must be train|test")
         self.size = size

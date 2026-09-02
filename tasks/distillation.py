@@ -26,12 +26,15 @@ def build_distillation_tasks(
         raise ValueError("task epoch multipliers must be positive")
 
     train_tasks: list[Task] = []
+    identity_task: CustomJSON | None = None
 
     if "smoltalk" in task_names:
         train_tasks.append(SmolTalk(split="train"))
 
     if "identity" in task_names and identity_conversations:
-        train_tasks += [CustomJSON(filepath=identity_conversations)] * 2
+        identity_task = CustomJSON(filepath=identity_conversations)
+        if len(identity_task) > 0:
+            train_tasks += [identity_task, identity_task]
 
     if "mmlu" in task_names:
         train_tasks += [MMLU(subset="all", split="auxiliary_train")] * mmlu_epochs
@@ -56,8 +59,8 @@ def build_distillation_tasks(
     else:
         if "smoltalk" in task_names:
             val_tasks.append(SmolTalk(split="test"))
-        if "identity" in task_names and identity_conversations:
-            val_tasks.append(CustomJSON(filepath=identity_conversations))
+        if identity_task is not None and len(identity_task) > 0:
+            val_tasks.append(identity_task)
         if "mmlu" in task_names:
             val_tasks.append(MMLU(subset="all", split="test", stop=5200))
         if "gsm8k" in task_names:
