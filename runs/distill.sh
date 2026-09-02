@@ -48,7 +48,7 @@ echo "==> Pretraining student with teacher tokenizer"
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
   --teacher-model "$TEACHER_DIR" \
   --device-type "$DEVICE_TYPE" \
-  --depth 32 \
+  --depth 20 \
   --target-param-data-ratio 12 \
   --device-batch-size 32 \
   --run "$MLFLOW_RUN" \
