@@ -3,6 +3,7 @@ import math
 import pytest
 import torch
 from tasks.distillation import build_distillation_tasks
+from tasks.spellingbee import SimpleSpelling, SpellingBee
 from transformers import LlamaForCausalLM
 
 from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weight_decay, make_config
@@ -111,6 +112,13 @@ def test_scaling_rejects_zero_reference_counts():
             target_tokens=0,
             d12_target_tokens=1,
         )
+
+
+def test_spelling_tasks_reject_non_positive_sizes():
+    with pytest.raises(ValueError, match="size must be positive"):
+        SimpleSpelling(size=0)
+    with pytest.raises(ValueError, match="size must be positive"):
+        SpellingBee(size=0)
 
 
 def test_scheduler_handles_zero_warmup_and_warmdown():

@@ -126,3 +126,11 @@ def test_render_conversation_max_tokens(tokenizer: HuggingFaceTokenizer) -> None
     ids, mask = tokenizer.render_conversation(conv, max_tokens=50)
     assert len(ids) <= 50
     assert len(mask) <= 50
+
+
+def test_render_conversation_rejects_invalid_limits(tokenizer: HuggingFaceTokenizer) -> None:
+    conversation = {"messages": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}]}
+    with pytest.raises(ValueError, match="max_tokens"):
+        tokenizer.render_conversation(conversation, max_tokens=0)
+    with pytest.raises(ValueError, match="at least one assistant"):
+        tokenizer.render_for_completion({"messages": []})
