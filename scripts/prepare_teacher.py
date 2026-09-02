@@ -9,6 +9,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from tinygpt.metrics import compute_token_bytes
 from tinygpt.tokenizer import SPECIAL_TOKENS, HuggingFaceTokenizer
 
+NANOCHAT_MODEL = "karpathy/nanochat-d32"
+
 parser = argparse.ArgumentParser(description="Prepare a Hugging Face teacher for distillation")
 parser.add_argument("--model", required=True, help="Hugging Face model ID")
 parser.add_argument("--out-dir", required=True, help="Output directory for the converted teacher")
@@ -16,8 +18,12 @@ parser.add_argument("--revision", default=None, help="Optional Hugging Face revi
 parser.add_argument("--trust-remote-code", action="store_true")
 args = parser.parse_args()
 
+if args.model == NANOCHAT_MODEL and args.revision is None:
+    args.revision = "refs/pr/1"
+    print(f"Using converted Transformers revision {args.revision} for {NANOCHAT_MODEL}")
+
 print(f"Downloading teacher from {args.model}")
-tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+tokenizer = AutoTokenizer.from_pretrained(
     args.model,
     revision=args.revision,
     trust_remote_code=args.trust_remote_code,

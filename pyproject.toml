@@ -9,13 +9,13 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.1.0",
-    "torch==2.9.1",
+    "torch==2.11.0",
     "tokenizers>=0.22.0",
     "datasets>=4.0.0",
     "filelock>=3.12.0",
     "mlflow>=3.1.0,<4.0.0",
-    "transformers>=4.57.0,<5.0.0",
-    "huggingface-hub>=0.30.0",
+    "transformers>=5.6.0,<6.0.0",
+    "huggingface-hub>=1.27.0",
 ]
 
 [build-system]
@@ -77,14 +77,14 @@ explicit = true
 [project.optional-dependencies]
 cpu = [
     "setuptools>=65.0.0",
-    "torch==2.9.1",
+    "torch==2.11.0",
 ]
 gpu = [
-    "torch==2.9.1",
-    "vllm>=0.14.0,<0.17.0; platform_system == 'Linux'",
+    "torch==2.11.0",
+    "vllm>=0.20.1,<0.21.0; platform_system == 'Linux'",
 ]
 vllm = [
-    "vllm>=0.14.0,<0.17.0; platform_system == 'Linux'",
+    "vllm>=0.20.1,<0.21.0; platform_system == 'Linux'",
 ]
 
 [tool.uv]

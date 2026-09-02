@@ -8,7 +8,7 @@ set -euo pipefail
 # 4. evaluate the distilled checkpoint on CUDA
 #
 # From repo root:
-#   TEACHER_MODEL=<org>/<model> bash runs/distill.sh
+#   bash runs/distill.sh
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -21,7 +21,7 @@ command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 MLFLOW_RUN="${MLFLOW_RUN:-distill}"
 DEVICE_TYPE="${DEVICE_TYPE:-cuda}"
-TEACHER_MODEL="${TEACHER_MODEL:?Set TEACHER_MODEL to a Hugging Face model ID}"
+TEACHER_MODEL="${TEACHER_MODEL:-karpathy/nanochat-d32}"
 TEACHER_DIR="${TEACHER_DIR:-data/teacher}"
 STUDENT_RUN="${STUDENT_RUN:-student}"
 DISTILL_RUN="${DISTILL_RUN:-distill}"
