@@ -23,7 +23,10 @@ def detect_compute_dtype() -> tuple[torch.dtype, str]:
     """
     env = os.environ.get("TINYGPT_DTYPE")
     if env is not None:
-        return dtype_map[env], f"set via TINYGPT_DTYPE={env}"
+        try:
+            return dtype_map[env], f"set via TINYGPT_DTYPE={env}"
+        except KeyError as exc:
+            raise ValueError(f"Unsupported TINYGPT_DTYPE={env!r}; choose from {sorted(dtype_map)}") from exc
     if torch.cuda.is_available():
         capability = torch.cuda.get_device_capability()
         if capability >= (8, 0):
@@ -60,9 +63,12 @@ class ColoredFormatter(logging.Formatter):
             The formatted log message string with color codes applied.
         """
         levelname = record.levelname
-        if levelname in self.COLORS:
-            record.levelname = f"{self.COLORS[levelname]}{self.BOLD}{levelname}{self.RESET}"
-        message = super().format(record)
+        try:
+            if levelname in self.COLORS:
+                record.levelname = f"{self.COLORS[levelname]}{self.BOLD}{levelname}{self.RESET}"
+            message = super().format(record)
+        finally:
+            record.levelname = levelname
         if levelname == "INFO":
             message = re.sub(r"(\d+\.?\d*\s*(?:GB|MB|%|docs))", rf"{self.BOLD}\1{self.RESET}", message)
         return message
@@ -151,14 +157,14 @@ def get_peak_flops(device_name: str) -> float:
         device_name: GPU model string as returned by torch.cuda.get_device_name().
 
     Returns:
-        Peak BF16 FLOP/s as a float. Returns inf for unrecognised GPU names.
+        Peak BF16 FLOP/s as a float. Returns 0 for unrecognised GPU names.
     """
     name = device_name.lower()
     for patterns, flops in peak_flops_table:
         if all(p in name for p in patterns):
             return flops
     logger.warning(f"Peak flops undefined for: {device_name}, MFU will show as 0%")
-    return float("inf")
+    return 0.0
 
 
 def get_cache_dir() -> str:
@@ -185,6 +191,8 @@ def download_file_with_lock(url: str, filename: str) -> str:
     Returns:
         Absolute path to the downloaded file.
     """
+    if os.path.basename(filename) != filename:
+        raise ValueError(f"filename must be a plain file name, got {filename!r}")
     cache_dir = get_cache_dir()
     file_path = os.path.join(cache_dir, filename)
     lock_path = file_path + ".lock"

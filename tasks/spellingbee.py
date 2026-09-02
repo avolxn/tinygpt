@@ -95,7 +95,8 @@ class SpellingBee(Task):
 
     def __init__(self, size: int = 1000, split: str = "train", **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        assert split in ("train", "test"), "SpellingBee split must be train|test"
+        if split not in ("train", "test"):
+            raise ValueError("SpellingBee split must be train|test")
         self.size = size
         self.split = split
         self.words = _load_words()
@@ -160,8 +161,8 @@ class SpellingBee(Task):
 
     def evaluate(self, conversation: dict[str, Any], assistant_response: str) -> bool:
         assistant_message = conversation["messages"][-1]
-        assert assistant_message["role"] == "assistant"
-        assert isinstance(assistant_message["content"], list)
+        if assistant_message["role"] != "assistant" or not isinstance(assistant_message["content"], list):
+            return False
         last_text_part = assistant_message["content"][-1]["text"]
         ref_num = extract_answer(last_text_part)
         pred_num = extract_answer(assistant_response)
@@ -176,7 +177,8 @@ class SimpleSpelling(Task):
 
     def __init__(self, size: int = 1000, split: str = "train", **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        assert split in ("train", "test"), "SimpleSpelling split must be train|test"
+        if split not in ("train", "test"):
+            raise ValueError("SimpleSpelling split must be train|test")
         self.size = size
         self.split = split
         self.words = _load_words()

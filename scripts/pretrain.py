@@ -181,6 +181,9 @@ if args.resume_from:
     if resume_checkpoint is None:
         print0("No complete Trainer state found; continuing from weights only.")
 
+param_counts = scaling_param_counts(model)
+scaling_params = param_counts["transformer_matrices"] + param_counts["lm_head"]
+
 if device_type == "cuda" and is_dist:
     if args.sharding_strategy != "NO_SHARD":
         print0("!" * 70)
@@ -203,7 +206,6 @@ if device_type == "cuda" and is_dist:
     )
     print0(f"FSDP enabled with sharding strategy: {args.sharding_strategy}")
 
-param_counts = scaling_param_counts(model)
 if param_counts:
     print0("Parameter counts:")
     for k, v in param_counts.items():
@@ -211,9 +213,6 @@ if param_counts:
 num_params = sum(p.numel() for p in model.parameters())
 print0(f"Total params: {num_params:,}")
 
-scaling_params = (
-    param_counts.get("transformer_matrices", 0) + param_counts.get("lm_head", 0) if param_counts else num_params
-)
 d12_config = make_config(
     12,
     aspect_ratio=args.aspect_ratio,

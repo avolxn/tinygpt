@@ -21,8 +21,10 @@ class ARC(Task):
 
     def __init__(self, subset: str, split: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        assert subset in ("ARC-Easy", "ARC-Challenge"), "subset must be ARC-Easy or ARC-Challenge"
-        assert split in ("train", "validation", "test"), "split must be train|validation|test"
+        if subset not in ("ARC-Easy", "ARC-Challenge"):
+            raise ValueError("subset must be ARC-Easy or ARC-Challenge")
+        if split not in ("train", "validation", "test"):
+            raise ValueError("split must be train|validation|test")
         self.ds = load_dataset("allenai/ai2_arc", subset, split=split).shuffle(seed=42)
 
     @property
@@ -52,7 +54,8 @@ class ARC(Task):
         choices: list[str] = row["choices"]["text"]
         letters: list[str] = row["choices"]["label"]
         answer: str = row["answerKey"]
-        assert answer in letters, f"ARC answer {answer!r} not in {letters}"
+        if answer not in letters:
+            raise ValueError(f"ARC answer {answer!r} not in {letters}")
         return {
             "messages": [
                 {"role": "user", "content": render_mc(question, letters, choices)},
@@ -71,5 +74,6 @@ class ARC(Task):
         Returns:
             True if completion equals the correct answer letter.
         """
-        assert completion in problem["letters"], f"ARC answer {completion!r} must be one of {problem['letters']}"
+        if completion not in problem["letters"]:
+            return False
         return completion == str(problem["messages"][-1]["content"])

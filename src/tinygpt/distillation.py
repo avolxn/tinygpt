@@ -52,6 +52,12 @@ def validate_teacher_tokenizer_compatibility(
             "Online KL distillation requires the exact same tokenizer."
         )
 
+    student_get_vocab = getattr(student_tokenizer, "get_vocab", None)
+    teacher_get_vocab = getattr(teacher_tokenizer, "get_vocab", None)
+    if callable(student_get_vocab) and callable(teacher_get_vocab):
+        if student_get_vocab() != teacher_get_vocab():
+            raise ValueError("Teacher/student tokenizers have different token-to-id mappings")
+
     for token in SPECIAL_TOKENS:
         student_id = student_tokenizer.encode_special(token)
         teacher_id = teacher_tokenizer.encode_special(token)

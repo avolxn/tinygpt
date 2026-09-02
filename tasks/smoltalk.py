@@ -23,7 +23,8 @@ class SmolTalk(Task):
 
     def __init__(self, split: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        assert split in ("train", "test"), "split must be train|test"
+        if split not in ("train", "test"):
+            raise ValueError("split must be train|test")
         self.ds = load_dataset("HuggingFaceTB/smol-smoltalk", split=split).shuffle(seed=42)
 
     @property
@@ -52,9 +53,12 @@ class SmolTalk(Task):
         messages: list[dict[str, str]] = row["messages"]
         if messages and messages[0]["role"] == "system":
             messages = messages[1:]
-        assert len(messages) >= 2, "SmolTalk messages must have at least 2 messages"
+        if len(messages) < 2:
+            raise ValueError("SmolTalk messages must have at least 2 messages")
         for i, msg in enumerate(messages):
             expected = "user" if i % 2 == 0 else "assistant"
-            assert msg["role"] == expected, f"Message {i} role {msg['role']!r} != {expected!r}"
-            assert isinstance(msg["content"], str), f"Message {i} content must be a string"
+            if msg["role"] != expected:
+                raise ValueError(f"Message {i} role {msg['role']!r} != {expected!r}")
+            if not isinstance(msg["content"], str):
+                raise ValueError(f"Message {i} content must be a string")
         return {"messages": messages}

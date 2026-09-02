@@ -18,6 +18,13 @@ def build_distillation_tasks(
     gsm8k_epochs: int,
 ) -> tuple[list[Task], list[Task]]:
     """Build train and validation task lists for distillation."""
+    allowed = {"smoltalk", "mmlu", "gsm8k", "identity", "spelling"}
+    unknown = task_names - allowed
+    if unknown:
+        raise ValueError(f"Unknown distillation tasks: {', '.join(sorted(unknown))}")
+    if mmlu_epochs < 1 or gsm8k_epochs < 1:
+        raise ValueError("task epoch multipliers must be positive")
+
     train_tasks: list[Task] = []
 
     if "smoltalk" in task_names:

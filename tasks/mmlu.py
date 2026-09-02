@@ -24,10 +24,10 @@ class MMLU(Task):
             **kwargs: Forwarded to Task.__init__ (start, stop, step).
         """
         super().__init__(**kwargs)
-        assert subset in ("all",), f"subset must be 'all', got {subset}"
-        assert split in ("auxiliary_train", "validation", "dev", "test"), (
-            f"split must be auxiliary_train|validation|dev|test, got {split}"
-        )
+        if subset != "all":
+            raise ValueError(f"subset must be 'all', got {subset}")
+        if split not in ("auxiliary_train", "validation", "dev", "test"):
+            raise ValueError(f"split must be auxiliary_train|validation|dev|test, got {split}")
         self.ds = load_dataset("cais/mmlu", subset, split=split).shuffle(seed=42)
 
     @property
@@ -57,7 +57,8 @@ class MMLU(Task):
         question = str(row["question"])
         choices = list(row["choices"])
         answer_idx = int(row["answer"])
-        assert len(choices) == 4, "MMLU should have 4 choices"
+        if len(choices) != 4:
+            raise ValueError("MMLU should have 4 choices")
         user_msg = render_mc(question, LETTERS, choices)
         return {
             "messages": [

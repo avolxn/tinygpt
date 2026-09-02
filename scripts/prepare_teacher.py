@@ -17,7 +17,7 @@ parser.add_argument("--trust-remote-code", action="store_true")
 args = parser.parse_args()
 
 print(f"Downloading teacher from {args.model}")
-tokenizer = AutoTokenizer.from_pretrained(
+tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
     args.model,
     revision=args.revision,
     trust_remote_code=args.trust_remote_code,

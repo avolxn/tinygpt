@@ -52,6 +52,10 @@ class HuggingFaceTokenizer:
         """
         return int(self.tokenizer.get_vocab_size())
 
+    def get_vocab(self) -> dict[str, int]:
+        """Return the complete token-to-id mapping."""
+        return {str(token): int(token_id) for token, token_id in self.tokenizer.get_vocab().items()}
+
     def get_special_tokens(self) -> list[str]:
         """Return the list of added special token strings.
 

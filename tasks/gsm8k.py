@@ -42,8 +42,10 @@ class GSM8K(Task):
             **kwargs: Forwarded to Task.__init__ (start, stop, step).
         """
         super().__init__(**kwargs)
-        assert subset in ("main", "socratic"), f"subset must be main|socratic, got {subset}"
-        assert split in ("train", "test"), f"split must be train|test, got {split}"
+        if subset not in ("main", "socratic"):
+            raise ValueError(f"subset must be main|socratic, got {subset}")
+        if split not in ("train", "test"):
+            raise ValueError(f"split must be train|test, got {split}")
         self.ds = load_dataset("openai/gsm8k", subset, split=split).shuffle(seed=42)
 
     @property
@@ -101,9 +103,11 @@ class GSM8K(Task):
         Returns:
             True if the predicted answer matches the reference after the #### marker.
         """
-        assert isinstance(completion, str)
+        if not isinstance(completion, str):
+            return False
         assistant_msg = problem["messages"][-1]
-        assert isinstance(assistant_msg["content"], list)
+        if not isinstance(assistant_msg["content"], list):
+            return False
         last_text = assistant_msg["content"][-1]["text"]
         ref = extract_answer(last_text)
         pred = extract_answer(completion)

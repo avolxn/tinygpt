@@ -239,6 +239,11 @@ def execute_code(
     Returns:
         ExecutionResult with success status, captured output, and error info.
     """
+    if timeout <= 0:
+        raise ValueError(f"timeout must be positive, got {timeout}")
+    if maximum_memory_bytes is not None and maximum_memory_bytes <= 0:
+        raise ValueError(f"maximum_memory_bytes must be positive, got {maximum_memory_bytes}")
+
     # ``fork`` can deadlock after libraries such as PyTorch initialize worker
     # threads.  A fresh interpreter keeps code execution independent of the
     # training process on every supported platform.
@@ -252,13 +257,17 @@ def execute_code(
 
     if p.is_alive():
         p.kill()
+        p.join()
+        p.close()
         return ExecutionResult(success=False, stdout="", stderr="", error="Process timed out", timeout=True)
 
     try:
         result_dict = result_queue.get_nowait()
     except queue.Empty:
+        p.close()
         return ExecutionResult(success=False, stdout="", stderr="", error="No result returned", timeout=True)
 
+    p.close()
     return ExecutionResult(
         success=bool(result_dict["success"]),
         stdout=str(result_dict["stdout"]),

@@ -13,6 +13,8 @@ class VLLM:
         tensor_parallel_size: int = 1,
         trust_remote_code: bool = False,
     ) -> None:
+        if tensor_parallel_size < 1:
+            raise ValueError(f"tensor_parallel_size must be positive, got {tensor_parallel_size}")
         try:
             from vllm import LLM, SamplingParams
         except ImportError as error:
@@ -53,6 +55,15 @@ class VLLM:
         stop: list[str] | None = None,
     ) -> list[str]:
         """Generate one completion for each prompt with vLLM's engine."""
+        if max_tokens <= 0:
+            raise ValueError(f"max_tokens must be positive, got {max_tokens}")
+        if temperature < 0:
+            raise ValueError(f"temperature must be non-negative, got {temperature}")
+        if top_k is not None and top_k <= 0:
+            raise ValueError(f"top_k must be positive, got {top_k}")
+        if not prompts:
+            return []
+
         params: dict[str, Any] = {
             "max_tokens": max_tokens,
             "temperature": temperature,
