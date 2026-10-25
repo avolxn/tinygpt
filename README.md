@@ -93,4 +93,3 @@ overridden through environment variables or an optional `infra/airflow/.env`.
 uv run --no-sync python -m scripts.chat --vllm-model data/distill_checkpoints/distill
 uv run --no-sync python -m scripts.evaluate_model --eval chat --vllm-model data/distill_checkpoints/distill
 ```
-
