@@ -4,12 +4,49 @@ import pytest
 import torch
 from tasks.distillation import build_distillation_tasks
 from tasks.spellingbee import SimpleSpelling, SpellingBee
-from transformers import LlamaForCausalLM
+from transformers import LlamaForCausalLM, TrainerCallback, TrainingArguments
 
 from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weight_decay, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
+from tinygpt.metrics import evaluate_loss
 from tinygpt.scheduler import get_lr_multiplier
-from tinygpt.train import causal_lm_loss
+from tinygpt.train import TinyGPTTrainer, causal_lm_loss
+
+
+def test_validation_loss_weights_supervised_tokens():
+    model = LlamaForCausalLM(make_config(1, aspect_ratio=8, head_dim=8, vocab_size=32, sequence_len=8))
+    model.eval()
+    inputs = torch.tensor([[1, 2, 3, 4]])
+    labels = [torch.tensor([[2, -1, -1, -1]]), torch.tensor([[2, 3, 4, 5]])]
+    expected = sum(causal_lm_loss(model, inputs, y, reduction="sum").item() for y in labels) / 5
+    actual = evaluate_loss(model, iter((inputs, y) for y in labels), 2)
+    assert actual == pytest.approx(expected)
+    with pytest.raises(ValueError, match="no supervised tokens"):
+        evaluate_loss(model, iter([(inputs, torch.full_like(inputs, -1))]), 1)
+
+
+def test_evaluation_preserves_mode_and_calls_callbacks(tmp_path):
+    class EvaluationCallback(TrainerCallback):
+        def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+            assert metrics == {"eval_loss": 1.25}
+            control.should_training_stop = True
+            return control
+
+    model = LlamaForCausalLM(make_config(1, aspect_ratio=8, head_dim=8, vocab_size=32, sequence_len=8))
+    model.eval()
+    trainer = TinyGPTTrainer(
+        model=model,
+        args=TrainingArguments(output_dir=str(tmp_path), use_cpu=True, report_to=[], disable_tqdm=True),
+        matrix_lr=0.01,
+        embedding_lr=0.01,
+        scalar_lr=0.01,
+        train_loader=iter([]),
+        eval_fn=lambda model, step: {"loss": 1.25},
+        callbacks=[EvaluationCallback()],
+    )
+    assert trainer.evaluate() == {"eval_loss": 1.25}
+    assert not model.training
+    assert trainer.control.should_training_stop
 
 
 def test_climbmix_source_uses_last_shard_for_validation(monkeypatch):

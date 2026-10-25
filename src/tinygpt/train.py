@@ -361,14 +361,17 @@ class TinyGPTTrainer(Trainer):
         if self._eval_fn is None:
             return {}
         assert self.model is not None
-        self.model.eval()
+        model = self.model_wrapped
+        was_training = model.training
+        model.eval()
         try:
             with torch.no_grad():
-                metrics = self._eval_fn(self.model, self.state.global_step)
+                metrics = self._eval_fn(model, self.state.global_step)
         finally:
-            self.model.train()
-        prefixed = {f"{metric_key_prefix}/{k}": v for k, v in metrics.items()}
-        self.log(prefixed)
+            model.train(was_training)
+        prefixed = {f"{metric_key_prefix}_{k}": v for k, v in metrics.items()}
+        self.log(dict(prefixed))
+        self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, prefixed)
         return prefixed
 
     def save_model(self, output_dir: str | None = None, _internal_call: bool = False) -> None:

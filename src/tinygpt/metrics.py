@@ -23,6 +23,24 @@ from tinygpt.utils import get_model_device
 
 
 @torch.no_grad()
+def evaluate_loss(
+    model: torch.nn.Module,
+    batches: Iterator[tuple[torch.Tensor, torch.Tensor]],
+    steps: int,
+) -> float:
+    """Compute token-weighted cross entropy across batches and distributed ranks."""
+    totals = torch.zeros(2, dtype=torch.float64, device=get_model_device(model))
+    for inputs, labels in itertools.islice(batches, steps):
+        totals[0] += causal_lm_loss(model, inputs, labels, reduction="sum").double()
+        totals[1] += labels.ne(-1).sum()
+    if dist.is_initialized():
+        dist.all_reduce(totals, op=dist.ReduceOp.SUM)
+    if totals[1].item() == 0:
+        raise ValueError("Evaluation contains no supervised tokens")
+    return float((totals[0] / totals[1]).item())
+
+
+@torch.no_grad()
 def evaluate_bpb(
     model: torch.nn.Module,
     batches: Iterator[tuple[torch.Tensor, torch.Tensor]],

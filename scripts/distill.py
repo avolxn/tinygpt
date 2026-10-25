@@ -35,13 +35,13 @@ from tinygpt.distributed import (
     get_dist_info,
     print0,
 )
+from tinygpt.metrics import evaluate_loss
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_mlflow_tracking
 from tinygpt.train import (
     MlflowMetadataCallback,
     TinyGPTTrainer,
     build_training_arguments,
-    causal_lm_loss,
     resolve_training_value,
 )
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
@@ -244,21 +244,16 @@ else:
     print0(f"Approximated one-epoch num_iterations={num_iterations:,} from {len(task):,} mixed conversations")
 
 warmup_steps = round(args.warmup_ratio * num_iterations)
-eval_steps = max(1, args.eval_tokens // args.total_batch_size)
+eval_steps = max(1, args.eval_tokens // world_tokens_per_fwdbwd)
 
 
 def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
-    """Evaluate distillation loss on the held-out validation mixture."""
+    """Evaluate student cross entropy on the held-out validation mixture."""
     assert val_task is not None
     eval_loader = conversation_data_loader(tokenizer, val_task, args.device_batch_size, sequence_len, device)
-    losses = []
-    for _ in range(eval_steps):
-        x, y = next(eval_loader)
-        loss = causal_lm_loss(eval_model, x, y)
-        losses.append(loss.item())
-    distill_val_loss = sum(losses) / len(losses)
-    print0(f"Step {step:05d} | distill val loss: {distill_val_loss:.4f}")
-    return {"distill_loss": distill_val_loss}
+    loss = evaluate_loss(eval_model, eval_loader, eval_steps)
+    print0(f"Step {step:05d} | val CE loss: {loss:.4f}")
+    return {"ce_loss": loss}
 
 
 run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['num_hidden_layers']}"
