@@ -23,6 +23,18 @@ def tokenizer() -> HuggingFaceTokenizer:
     return make_test_tokenizer(texts * 20)
 
 
+@pytest.mark.parametrize("rank,expected,excluded", [(0, "Hello", "Python"), (1, "Python", "Hello")])
+def test_local_text_is_sharded(tokenizer, tmp_path, monkeypatch, rank, expected, excluded):
+    path = tmp_path / "documents.txt"
+    path.write_text("Hello " * 100 + "\n" + "Python " * 100 + "\n", encoding="utf-8")
+    monkeypatch.setattr("tinygpt.dataloader.get_dist_info", lambda: (True, rank, rank, 2))
+    loader = text_data_loader(tokenizer, str(path), 1, 32, "cpu")
+    inputs, _ = next(loader)
+    text = tokenizer.decode(inputs[0].tolist())
+    assert expected in text
+    assert excluded not in text
+
+
 def make_in_memory_loader(tokenizer, docs, B, T, device="cpu"):
     """
     A bestfit loader backed by a simple in-memory document list.

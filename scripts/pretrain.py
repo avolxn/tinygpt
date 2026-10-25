@@ -79,6 +79,7 @@ parser.add_argument("--max-seq-len", type=int, default=2048)
 # Data
 parser.add_argument("--dataset", type=str, default=CLIMBMIX_DATASET)
 parser.add_argument("--txt", type=str, default="", help="Local .txt file (overrides --dataset)")
+parser.add_argument("--val-txt", default="", help="Separate local validation text file")
 parser.add_argument("--text-field", type=str, default="text")
 # Training horizon
 parser.add_argument("--num-iterations", type=int, default=-1)
@@ -110,6 +111,11 @@ parser.add_argument("--save-every", type=int, default=-1)
 
 
 args = parser.parse_args()
+if args.txt and args.eval_every > 0:
+    if not args.val_txt:
+        parser.error("Local text evaluation requires --val-txt or --eval-every -1")
+    if os.path.samefile(args.txt, args.val_txt):
+        parser.error("Training and validation files must be different")
 runtime_config = RuntimeConfig.from_namespace(args)
 
 
@@ -174,7 +180,7 @@ if args.resume_from:
     print0(f"Resumed at step {start_step}")
     resume_checkpoint = resolve_trainer_checkpoint(resolved_resume_dir)
     if resume_checkpoint is None:
-        print0("No complete Trainer state found; continuing from weights only.")
+        raise ValueError("--resume-from requires a complete Trainer checkpoint")
 
 param_counts = scaling_param_counts(model)
 scaling_params = param_counts["transformer_matrices"] + param_counts["lm_head"]
@@ -244,7 +250,8 @@ mlflow_run_name = runtime_config.run if runtime_config.run else runtime_config.r
 
 def make_loader(split: str) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     if args.txt:
-        return text_data_loader(tokenizer, args.txt, args.device_batch_size, args.max_seq_len, device)
+        path = args.txt if split == "train" else args.val_txt
+        return text_data_loader(tokenizer, path, args.device_batch_size, args.max_seq_len, device)
     return streaming_data_loader(
         tokenizer,
         args.device_batch_size,

@@ -213,13 +213,16 @@ def text_data_loader(
     device: torch.device | str,
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     """Yield BOS-aligned best-fit batches from a local text file."""
+    _, rank, _, world_size = get_dist_info()
 
     def line_batches() -> Iterator[list[str]]:
         while True:
             batch: list[str] = []
             saw_data = False
             with open(path, encoding="utf-8") as f:
-                for line in f:
+                for index, line in enumerate(f):
+                    if index % world_size != rank:
+                        continue
                     text = line.strip()
                     if text:
                         saw_data = True
@@ -230,7 +233,7 @@ def text_data_loader(
                 if batch:
                     yield batch
             if not saw_data:
-                raise ValueError(f"Text data file contains no non-empty lines: {path}")
+                raise ValueError(f"Text data file contains no non-empty lines for rank {rank}: {path}")
 
     batches = line_batches()
 

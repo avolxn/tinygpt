@@ -137,7 +137,7 @@ model_ref = args.resume_from or args.checkpoint
 model, meta = build_model_from_checkpoint(model_ref, device, phase="train")
 resume_checkpoint = resolve_trainer_checkpoint(model_ref) if args.resume_from else None
 if args.resume_from and resume_checkpoint is None:
-    print0("No complete Trainer state found; continuing from weights only.")
+    raise ValueError("--resume-from requires a complete Trainer checkpoint")
 student_dir = meta["model_dir"]
 tokenizer = HuggingFaceTokenizer.from_directory(student_dir)
 sequence_len = args.max_seq_len or meta["model_config"]["max_position_embeddings"]
