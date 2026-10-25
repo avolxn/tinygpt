@@ -19,7 +19,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import Trainer, TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
-from tinygpt.checkpoint import save_model_checkpoint
+from tinygpt.checkpoint import save_checkpoint_assets
 from tinygpt.distillation import masked_distillation_loss
 from tinygpt.distributed import print0
 from tinygpt.optimizer import make_adamw_optimizer, make_optimizer
@@ -383,12 +383,9 @@ class TinyGPTTrainer(Trainer):
             output_dir = self.args.output_dir
         assert output_dir is not None
         assert self.model is not None
-        save_model_checkpoint(
-            output_dir,
-            self.model,
-            metadata=self._checkpoint_metadata,
-            tokenizer_dir=self._tokenizer_dir,
-        )
+        super().save_model(output_dir, _internal_call=_internal_call)
+        if self.args.should_save:
+            save_checkpoint_assets(output_dir, self._checkpoint_metadata, self._tokenizer_dir)
 
 
 class MlflowMetadataCallback(TrainerCallback):

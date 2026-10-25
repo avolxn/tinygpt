@@ -57,6 +57,15 @@ def test_save_and_load_model_checkpoint_roundtrip() -> None:
             torch.testing.assert_close(expected_tensor, actual_tensor)
 
 
+def test_load_sharded_model_checkpoint(tmp_path) -> None:
+    model = make_test_model()
+    model.save_pretrained(tmp_path, max_shard_size="1KB")
+    assert resolve_model_directory(str(tmp_path)) == str(tmp_path)
+    loaded, _ = build_model_from_checkpoint(str(tmp_path), torch.device("cpu"))
+    for name, expected in model.state_dict().items():
+        torch.testing.assert_close(loaded.state_dict()[name], expected)
+
+
 def test_save_model_checkpoint_copies_tokenizer_files() -> None:
     model = make_test_model()
 

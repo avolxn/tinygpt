@@ -23,7 +23,7 @@ from typing import Any, cast
 import torch
 from transformers import LlamaForCausalLM
 from transformers.trainer_utils import get_last_checkpoint
-from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_NAME
+from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
 from tinygpt.config import RuntimeConfig
 from tinygpt.tokenizer import SPECIAL_TOKENS
@@ -73,7 +73,9 @@ def build_checkpoint_metadata(
 
 def _has_model_files(model_dir: str) -> bool:
     config_path = os.path.join(model_dir, CONFIG_NAME)
-    return os.path.exists(config_path) and os.path.exists(os.path.join(model_dir, SAFE_WEIGHTS_NAME))
+    return os.path.exists(config_path) and any(
+        os.path.exists(os.path.join(model_dir, name)) for name in (SAFE_WEIGHTS_NAME, SAFE_WEIGHTS_INDEX_NAME)
+    )
 
 
 def resolve_model_directory(model_ref: str) -> str:
@@ -109,11 +111,6 @@ def _load_optional_json(path: str) -> dict[str, Any]:
     return _load_json(path) if os.path.exists(path) else {}
 
 
-def _sanitize_state_dict_for_save(model: torch.nn.Module) -> dict[str, torch.Tensor]:
-    state_dict = model.state_dict()
-    return {key.removeprefix("_orig_mod."): value.detach().cpu().contiguous() for key, value in state_dict.items()}
-
-
 def save_model_checkpoint(
     output_dir: str,
     model: torch.nn.Module,
@@ -121,18 +118,21 @@ def save_model_checkpoint(
     tokenizer_dir: str | None = None,
 ) -> None:
     """Save a model with the standard Transformers serialization API."""
-    state_dict = _sanitize_state_dict_for_save(model)
     if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
         return
 
-    os.makedirs(output_dir, exist_ok=True)
     inner: Any = model.module if hasattr(model, "module") else model
-    inner.save_pretrained(
-        output_dir,
-        state_dict=state_dict,
-        safe_serialization=True,
-    )
+    inner.save_pretrained(output_dir, safe_serialization=True)
     logger.info("Saved Transformers model to: %s", output_dir)
+    save_checkpoint_assets(output_dir, metadata, tokenizer_dir)
+
+
+def save_checkpoint_assets(
+    output_dir: str,
+    metadata: dict[str, Any] | None = None,
+    tokenizer_dir: str | None = None,
+) -> None:
+    """Write project metadata alongside a checkpoint saved by Transformers."""
 
     if metadata is not None:
         metadata_path = os.path.join(output_dir, METADATA_NAME)
