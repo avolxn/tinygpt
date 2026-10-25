@@ -7,11 +7,10 @@ On-disk runtime format:
 Teacher preparation adds the special tokens required by tinygpt.
 """
 
-import os
 from typing import Any, cast, overload
 
 from tokenizers import Tokenizer as HFTokenizer
-from transformers import PreTrainedTokenizerFast
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 SPECIAL_TOKENS = [
     "<|bos|>",
@@ -61,14 +60,17 @@ CHAT_TEMPLATE = """
 class HuggingFaceTokenizer:
     """Light wrapper around Hugging Face Tokenizer with conversation utilities."""
 
-    def __init__(self, tokenizer: HFTokenizer) -> None:
+    def __init__(self, tokenizer: HFTokenizer | PreTrainedTokenizerFast) -> None:
+        if isinstance(tokenizer, HFTokenizer):
+            if tokenizer.token_to_id("<|bos|>") is None:
+                raise ValueError("Teacher tokenizer must contain <|bos|>")
+            tokenizer = PreTrainedTokenizerFast(  # type: ignore[no-untyped-call]
+                tokenizer_object=tokenizer,
+                bos_token="<|bos|>",
+                additional_special_tokens=SPECIAL_TOKENS,
+                chat_template=CHAT_TEMPLATE,
+            )
         self.tokenizer = tokenizer
-        self.chat_tokenizer = PreTrainedTokenizerFast(  # type: ignore[no-untyped-call]
-            tokenizer_object=tokenizer,
-            bos_token=tokenizer.id_to_token(self.get_bos_token_id()),
-            additional_special_tokens=SPECIAL_TOKENS,
-            chat_template=CHAT_TEMPLATE,
-        )
 
     @classmethod
     def from_directory(cls, tokenizer_dir: str) -> "HuggingFaceTokenizer":
@@ -80,8 +82,7 @@ class HuggingFaceTokenizer:
         Returns:
             A HuggingFaceTokenizer loaded from the directory.
         """
-        tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
-        return cls(HFTokenizer.from_file(tokenizer_path))
+        return cls(AutoTokenizer.from_pretrained(tokenizer_dir, local_files_only=True, use_fast=True))
 
     def get_vocab_size(self) -> int:
         """Return the total vocabulary size including special tokens.
@@ -89,7 +90,7 @@ class HuggingFaceTokenizer:
         Returns:
             Integer vocabulary size.
         """
-        return int(self.tokenizer.get_vocab_size())
+        return len(self.tokenizer)
 
     def get_vocab(self) -> dict[str, int]:
         """Return the complete token-to-id mapping."""
@@ -101,7 +102,7 @@ class HuggingFaceTokenizer:
         Returns:
             List of special token string representations.
         """
-        return [w.content for w in self.tokenizer.get_added_tokens_decoder().values()]
+        return [w.content for w in self.tokenizer.added_tokens_decoder.values()]
 
     def id_to_token(self, token_id: int) -> str:
         """Convert a token id to its string representation.
@@ -112,7 +113,7 @@ class HuggingFaceTokenizer:
         Returns:
             String representation of the token.
         """
-        return str(self.tokenizer.id_to_token(token_id))
+        return str(self.tokenizer.convert_ids_to_tokens(token_id))
 
     def encode_special(self, text: str) -> int | None:
         """Return the token id for a special token string, or None if not found.
@@ -123,7 +124,7 @@ class HuggingFaceTokenizer:
         Returns:
             Integer token id, or None if the token is not in the vocabulary.
         """
-        return cast("int | None", self.tokenizer.token_to_id(text))
+        return cast("int | None", self.tokenizer.convert_tokens_to_ids(text))
 
     def get_bos_token_id(self) -> int:
         """Return the BOS token id, trying <|bos|> then <|endoftext|>.
@@ -169,7 +170,7 @@ class HuggingFaceTokenizer:
                 if tok is None:
                     raise ValueError(f"Unknown special token: {prepend!r}")
                 ids.append(tok)
-        ids.extend(self.tokenizer.encode(text, add_special_tokens=False).ids)
+        ids.extend(self.tokenizer.encode(text, add_special_tokens=False))
         if append is not None:
             if isinstance(append, int):
                 ids.append(append)
@@ -251,7 +252,7 @@ class HuggingFaceTokenizer:
         Args:
             tokenizer_dir: Directory path where tokenizer.json will be written.
         """
-        self.chat_tokenizer.save_pretrained(tokenizer_dir)
+        self.tokenizer.save_pretrained(tokenizer_dir)
 
     def render_conversation(
         self,
@@ -261,7 +262,7 @@ class HuggingFaceTokenizer:
         """Render tokens and assistant supervision with Transformers chat templates."""
         if max_tokens <= 0:
             raise ValueError(f"max_tokens must be positive, got {max_tokens}")
-        encoded: Any = self.chat_tokenizer.apply_chat_template(
+        encoded: Any = self.tokenizer.apply_chat_template(
             conversation["messages"],
             return_dict=True,
             return_assistant_tokens_mask=True,
@@ -291,4 +292,4 @@ class HuggingFaceTokenizer:
             raise ValueError("Conversation must contain at least one assistant message")
         if messages[-1]["role"] != "assistant":
             raise ValueError("Last message must be from assistant")
-        return list(self.chat_tokenizer.apply_chat_template(messages[:-1], add_generation_prompt=True))
+        return list(self.tokenizer.apply_chat_template(messages[:-1], add_generation_prompt=True))
