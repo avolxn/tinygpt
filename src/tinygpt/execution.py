@@ -34,8 +34,10 @@ def execute_code(
         name,
         "--network=none",
         "--read-only",
-        "--log-driver=none",
-        "--ulimit=fsize=1048576:1048576",
+        "--log-driver=local",
+        "--log-opt=max-size=1m",
+        "--log-opt=max-file=1",
+        "--log-opt=compress=false",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         "--pids-limit=32",
@@ -47,21 +49,36 @@ def execute_code(
         command.extend(["--memory", str(maximum_memory_bytes), "--memory-swap", str(maximum_memory_bytes)])
     command.extend(
         [
+            "--detach",
             "--init",
-            "-i",
             "python:3.12-slim",
-            "sh",
-            "-c",
-            'timeout --signal=KILL "$1" python -I -B - > /tmp/stdout 2> /tmp/stderr; '
-            'status=$?; cat /tmp/stdout; cat /tmp/stderr >&2; exit "$status"',
-            "evaluation",
+            "timeout",
+            "--signal=KILL",
             f"{timeout}s",
+            "python",
+            "-I",
+            "-B",
+            "-c",
+            code,
         ]
     )
     try:
-        result = subprocess.run(command, input=code, capture_output=True, text=True, timeout=timeout + 30)
-        if result.returncode in {125, 126, 127}:
-            raise RuntimeError(f"Evaluation container failed: {result.stderr.strip()}")
+        subprocess.run(command, capture_output=True, text=True, check=True, timeout=30)
+        result = subprocess.run(
+            ["docker", "wait", name],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=timeout + 5,
+        )
+        exit_code = int(result.stdout.strip())
+        output = subprocess.run(
+            ["docker", "logs", "--tail", "64", name],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
         state = subprocess.run(
             ["docker", "inspect", "--format", "{{.State.OOMKilled}}", name],
             capture_output=True,
@@ -69,14 +86,14 @@ def execute_code(
             check=True,
             timeout=10,
         )
-        timed_out = result.returncode in {124, 137} and state.stdout.strip() != "true"
+        timed_out = exit_code in {124, 137} and state.stdout.strip() != "true"
         return ExecutionResult(
-            success=result.returncode == 0,
-            stdout=result.stdout,
-            stderr=result.stderr,
+            success=exit_code == 0,
+            stdout=output.stdout,
+            stderr=output.stderr,
             error="Execution timed out"
             if timed_out
-            else (result.stderr.strip().splitlines()[-1] if result.stderr.strip() else None),
+            else (output.stderr.strip().splitlines()[-1] if output.stderr.strip() else None),
             timeout=timed_out,
             memory_exceeded=state.stdout.strip() == "true",
         )
