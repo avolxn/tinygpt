@@ -26,12 +26,17 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
 from tinygpt.config import RuntimeConfig
-from tinygpt.tokenizer import SPECIAL_TOKENS
 
 logger = logging.getLogger(__name__)
 TRAINER_STATE_NAME = "trainer_state.json"
 METADATA_NAME = "tinygpt_metadata.json"
-TOKENIZER_FILES = ("tokenizer.json", "token_bytes.pt")
+TOKENIZER_FILES = (
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "token_bytes.pt",
+    "chat_template.jinja",
+)
 
 
 def get_checkpoint_dir(out_dir: str, run_name: str, phase: str = "pretrain") -> str:
@@ -145,17 +150,6 @@ def save_checkpoint_assets(
             source = os.path.join(tokenizer_dir, filename)
             if os.path.exists(source):
                 shutil.copy2(source, os.path.join(output_dir, filename))
-        tokenizer_config_path = os.path.join(output_dir, "tokenizer_config.json")
-        with open(tokenizer_config_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "tokenizer_class": "PreTrainedTokenizerFast",
-                    "bos_token": SPECIAL_TOKENS[0],
-                    "additional_special_tokens": SPECIAL_TOKENS[1:],
-                },
-                f,
-                indent=2,
-            )
 
 
 def build_model_from_checkpoint(

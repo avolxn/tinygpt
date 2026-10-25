@@ -134,3 +134,27 @@ def test_render_conversation_rejects_invalid_limits(tokenizer: HuggingFaceTokeni
         tokenizer.render_conversation(conversation, max_tokens=0)
     with pytest.raises(ValueError, match="at least one assistant"):
         tokenizer.render_for_completion({"messages": []})
+
+
+def test_tool_output_is_not_supervised(tokenizer: HuggingFaceTokenizer) -> None:
+    conversation = {
+        "messages": [
+            {"role": "user", "content": "Hello"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "python", "text": "print(2)"},
+                    {"type": "python_output", "text": "2"},
+                    {"type": "text", "text": "Hello"},
+                ],
+            },
+        ]
+    }
+    ids, mask = tokenizer.render_conversation(conversation)
+    output_start = ids.index(tokenizer.encode_special("<|output_start|>"))
+    output_end = ids.index(tokenizer.encode_special("<|output_end|>"))
+    assert not any(mask[output_start : output_end + 1])
+    python_start = ids.index(tokenizer.encode_special("<|python_start|>"))
+    python_end = ids.index(tokenizer.encode_special("<|python_end|>"))
+    assert all(mask[python_start : python_end + 1])
+    assert mask[-1] == 1

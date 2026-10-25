@@ -7,7 +7,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from tinygpt.metrics import compute_token_bytes
-from tinygpt.tokenizer import SPECIAL_TOKENS, HuggingFaceTokenizer
+from tinygpt.tokenizer import CHAT_TEMPLATE, SPECIAL_TOKENS, HuggingFaceTokenizer
 
 NANOCHAT_MODEL = "karpathy/nanochat-d32"
 
@@ -33,6 +33,8 @@ if not tokenizer.is_fast:
     raise RuntimeError("Teacher tokenizer must be a fast Hugging Face tokenizer")
 
 tokenizer.add_special_tokens({"additional_special_tokens": SPECIAL_TOKENS})
+tokenizer.chat_template = CHAT_TEMPLATE
+tokenizer.bos_token = SPECIAL_TOKENS[0]
 if tokenizer.pad_token is None and tokenizer.eos_token is not None:
     tokenizer.pad_token = tokenizer.eos_token
 
