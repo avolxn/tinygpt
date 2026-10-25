@@ -100,6 +100,7 @@ def build_training_arguments(
     eval_every: int,
     save_steps: int,
     run_name: str,
+    seed: int,
     report_to: list[str],
     device_type: str,
     compute_dtype: torch.dtype,
@@ -133,6 +134,7 @@ def build_training_arguments(
         dataloader_num_workers=0,
         report_to=report_to,
         run_name=run_name,
+        seed=seed,
         label_names=["labels"],
         use_cpu=device_type == "cpu",
         bf16=compute_dtype == torch.bfloat16 and device_type == "cuda",
@@ -160,9 +162,10 @@ class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         for inputs, targets in self._loader:
+            # Trainer collects micro-batches before backward; packing iterators reuse buffers.
             yield {
-                "input_ids": inputs,
-                "labels": targets,
+                "input_ids": inputs.clone(),
+                "labels": targets.clone(),
             }
 
 

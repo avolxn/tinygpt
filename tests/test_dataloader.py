@@ -13,6 +13,22 @@ from tests.helpers import make_test_tokenizer
 
 from tinygpt.dataloader import _bestfit_batches, conversation_data_loader, document_batches, text_data_loader
 from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.train import PreBatchedIterableDataset
+
+
+def test_accumulated_batches_do_not_alias_loader_buffers():
+    inputs = torch.zeros((1, 4), dtype=torch.long)
+    targets = torch.zeros_like(inputs)
+
+    def batches():
+        for value in range(3):
+            inputs.fill_(value)
+            targets.fill_(value + 1)
+            yield inputs, targets
+
+    accumulated = list(PreBatchedIterableDataset(batches()))
+    assert [batch["input_ids"][0, 0].item() for batch in accumulated] == [0, 1, 2]
+    assert [batch["labels"][0, 0].item() for batch in accumulated] == [1, 2, 3]
 
 
 def test_streaming_single_shard_supports_eight_ranks(monkeypatch):

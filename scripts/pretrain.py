@@ -285,6 +285,7 @@ training_args = build_training_arguments(
     eval_every=args.eval_every,
     save_steps=args.save_every if args.save_every > 0 else num_iterations,
     run_name=mlflow_run_name,
+    seed=runtime_config.seed,
     report_to=["mlflow"] if master_process else [],
     device_type=device_type,
     compute_dtype=compute_dtype,
