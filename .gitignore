@@ -15,5 +15,11 @@ wheels/
 # Data
 data/
 
+# Experiment tracking and test reports
+mlruns/
+mlflow.db*
+.coverage*
+coverage.xml
+
 # Local orchestration secrets
 infra/airflow/.env
