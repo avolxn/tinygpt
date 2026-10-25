@@ -15,6 +15,7 @@ from typing import Any
 
 import torch
 from datasets import load_dataset
+from datasets.distributed import split_dataset_by_node
 from huggingface_hub import list_repo_files
 
 from tinygpt.distributed import get_dist_info
@@ -82,7 +83,7 @@ def document_batches(
             streaming=True,
         )
         if world_size > 1:
-            ds = ds.shard(num_shards=world_size, index=rank)
+            ds = split_dataset_by_node(ds, rank=rank, world_size=world_size)
         for batch in ds.iter(batch_size=batch_size):
             texts = batch.get(text_field, batch.get("content", []))
             if texts:
