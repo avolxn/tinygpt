@@ -11,7 +11,7 @@ from transformers import LlamaForCausalLM, TrainerCallback, TrainingArguments
 from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weight_decay, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
 from tinygpt.metrics import evaluate_loss
-from tinygpt.scheduler import get_lr_multiplier
+from tinygpt.optimizer import get_lr_multiplier
 from tinygpt.train import TinyGPTTrainer, causal_lm_loss
 
 

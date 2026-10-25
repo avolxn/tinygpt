@@ -50,8 +50,7 @@ from tinygpt.distributed import (
 )
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.tracking import require_mlflow_tracking
-from tinygpt.train import MlflowMetadataCallback, TinyGPTTrainer, build_training_arguments
+from tinygpt.train import MlflowMetadataCallback, TinyGPTTrainer, build_training_arguments, require_mlflow_tracking
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")

@@ -3,7 +3,7 @@ HuggingFace Trainer integration for tinygpt.
 
 TinyGPTTrainer subclasses transformers.Trainer to plug in:
 - tinygpt's multi-group AdamW optimizer (make_optimizer)
-- tinygpt's warmup + cosine LR schedule (get_lr_multiplier)
+- tinygpt's warmup + linear LR schedule (get_lr_multiplier)
 - Pre-batched infinite iterators as data sources (no re-batching)
 - tinygpt's Hugging Face style model directory format
 - Pluggable eval_fn for bpb / distillation-loss evaluation
@@ -11,9 +11,11 @@ TinyGPTTrainer subclasses transformers.Trainer to plug in:
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterator
 from typing import Any
 
+import mlflow
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, IterableDataset
@@ -22,9 +24,24 @@ from transformers import Trainer, TrainerCallback, TrainerControl, TrainerState,
 from tinygpt.checkpoint import save_checkpoint_assets
 from tinygpt.distillation import masked_distillation_loss
 from tinygpt.distributed import print0
-from tinygpt.optimizer import make_adamw_optimizer, make_optimizer
-from tinygpt.scheduler import get_lr_multiplier
+from tinygpt.optimizer import get_lr_multiplier, make_adamw_optimizer, make_optimizer
 from tinygpt.utils import get_model_device
+
+
+class MlflowTrackingError(RuntimeError):
+    """Raised when the configured MLflow tracking backend is unavailable."""
+
+
+def require_mlflow_tracking() -> str:
+    """Configure and verify the MLflow tracking backend before training."""
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
+    experiment_name = os.environ.get("MLFLOW_EXPERIMENT_NAME", "tinygpt")
+    try:
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment(experiment_name)
+    except Exception as exc:
+        raise MlflowTrackingError(f"MLflow tracking is required but unavailable at {tracking_uri!r}: {exc}") from exc
+    return tracking_uri
 
 
 def model_logits(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
@@ -134,11 +151,7 @@ class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
     """Wraps an infinite (inputs, targets) generator into an IterableDataset.
 
     Items are already full batches of shape (B, T). The DataLoader must be
-    created with batch_size=None so they are passed through unchanged.
-
-    Args:
-        loader: Infinite iterator yielding (inputs, targets) tensor pairs.
-    """
+    created with batch_size=None so they are passed through unchanged."""
 
     def __init__(self, loader: Iterator[tuple[torch.Tensor, torch.Tensor]]) -> None:
         self._loader = loader
@@ -152,20 +165,7 @@ class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
 
 
 class TinyGPTTrainer(Trainer):
-    """Trainer subclass tailored for tinygpt.
-
-    Args:
-        matrix_lr: Learning rate for transformer block weight matrices (Muon).
-        embedding_lr: Learning rate for embedding parameters (AdamW).
-        scalar_lr: Learning rate for scalar/1-D parameters (AdamW).
-        muon_momentum: Momentum for the Muon optimizer (default 0.95).
-        muon_ns_steps: Newton-Schulz iteration steps for Muon (default 5).
-        warmdown_ratio: Fraction of total steps used for cosine decay.
-        final_lr_frac: LR at the end as a fraction of peak LR.
-        train_loader: Infinite iterator yielding (inputs, targets) batches.
-        eval_fn: Optional callable (model, step) -> dict[str, float] for
-        custom evaluation metrics (e.g. bpb or distillation loss).
-    """
+    """Trainer subclass tailored for tinygpt."""
 
     def __init__(
         self,
@@ -207,22 +207,9 @@ class TinyGPTTrainer(Trainer):
         self._tokenizer_dir = tokenizer_dir
 
     def get_train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
-        """Return a DataLoader that passes pre-batched items through unchanged.
-
-        Returns:
-            DataLoader wrapping our infinite bestfit-packed iterator.
-        """
+        """Return a DataLoader that passes pre-batched items through unchanged."""
         dataset = PreBatchedIterableDataset(self._train_loader)
         return DataLoader(dataset, batch_size=None, num_workers=0, pin_memory=False)
-
-    def get_eval_dataloader(self, eval_dataset: Any = None) -> DataLoader[dict[str, torch.Tensor]]:
-        """Return a no-op DataLoader; evaluation is handled in evaluate().
-
-        Returns:
-            Empty DataLoader.
-        """
-        empty: IterableDataset[dict[str, torch.Tensor]] = PreBatchedIterableDataset(iter([]))
-        return DataLoader(empty, batch_size=None, num_workers=0)
 
     def compute_loss(
         self,
@@ -231,17 +218,7 @@ class TinyGPTTrainer(Trainer):
         return_outputs: bool = False,
         num_items_in_batch: torch.Tensor | int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Compute loss against the dataloader's already-shifted labels.
-
-        Args:
-            model: A Transformers causal language model.
-            inputs: Dict with 'input_ids' and 'labels' keys.
-            return_outputs: If True, also return a dict with the loss.
-            num_items_in_batch: Ignored; present for API compatibility.
-
-        Returns:
-            Loss scalar, or (loss, {"loss": loss}) if return_outputs is True.
-        """
+        """Compute loss against the dataloader's already-shifted labels."""
         input_ids = inputs["input_ids"]
         labels = inputs["labels"]
 
@@ -280,14 +257,7 @@ class TinyGPTTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     def create_optimizer(self, model: Any = None) -> torch.optim.Optimizer:
-        """Create the MuonAdamW optimizer via make_optimizer.
-
-        Args:
-            model: Ignored; uses self.model.
-
-        Returns:
-            MuonAdamW optimizer with Muon for matrix params and AdamW for rest.
-        """
+        """Create the selected optimizer with project parameter groups."""
         assert self.model is not None
         if self._optimizer_name == "adamw":
             self.optimizer = make_adamw_optimizer(
@@ -318,15 +288,7 @@ class TinyGPTTrainer(Trainer):
         num_training_steps: int,
         optimizer: torch.optim.Optimizer | None = None,
     ) -> torch.optim.lr_scheduler.LRScheduler:
-        """Create a LambdaLR scheduler using tinygpt's warmup + cosine decay.
-
-        Args:
-            num_training_steps: Total number of training steps.
-            optimizer: Optimizer to attach the scheduler to.
-
-        Returns:
-            LambdaLR scheduler wrapping get_lr_multiplier.
-        """
+        """Create a LambdaLR scheduler using tinygpt's warmup + linear decay."""
         if optimizer is None:
             optimizer = self.optimizer
         assert optimizer is not None
@@ -348,16 +310,7 @@ class TinyGPTTrainer(Trainer):
         ignore_keys: Any = None,
         metric_key_prefix: str = "eval",
     ) -> dict[str, float]:
-        """Run evaluation using the pluggable eval_fn.
-
-        Args:
-            eval_dataset: Ignored; evaluation uses eval_fn.
-            ignore_keys: Ignored.
-            metric_key_prefix: Prefix for metric keys in the returned dict.
-
-        Returns:
-            Dict of evaluation metrics prefixed with metric_key_prefix.
-        """
+        """Run evaluation using the pluggable eval_fn."""
         if self._eval_fn is None:
             return {}
         assert self.model is not None
@@ -375,13 +328,7 @@ class TinyGPTTrainer(Trainer):
         return prefixed
 
     def save_model(self, output_dir: str | None = None, _internal_call: bool = False) -> None:
-        """Save model weights and config in a Hugging Face style directory.
-
-        Args:
-            output_dir: Directory to save the checkpoint. Defaults to
-                self.args.output_dir.
-            _internal_call: Ignored; present for API compatibility.
-        """
+        """Save model weights and config in a Hugging Face style directory."""
         if output_dir is None:
             output_dir = self.args.output_dir
         assert output_dir is not None
@@ -402,7 +349,5 @@ class MlflowMetadataCallback(TrainerCallback):
     ) -> None:
         if not state.is_world_process_zero:
             return
-        import mlflow
-
         if mlflow.active_run() is not None:
             mlflow.log_dict(self._metadata, "tinygpt_metadata.json")

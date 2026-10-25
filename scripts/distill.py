@@ -37,11 +37,11 @@ from tinygpt.distributed import (
 )
 from tinygpt.metrics import evaluate_loss
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.tracking import require_mlflow_tracking
 from tinygpt.train import (
     MlflowMetadataCallback,
     TinyGPTTrainer,
     build_training_arguments,
+    require_mlflow_tracking,
     resolve_training_value,
 )
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason

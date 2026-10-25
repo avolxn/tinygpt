@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import tinygpt.tracking as tracking
+import tinygpt.train as tracking
 
 
 def test_require_mlflow_tracking_configures_backend(monkeypatch: pytest.MonkeyPatch) -> None:
