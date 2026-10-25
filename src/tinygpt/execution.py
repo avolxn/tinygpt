@@ -29,7 +29,6 @@ def execute_code(
     command = [
         "docker",
         "run",
-        "--rm",
         "--pull=never",
         "--name",
         name,
@@ -44,19 +43,43 @@ def execute_code(
     ]
     if maximum_memory_bytes is not None:
         command.extend(["--memory", str(maximum_memory_bytes), "--memory-swap", str(maximum_memory_bytes)])
-    command.extend(["-i", "python:3.12-slim", "python", "-I", "-B", "-"])
+    command.extend(
+        [
+            "--init",
+            "-i",
+            "python:3.12-slim",
+            "timeout",
+            "--signal=KILL",
+            f"{timeout}s",
+            "python",
+            "-I",
+            "-B",
+            "-",
+        ]
+    )
     try:
-        result = subprocess.run(command, input=code, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(command, input=code, capture_output=True, text=True, timeout=timeout + 30)
         if result.returncode in {125, 126, 127}:
             raise RuntimeError(f"Evaluation container failed: {result.stderr.strip()}")
+        state = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.OOMKilled}}", name],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        timed_out = result.returncode in {124, 137} and state.stdout.strip() != "true"
         return ExecutionResult(
             success=result.returncode == 0,
             stdout=result.stdout,
             stderr=result.stderr,
-            error=result.stderr.strip().splitlines()[-1] if result.stderr.strip() else None,
-            memory_exceeded=result.returncode == 137,
+            error="Execution timed out"
+            if timed_out
+            else (result.stderr.strip().splitlines()[-1] if result.stderr.strip() else None),
+            timeout=timed_out,
+            memory_exceeded=state.stdout.strip() == "true",
         )
     except subprocess.TimeoutExpired:
-        return ExecutionResult(False, "", "", error="Execution timed out", timeout=True)
+        raise RuntimeError("Evaluation container exceeded its startup or execution deadline") from None
     finally:
         subprocess.run(["docker", "rm", "--force", name], capture_output=True, check=False)
