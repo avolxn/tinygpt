@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import logging
 import os
-import random
 from typing import Any
 
 import torch
 import torch.distributed as dist
+from transformers import set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +85,8 @@ def compute_init(device_type: str = "cuda", seed: int = 42) -> tuple[bool, int, 
     if device_type == "mps" and not torch.backends.mps.is_available():
         raise RuntimeError("PyTorch is not configured for MPS")
 
-    random.seed(seed)
-    torch.manual_seed(seed)
+    set_seed(seed)
     if device_type == "cuda":
-        torch.cuda.manual_seed_all(seed)
         torch.set_float32_matmul_precision("high")
 
     is_dist, rank, local_rank, world_size = get_dist_info()
