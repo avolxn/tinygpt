@@ -1,90 +1,96 @@
 # tinygpt
 
-Distributed language model pretraining and online teacher-student distillation with
-Transformers, PyTorch FSDP, vLLM inference, Airflow orchestration, and MLflow tracking.
+A distributed language model training pipeline covering teacher preparation,
+student pretraining, online distillation, evaluation, and inference. The project
+uses Hugging Face Transformers, PyTorch FSDP, vLLM, Airflow, and MLflow.
 
-## Pipeline
+## Architecture
 
-1. Download and prepare `karpathy/nanochat-d32` from Hugging Face. The preparation
-   script selects its converted Transformers revision and saves the model and tokenizer.
-2. Pretrain a 20-layer Llama student using the teacher's tokenizer and streaming data.
-3. Distill teacher logits into the student, then evaluate with vLLM.
+The default teacher is `karpathy/nanochat-d32`. Teacher preparation downloads its
+converted Transformers revision from Hugging Face and saves a model directory
+with its tokenizer and chat template. A 20-layer Llama student is pretrained with
+the same tokenizer, then distilled using a weighted combination of supervised
+cross-entropy and temperature-scaled KL divergence over assistant tokens.
 
-The teacher and student must have identical token-to-ID mappings. Model directories
-use the Hugging Face format. Training checkpoints also include Trainer state for resume.
-AdamW is the default optimizer; MuonAdamW requires `--sharding-strategy NO_SHARD`.
+Training uses Transformers Trainer with FSDP, gradient accumulation, streaming
+datasets, and sequence packing. AdamW is the default optimizer; optional MuonAdamW
+combines PyTorch Muon for transformer matrices with AdamW for other parameters
+and requires `--sharding-strategy NO_SHARD`.
+
+Checkpoints use the Hugging Face format and include tokenizer assets and run
+metadata. Trainer checkpoints retain optimizer, scheduler, and RNG state for
+resuming training. vLLM handles generation and tensor-parallel inference.
+
+Evaluation supports bits per byte, ARC, MMLU, GSM8K, and HumanEval. HumanEval runs
+generated Python in restricted Docker containers with resource and execution
+limits. MLflow records training parameters and metrics.
 
 ## Training
 
-Requires Python 3.12+, uv, and a supported CUDA environment for vLLM.
-
-Run from the repository root:
+Requires Python 3.12+, uv, and Linux with a compatible NVIDIA CUDA environment
+for vLLM. Run commands from the repository root.
 
 ```bash
 NPROC_PER_NODE=8 bash runs/distill.sh
 ```
 
-The script installs locked GPU dependencies, prepares the teacher, pretrains,
-distills, and evaluates. Set `TEACHER_MODEL`, `TEACHER_DIR`, `TEACHER_DEVICE`,
-`STUDENT_RUN`, or `DISTILL_RUN` to override its defaults.
+The script installs locked dependencies, prepares the teacher, pretrains the
+student, runs distillation, and evaluates the resulting checkpoint.
+`TEACHER_MODEL`, `TEACHER_DIR`, `TEACHER_DEVICE`, `STUDENT_RUN`, and `DISTILL_RUN`
+override the corresponding defaults.
 
-For a short pipeline run:
+A short end-to-end run is available through:
 
 ```bash
 DEVICE_TYPE=cuda bash runs/smoke.sh
 ```
 
-CPU execution is available with `DEVICE_TYPE=cpu`; vLLM evaluation requires CUDA.
-Both modes use the actual NanoChat teacher and download its full weights.
+CPU execution is supported with `DEVICE_TYPE=cpu`; vLLM evaluation is skipped.
+Both modes download the full teacher model. Generated artifacts are stored under
+`data/`, which is excluded from version control.
 
-MLflow tracking is required. Set `MLFLOW_TRACKING_URI` and
-`MLFLOW_EXPERIMENT_NAME` for a tracking server; direct runs default to
-`sqlite:///mlflow.db` and the `tinygpt` experiment.
+Individual stages are exposed as `scripts.prepare_teacher`, `scripts.pretrain`,
+`scripts.distill`, and `scripts.evaluate_model`. Each module provides `--help`.
+Local text validation requires a separate `--val-txt`; `--resume-from` requires a
+complete Trainer checkpoint.
 
-Generated model and dataset artifacts are stored under `data/` and ignored by Git.
+## Orchestration and tracking
 
-## Inference and evaluation
+With Docker Compose installed:
+
+```bash
+bash runs/airflow.sh
+```
+
+The stack starts separate Airflow API, scheduler, and DAG processor services,
+MLflow, and PostgreSQL with built-in defaults. No environment file is required.
+Airflow is available at `http://localhost:8081` and MLflow at
+`http://localhost:5000`. Trigger the `tinygpt_training` DAG to run the pipeline.
+The generated Airflow login password is stored inside the container at
+`/opt/airflow/simple_auth_manager_passwords.json.generated`.
+
+GPU workers require the NVIDIA Container Toolkit and
+`AIRFLOW_GPU=1 bash runs/airflow.sh`. HumanEval additionally requires a Docker
+daemon and the `python:3.12-slim` image available to its evaluator.
+
+Direct training runs use local SQLite tracking by default. Set
+`MLFLOW_TRACKING_URI` to connect to the MLflow server and
+`MLFLOW_EXPERIMENT_NAME` to select an experiment. Compose settings can be
+overridden through environment variables or an optional `infra/airflow/.env`.
+
+## Inference
 
 ```bash
 uv run --no-sync python -m scripts.chat --vllm-model data/distill_checkpoints/distill
 uv run --no-sync python -m scripts.evaluate_model --eval chat --vllm-model data/distill_checkpoints/distill
 ```
 
-Use `--help` on `scripts.prepare_teacher`, `scripts.pretrain`, `scripts.distill`,
-`scripts.evaluate_model`, or `scripts.chat` for individual stage options.
-Pretraining with `--txt` requires a separate `--val-txt` when validation is enabled.
-`--resume-from` requires a complete Trainer checkpoint.
+## Run evidence
 
-## Airflow and MLflow
+> **Airflow screenshot — to be added after the full run.**
+> Show the completed GPU DAG with teacher preparation, pretraining, distillation,
+> and evaluation tasks visible, including their final statuses and durations.
 
-The Compose stack runs separate Airflow API, scheduler, and DAG processor services,
-a MLflow server, and PostgreSQL databases for both services.
-
-```bash
-bash runs/airflow.sh
-```
-
-Settings have built-in defaults; no secrets file or manual configuration is required.
-Override them through environment variables or an optional `infra/airflow/.env`.
-
-Airflow is available at `http://localhost:8081`; MLflow at `http://localhost:5000`.
-Trigger the `tinygpt_training` DAG to configure a pipeline run. Airflow's Simple Auth
-Manager stores generated passwords in
-`/opt/airflow/simple_auth_manager_passwords.json.generated`.
-
-For GPU training, install the NVIDIA Container Toolkit and start with
-`AIRFLOW_GPU=1 bash runs/airflow.sh`. GPUs are assigned to the scheduler that executes
-training tasks. CPU runs skip vLLM evaluation without skipping distillation.
-HumanEval executes generated code in isolated Docker containers and requires
-a Docker daemon with the `python:3.12-slim` image available to the evaluator.
-
-## Development
-
-```bash
-uv sync --frozen --extra cpu --group dev
-uv run --no-sync pytest
-```
-
-CI runs lint, formatting, type checking, tests, and a live Airflow/MLflow startup check.
-The source is organized into `src/tinygpt/` for training components, `tasks/` for
-datasets and benchmarks, `scripts/` for entry points, and `infra/airflow/` for orchestration.
+> **MLflow screenshot — to be added after the full run.**
+> Show the corresponding pretraining and distillation runs with loss and
+> validation curves against training steps, with run names and parameters visible.
