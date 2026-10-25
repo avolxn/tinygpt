@@ -22,6 +22,7 @@ COPY tasks ./tasks
 RUN uv sync --frozen --no-dev --extra "${TINYGPT_EXTRA}"
 
 COPY infra/airflow/dags /opt/airflow/dags
+RUN mkdir -p /mlflow/artifacts && chown -R airflow:root /mlflow
 
 USER airflow
 WORKDIR /workspace

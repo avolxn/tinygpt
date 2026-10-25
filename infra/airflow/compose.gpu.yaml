@@ -1,5 +1,5 @@
 services:
-  airflow:
+  airflow-scheduler:
     build:
       args:
         TINYGPT_EXTRA: gpu

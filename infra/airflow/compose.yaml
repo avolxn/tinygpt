@@ -1,21 +1,27 @@
 name: tinygpt-airflow
 
 services:
-  airflow:
+  airflow: &airflow
     build:
       context: ../..
       dockerfile: infra/airflow/Dockerfile
       args:
         TINYGPT_EXTRA: cpu
-    command: standalone
+    command: api-server
     restart: unless-stopped
     depends_on:
+      airflow-init:
+        condition: service_completed_successfully
       mlflow:
         condition: service_healthy
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     environment:
       AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres/airflow
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?Set AIRFLOW_JWT_SECRET}
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow:8080/execution/
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/simple_auth_manager_passwords.json.generated
@@ -27,6 +33,41 @@ services:
       - ../..:/workspace
       - ./dags:/opt/airflow/dags:ro
 
+  airflow-scheduler:
+    <<: *airflow
+    command: scheduler
+    ports: []
+
+  airflow-dag-processor:
+    <<: *airflow
+    command: dag-processor
+    ports: []
+
+  airflow-init:
+    <<: *airflow
+    command: db migrate
+    restart: "no"
+    ports: []
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres-state:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/mlflow.sql:ro
+
   mlflow:
     build:
       context: ../..
@@ -34,23 +75,26 @@ services:
       args:
         TINYGPT_EXTRA: cpu
     command: >-
-      mlflow server
+      /opt/tinygpt/.venv/bin/mlflow server
       --host 0.0.0.0
       --port 5000
-      --backend-store-uri sqlite:////mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
+      --backend-store-uri postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres/mlflow
+      --artifacts-destination /mlflow/artifacts
     restart: unless-stopped
-    user: "0"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:5000/version"]
       interval: 10s
       timeout: 5s
       retries: 10
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     volumes:
       - mlflow-state:/mlflow
 
 volumes:
   airflow-state:
   mlflow-state:
+  postgres-state:

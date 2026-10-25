@@ -7,6 +7,23 @@ on:
     branches: [ main, master ]
 
 jobs:
+  infrastructure:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-postgres
+      AIRFLOW_JWT_SECRET: ci-airflow-jwt-secret
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f infra/airflow/compose.yaml config --quiet
+      - run: docker compose -f infra/airflow/compose.yaml up --build --wait --wait-timeout 300
+      - run: |
+          curl --fail --retry 12 --retry-delay 5 --retry-all-errors http://localhost:8081/api/v2/monitor/health
+          curl --fail http://localhost:5000/version
+          docker compose -f infra/airflow/compose.yaml exec -T airflow airflow dags list-import-errors --output json
+      - if: failure()
+        run: docker compose -f infra/airflow/compose.yaml logs --tail 100
+      - if: always()
+        run: docker compose -f infra/airflow/compose.yaml down --volumes
   lint:
     runs-on: ubuntu-latest
     steps:
