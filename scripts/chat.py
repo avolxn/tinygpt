@@ -5,10 +5,12 @@ Usage:
 """
 
 import argparse
+from typing import cast
+
+from transformers import AutoTokenizer
 
 from tinygpt.checkpoint import resolve_model_directory
 from tinygpt.inference import VLLM
-from tinygpt.tokenizer import HuggingFaceTokenizer
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Chat with tinygpt")
@@ -23,47 +25,32 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     model_dir = resolve_model_directory(args.vllm_model)
-    tokenizer = HuggingFaceTokenizer.from_directory(model_dir)
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
     vllm = VLLM(
         model_dir,
         tensor_parallel_size=args.vllm_tensor_parallel_size,
         trust_remote_code=args.trust_remote_code,
     )
 
-    def required_special(name: str) -> int:
-        token_id = tokenizer.encode_special(name)
-        if token_id is None:
-            raise RuntimeError(f"Tokenizer missing required special token: {name}")
-        return token_id
-
-    bos = tokenizer.get_bos_token_id()
-    user_start = required_special("<|user_start|>")
-    user_end = required_special("<|user_end|>")
-    assistant_start = required_special("<|assistant_start|>")
-    assistant_end = required_special("<|assistant_end|>")
-
     print("\ntinygpt Interactive Chat")
     print("-" * 50)
     print("Type 'quit' or 'exit' to end  |  'clear' to reset conversation")
     print("-" * 50)
 
-    conversation_tokens = [bos]
+    messages: list[dict[str, str]] = []
 
     def run_turn(user_input: str) -> str:
-        user_ids = tokenizer.encode(user_input)
-        prompt = conversation_tokens + [user_start] + user_ids + [user_end] + [assistant_start]
+        messages.append({"role": "user", "content": user_input})
+        prompt = cast(str, tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
         response = vllm.generate(
-            tokenizer.decode(prompt),
+            prompt,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_k=args.top_k,
             stop=["<|assistant_end|>", "<|bos|>"],
         )
-        response = response.split("<|assistant_end|>", 1)[0].split("<|bos|>", 1)[0]
-        response_tokens = tokenizer.encode(response)
-        print(response, end="", flush=True)
-        print()
-        conversation_tokens.extend([user_start, *user_ids, user_end, assistant_start, *response_tokens, assistant_end])
+        print(response, flush=True)
+        messages.append({"role": "assistant", "content": response})
         return response
 
     if args.prompt:
@@ -82,7 +69,7 @@ if __name__ == "__main__":
                 print("Goodbye!")
                 break
             if user_input.lower() == "clear":
-                conversation_tokens[:] = [bos]
+                messages.clear()
                 print("[Conversation cleared]")
                 continue
 

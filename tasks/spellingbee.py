@@ -10,8 +10,9 @@ import random
 import re
 from typing import Any
 
+from datasets import DownloadManager
+
 from tasks.base import Task
-from tinygpt.utils import download_file_with_lock
 
 LETTERS = "abcdefghijklmnopqrstuvwxyz"
 WORD_LIST_URL = "https://raw.githubusercontent.com/dwyl/english-words/refs/heads/master/words_alpha.txt"
@@ -83,8 +84,7 @@ USER_MSG_TEMPLATES = [
 
 
 def _load_words() -> list[str]:
-    filename = WORD_LIST_URL.rsplit("/", 1)[-1]
-    word_list_path = download_file_with_lock(WORD_LIST_URL, filename)
+    word_list_path = DownloadManager().download(WORD_LIST_URL)
     with open(word_list_path, encoding="utf-8") as f:
         words = [line.strip() for line in f if line.strip()]
     if not words:

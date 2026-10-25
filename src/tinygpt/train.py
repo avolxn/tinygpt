@@ -24,7 +24,6 @@ from tinygpt.checkpoint import save_checkpoint_assets
 from tinygpt.distillation import masked_distillation_loss
 from tinygpt.distributed import print0
 from tinygpt.optimizer import get_lr_multiplier, make_adamw_optimizer, make_optimizer
-from tinygpt.utils import get_model_device
 
 
 class MlflowTrackingError(RuntimeError):
@@ -266,7 +265,7 @@ class TinyGPTTrainer(Trainer):
         else:
             ce_loss = student_logits.sum() * 0.0
 
-        teacher_device = get_model_device(self._teacher_model)
+        teacher_device = next(self._teacher_model.parameters()).device
         teacher_input_ids = input_ids.to(teacher_device)
         with torch.inference_mode():
             teacher_logits = model_logits(self._teacher_model, teacher_input_ids)

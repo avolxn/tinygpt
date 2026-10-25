@@ -16,7 +16,7 @@ from tinygpt.checkpoint import (
     get_checkpoint_dir,
     resolve_model_directory,
     resolve_trainer_checkpoint,
-    save_model_checkpoint,
+    save_checkpoint_assets,
 )
 from tinygpt.config import RuntimeConfig, make_config
 from tinygpt.optimizer import MuonAdamW
@@ -53,7 +53,7 @@ def test_save_and_load_model_checkpoint_roundtrip() -> None:
     model = make_test_model()
 
     with tempfile.TemporaryDirectory() as tmp:
-        save_model_checkpoint(tmp, model)
+        model.save_pretrained(tmp)
 
         assert os.path.exists(os.path.join(tmp, CONFIG_NAME))
         assert os.path.exists(os.path.join(tmp, SAFE_WEIGHTS_NAME))
@@ -81,7 +81,7 @@ def test_load_sharded_model_checkpoint(tmp_path) -> None:
         torch.testing.assert_close(loaded.state_dict()[name], expected)
 
 
-def test_save_model_checkpoint_copies_tokenizer_files() -> None:
+def test_checkpoint_assets_copy_tokenizer_files() -> None:
     model = make_test_model()
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -90,12 +90,14 @@ def test_save_model_checkpoint_copies_tokenizer_files() -> None:
         os.makedirs(tokenizer_dir)
         with open(os.path.join(tokenizer_dir, "tokenizer.json"), "w", encoding="utf-8") as f:
             f.write("{}")
-        torch.save(torch.tensor([0, 1], dtype=torch.int32), os.path.join(tokenizer_dir, "token_bytes.pt"))
+        with open(os.path.join(tokenizer_dir, "tokenizer_config.json"), "w", encoding="utf-8") as f:
+            f.write("{}")
 
-        save_model_checkpoint(out_dir, model, tokenizer_dir=tokenizer_dir)
+        model.save_pretrained(out_dir)
+        save_checkpoint_assets(out_dir, tokenizer_dir=tokenizer_dir)
 
         assert os.path.exists(os.path.join(out_dir, "tokenizer.json"))
-        assert os.path.exists(os.path.join(out_dir, "token_bytes.pt"))
+        assert os.path.exists(os.path.join(out_dir, "tokenizer_config.json"))
 
 
 def test_resolve_model_directory_prefers_latest_trainer_checkpoint() -> None:
@@ -105,8 +107,8 @@ def test_resolve_model_directory_prefers_latest_trainer_checkpoint() -> None:
         run_dir = get_checkpoint_dir(tmp, "demo")
         checkpoint_5 = os.path.join(run_dir, "checkpoint-5")
         checkpoint_10 = os.path.join(run_dir, "checkpoint-10")
-        save_model_checkpoint(checkpoint_5, model)
-        save_model_checkpoint(checkpoint_10, model)
+        model.save_pretrained(checkpoint_5)
+        model.save_pretrained(checkpoint_10)
         with open(os.path.join(checkpoint_5, TRAINER_STATE_NAME), "w", encoding="utf-8") as f:
             f.write('{"global_step": 5}')
         with open(os.path.join(checkpoint_10, TRAINER_STATE_NAME), "w", encoding="utf-8") as f:
@@ -143,7 +145,7 @@ def test_resolve_trainer_checkpoint_requires_training_state() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         checkpoint = os.path.join(tmp, "checkpoint-10")
-        save_model_checkpoint(checkpoint, model)
+        model.save_pretrained(checkpoint)
         assert resolve_trainer_checkpoint(checkpoint) is None
 
         for filename in (TRAINER_STATE_NAME, "optimizer.pt", "scheduler.pt"):

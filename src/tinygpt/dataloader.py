@@ -57,7 +57,7 @@ def document_batches(
     world_size: int,
     batch_size: int,
     text_field: str = "text",
-) -> Iterator[tuple[list[str], int]]:
+) -> Iterator[list[str]]:
     """Infinite iterator that yields batches of document text from HF streaming.
 
     Args:
@@ -69,25 +69,21 @@ def document_batches(
         text_field: Column name containing document text.
 
     Yields:
-        A (texts, epoch) tuple where texts is a list of document strings and
-        epoch is the 1-based epoch counter.
+        A list of document strings for the current rank.
     """
-    epoch = 1
     resolved_name, resolved_split, data_files = resolve_dataset_source(dataset_name, split)
+    ds = load_dataset(resolved_name, split=resolved_split, data_files=data_files, streaming=True)
+    if world_size > 1:
+        ds = split_dataset_by_node(ds, rank=rank, world_size=world_size)
     while True:
-        ds = load_dataset(
-            resolved_name,
-            split=resolved_split,
-            data_files=data_files,
-            streaming=True,
-        )
-        if world_size > 1:
-            ds = split_dataset_by_node(ds, rank=rank, world_size=world_size)
+        saw_data = False
         for batch in ds.iter(batch_size=batch_size):
-            texts = batch.get(text_field, batch.get("content", []))
+            texts = batch[text_field]
             if texts:
-                yield texts, epoch
-        epoch += 1
+                saw_data = True
+                yield texts
+        if not saw_data:
+            raise ValueError(f"Dataset {dataset_name!r} contains no documents for rank {rank}")
 
 
 def _bestfit_batches(
@@ -186,12 +182,10 @@ def streaming_data_loader(
     bos_token = tokenizer.get_bos_token_id()
 
     def refill_buffer(doc_buffer: list[list[int]]) -> bool:
-        doc_batch, _ = next(batches)
+        doc_batch = next(batches)
         token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
         if not token_lists:
             return False
-        if isinstance(token_lists[0], int):
-            token_lists = [token_lists]
         non_empty = [tokens for tokens in token_lists if tokens]
         doc_buffer.extend(non_empty)
         return bool(non_empty)
@@ -293,12 +287,10 @@ def conversation_data_loader(
     row_buffer = torch.full((B, row_capacity), fill_value=bos_token, dtype=torch.long)
     target_buffer = torch.full((B, row_capacity), fill_value=-1, dtype=torch.long)
 
-    cpu_inputs_buf = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
-    cpu_targets_buf = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
+    cpu_inputs = torch.empty((B, T), dtype=torch.long, pin_memory=use_cuda)
+    cpu_targets = torch.empty((B, T), dtype=torch.long, pin_memory=use_cuda)
     gpu_inputs = torch.empty(B * T, dtype=torch.long, device=device).view(B, T)
     gpu_targets = torch.empty(B * T, dtype=torch.long, device=device).view(B, T)
-    cpu_inputs = cpu_inputs_buf[: B * T].view(B, T)
-    cpu_targets = cpu_targets_buf[: B * T].view(B, T)
 
     conv_buffer: list[tuple[list[int], list[int]]] = []
     cursor = 0

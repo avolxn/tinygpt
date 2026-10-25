@@ -3,11 +3,9 @@
 import argparse
 import os
 
-import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from tinygpt.metrics import compute_token_bytes
-from tinygpt.tokenizer import CHAT_TEMPLATE, SPECIAL_TOKENS, HuggingFaceTokenizer
+from tinygpt.tokenizer import CHAT_TEMPLATE, SPECIAL_TOKENS
 
 NANOCHAT_MODEL = "karpathy/nanochat-d32"
 
@@ -54,9 +52,6 @@ tokenizer.save_pretrained(args.out_dir)
 tokenizer_path = os.path.join(args.out_dir, "tokenizer.json")
 if not os.path.isfile(tokenizer_path):
     raise RuntimeError("Fast teacher tokenizer did not produce tokenizer.json")
-
-wrapped_tokenizer = HuggingFaceTokenizer.from_directory(args.out_dir)
-torch.save(compute_token_bytes(wrapped_tokenizer), os.path.join(args.out_dir, "token_bytes.pt"))
 
 print(f"Saved teacher model and tokenizer to {args.out_dir}")
 print(f"Teacher vocabulary size: {len(tokenizer):,}")

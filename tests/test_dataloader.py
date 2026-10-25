@@ -18,7 +18,7 @@ from tinygpt.tokenizer import HuggingFaceTokenizer
 def test_streaming_single_shard_supports_eight_ranks(monkeypatch):
     dataset = Dataset.from_dict({"text": [str(index) for index in range(16)]}).to_iterable_dataset(num_shards=1)
     monkeypatch.setattr("tinygpt.dataloader.load_dataset", lambda *args, **kwargs: dataset)
-    partitions = [set(next(document_batches("local", "train", rank, 8, 2))[0]) for rank in range(8)]
+    partitions = [set(next(document_batches("local", "train", rank, 8, 2))) for rank in range(8)]
     assert set.union(*partitions) == {str(index) for index in range(16)}
     assert sum(map(len, partitions)) == 16
 

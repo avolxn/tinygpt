@@ -1,6 +1,6 @@
-"""Process group setup, rank-0 logging, and FSDP helpers for multi-GPU training.
+"""Process group setup and rank-0 logging for multi-GPU training.
 
-Training scripts call compute_init / compute_cleanup; FSDP scripts use make_fsdp_mixed_precision.
+Training scripts call compute_init / compute_cleanup; Trainer manages FSDP wrapping.
 """
 
 from __future__ import annotations

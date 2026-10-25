@@ -33,7 +33,6 @@ TOKENIZER_FILES = (
     "tokenizer.json",
     "tokenizer_config.json",
     "special_tokens_map.json",
-    "token_bytes.pt",
     "chat_template.jinja",
 )
 
@@ -113,22 +112,6 @@ def _load_json(path: str) -> dict[str, Any]:
 
 def _load_optional_json(path: str) -> dict[str, Any]:
     return _load_json(path) if os.path.exists(path) else {}
-
-
-def save_model_checkpoint(
-    output_dir: str,
-    model: torch.nn.Module,
-    metadata: dict[str, Any] | None = None,
-    tokenizer_dir: str | None = None,
-) -> None:
-    """Save a model with the standard Transformers serialization API."""
-    if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
-        return
-
-    inner: Any = model.module if hasattr(model, "module") else model
-    inner.save_pretrained(output_dir, safe_serialization=True)
-    logger.info("Saved Transformers model to: %s", output_dir)
-    save_checkpoint_assets(output_dir, metadata, tokenizer_dir)
 
 
 def save_checkpoint_assets(

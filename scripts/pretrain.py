@@ -162,11 +162,6 @@ config = make_config(
 model_config_kwargs = config.to_dict()
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 
-with torch.device("meta"):
-    model = LlamaForCausalLM(config)  # type: ignore[no-untyped-call]
-model.to_empty(device=device)
-model.apply(model._init_weights)
-
 start_step = 0
 resume_checkpoint = None
 if args.resume_from:
@@ -179,6 +174,11 @@ if args.resume_from:
     resume_checkpoint = resolve_trainer_checkpoint(resolved_resume_dir)
     if resume_checkpoint is None:
         raise ValueError("--resume-from requires a complete Trainer checkpoint")
+else:
+    with torch.device("meta"):
+        model = LlamaForCausalLM(config)  # type: ignore[no-untyped-call]
+    model.to_empty(device=device)
+    model.apply(model._init_weights)
 
 param_counts = scaling_param_counts(model)
 scaling_params = param_counts["transformer_matrices"] + param_counts["lm_head"]

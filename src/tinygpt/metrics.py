@@ -18,7 +18,6 @@ import torch
 import torch.distributed as dist
 
 from tinygpt.train import causal_lm_loss
-from tinygpt.utils import get_model_device
 
 
 @torch.no_grad()
@@ -28,7 +27,7 @@ def evaluate_loss(
     steps: int,
 ) -> float:
     """Compute token-weighted cross entropy across batches and distributed ranks."""
-    totals = torch.zeros(2, dtype=torch.float64, device=get_model_device(model))
+    totals = torch.zeros(2, dtype=torch.float64, device=next(model.parameters()).device)
     for inputs, labels in itertools.islice(batches, steps):
         totals[0] += causal_lm_loss(model, inputs, labels, reduction="sum").double()
         totals[1] += labels.ne(-1).sum()
@@ -58,7 +57,7 @@ def evaluate_bpb(
     Returns:
         Bits per byte (lower is better).
     """
-    device = get_model_device(model)
+    device = next(model.parameters()).device
     total_nats = torch.tensor(0.0, dtype=torch.float32, device=device)
     total_bytes = torch.tensor(0, dtype=torch.int64, device=device)
 

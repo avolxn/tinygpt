@@ -103,17 +103,6 @@ class HuggingFaceTokenizer:
         """
         return [w.content for w in self.tokenizer.added_tokens_decoder.values()]
 
-    def id_to_token(self, token_id: int) -> str:
-        """Convert a token id to its string representation.
-
-        Args:
-            token_id: Integer token id.
-
-        Returns:
-            String representation of the token.
-        """
-        return str(self.tokenizer.convert_ids_to_tokens(token_id))
-
     def encode_special(self, text: str) -> int | None:
         """Return the token id for a special token string, or None if not found.
 
@@ -221,18 +210,6 @@ class HuggingFaceTokenizer:
             return [self._encode_one(t, prepend=prepend, append=append) for t in text]
         else:
             raise ValueError(f"Invalid input type: {type(text)}")
-
-    def __call__(self, *args: Any, **kwargs: Any) -> list[int] | list[list[int]]:
-        """Delegate to encode().
-
-        Args:
-            *args: Positional arguments forwarded to encode().
-            **kwargs: Keyword arguments forwarded to encode().
-
-        Returns:
-            A flat list of ints for a single string, or a list of lists for batch input.
-        """
-        return self.encode(*args, **kwargs)
 
     def decode(self, ids: list[int]) -> str:
         """Decode a list of token ids back to a string, preserving special tokens.

@@ -1,14 +1,11 @@
-"""Hardware helpers, logging, cache I/O, and MFU tables for tinygpt.
+"""Hardware and compute dtype selection for tinygpt.
 
 Distributed training setup lives in tinygpt.distributed.
 """
 
-import logging
 import os
-import urllib.request
 
 import torch
-from filelock import FileLock
 
 dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
 
@@ -38,24 +35,6 @@ def detect_compute_dtype() -> tuple[torch.dtype, str]:
 compute_dtype, compute_dtype_reason = detect_compute_dtype()
 
 
-logger = logging.getLogger(__name__)
-
-
-def get_model_device(model: torch.nn.Module) -> torch.device:
-    """Return the device where model parameters reside.
-
-    Args:
-        model: The PyTorch module to inspect.
-
-    Returns:
-        The device of the first parameter, or the result of model.get_device()
-        if available.
-    """
-    if hasattr(model, "get_device"):
-        return model.get_device()  # type: ignore[operator, no-any-return]
-    return next(model.parameters()).device
-
-
 def autodetect_device_type() -> str:
     """Detect the best available compute device.
 
@@ -71,49 +50,3 @@ def autodetect_device_type() -> str:
     if int(os.environ.get("RANK", 0)) == 0:
         print(f"Autodetected device type: {device_type}")
     return device_type
-
-
-def get_cache_dir() -> str:
-    """Return the tinygpt cache directory, creating it if necessary.
-
-    Returns:
-        Absolute path to ~/.cache/tinygpt.
-    """
-    path = os.path.join(os.path.expanduser("~"), ".cache", "tinygpt")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def download_file_with_lock(url: str, filename: str) -> str:
-    """Download a file from a URL into the tinygpt cache directory.
-
-    Safe for concurrent callers: uses a lock file so only one process
-    downloads at a time; all others wait and reuse the cached copy.
-
-    Args:
-        url: URL to download from.
-        filename: Local filename to save as (relative to the cache dir).
-
-    Returns:
-        Absolute path to the downloaded file.
-    """
-    if os.path.basename(filename) != filename:
-        raise ValueError(f"filename must be a plain file name, got {filename!r}")
-    cache_dir = get_cache_dir()
-    file_path = os.path.join(cache_dir, filename)
-    lock_path = file_path + ".lock"
-
-    if os.path.exists(file_path):
-        return file_path
-
-    with FileLock(lock_path):
-        if os.path.exists(file_path):
-            return file_path
-        print(f"Downloading {url} ...")
-        with urllib.request.urlopen(url) as response:
-            content = response.read()
-        with open(file_path, "wb") as f:
-            f.write(content)
-        print(f"Saved to {file_path}")
-
-    return file_path
