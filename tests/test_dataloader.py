@@ -4,12 +4,14 @@ Tests for the dataloader:
   - bestfit packing doesn't drop tokens (all tokens in buffer used)
 """
 
+from itertools import cycle, islice
+
 import pytest
 import torch
 from datasets import Dataset
 from tests.helpers import make_test_tokenizer
 
-from tinygpt.dataloader import conversation_data_loader, document_batches, text_data_loader
+from tinygpt.dataloader import _bestfit_batches, conversation_data_loader, document_batches, text_data_loader
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 
@@ -45,62 +47,14 @@ def test_local_text_is_sharded(tokenizer, tmp_path, monkeypatch, rank, expected,
 
 
 def make_in_memory_loader(tokenizer, docs, B, T, device="cpu"):
-    """
-    A bestfit loader backed by a simple in-memory document list.
-    Monkeypatches _document_batches to avoid network access.
-    """
+    """Exercise production packing with an in-memory document source."""
+    documents = cycle(tokenizer.encode(docs, prepend=tokenizer.get_bos_token_id()))
 
-    bos = tokenizer.get_bos_token_id()
-    row_capacity = T + 1
-    doc_buffer = []
+    def refill_buffer(buffer):
+        buffer.extend(islice(documents, 16))
+        return bool(buffer)
 
-    # Pre-tokenize all docs with BOS
-    all_token_lists = [tokenizer.encode(doc, prepend=bos) for doc in docs]
-    doc_idx = [0]  # mutable counter
-
-    def refill():
-        idx = doc_idx[0] % len(all_token_lists)
-        doc_buffer.extend(all_token_lists[idx : idx + 16])
-        doc_idx[0] += 16
-
-    use_cuda = device == "cuda"
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=False)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device)
-    cpu_inputs = cpu_buffer[: B * T].view(B, T)
-    cpu_targets = cpu_buffer[B * T :].view(B, T)
-    inputs = gpu_buffer[: B * T].view(B, T)
-    targets = gpu_buffer[B * T :].view(B, T)
-
-    def loader_gen():
-        while True:
-            for row_idx in range(B):
-                pos = 0
-                while pos < row_capacity:
-                    while len(doc_buffer) < 200:
-                        refill()
-                    remaining = row_capacity - pos
-                    best_idx = max(
-                        (i for i in range(len(doc_buffer)) if len(doc_buffer[i]) <= remaining),
-                        key=lambda i: len(doc_buffer[i]),
-                        default=-1,
-                    )
-                    if best_idx >= 0:
-                        doc = doc_buffer.pop(best_idx)
-                        dl = len(doc)
-                        row_buffer[row_idx, pos : pos + dl] = torch.tensor(doc, dtype=torch.long)
-                        pos += dl
-                    else:
-                        si = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                        doc = doc_buffer.pop(si)
-                        row_buffer[row_idx, pos : pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                        pos += remaining
-            cpu_inputs.copy_(row_buffer[:, :-1])
-            cpu_targets.copy_(row_buffer[:, 1:])
-            gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
-            yield inputs, targets
-
-    return loader_gen()
+    return _bestfit_batches(B=B, T=T, device=device, buffer_size=200, refill_buffer=refill_buffer)
 
 
 def test_bos_starts_every_row(tokenizer: HuggingFaceTokenizer) -> None:
