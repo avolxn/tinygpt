@@ -52,7 +52,7 @@ from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.tracking import require_mlflow_tracking
 from tinygpt.train import MlflowMetadataCallback, TinyGPTTrainer, build_training_arguments
-from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason, get_peak_flops
+from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
 add_runtime_arguments(parser)
@@ -139,11 +139,7 @@ is_dist, rank, local_rank, world_size, device = compute_init(device_type, seed=r
 master_process = rank == 0
 
 if device_type == "cuda":
-    gpu_name = torch.cuda.get_device_name(0)
-    gpu_peak_flops = get_peak_flops(gpu_name)
-    print0(f"GPU: {gpu_name} | Peak FLOPS (BF16): {gpu_peak_flops:.2e}")
-else:
-    gpu_peak_flops = float("inf")
+    print0(f"GPU: {torch.cuda.get_device_name(device)}")
 
 print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
 

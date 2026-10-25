@@ -6,7 +6,6 @@ Distributed training setup lives in tinygpt.distributed.
 
 import logging
 import os
-import re
 import urllib.request
 
 import torch
@@ -40,48 +39,6 @@ def detect_compute_dtype() -> tuple[torch.dtype, str]:
 compute_dtype, compute_dtype_reason = detect_compute_dtype()
 
 
-class ColoredFormatter(logging.Formatter):
-    """Custom formatter that adds colors to log messages."""
-
-    COLORS = {
-        "DEBUG": "\033[36m",
-        "INFO": "\033[32m",
-        "WARNING": "\033[33m",
-        "ERROR": "\033[31m",
-        "CRITICAL": "\033[35m",
-    }
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-
-    def format(self, record: logging.LogRecord) -> str:
-        """Format a log record with ANSI color codes.
-
-        Args:
-            record: The log record to format.
-
-        Returns:
-            The formatted log message string with color codes applied.
-        """
-        levelname = record.levelname
-        try:
-            if levelname in self.COLORS:
-                record.levelname = f"{self.COLORS[levelname]}{self.BOLD}{levelname}{self.RESET}"
-            message = super().format(record)
-        finally:
-            record.levelname = levelname
-        if levelname == "INFO":
-            message = re.sub(r"(\d+\.?\d*\s*(?:GB|MB|%|docs))", rf"{self.BOLD}\1{self.RESET}", message)
-        return message
-
-
-def setup_default_logging() -> None:
-    """Configure the root logger with a colored StreamHandler."""
-    handler = logging.StreamHandler()
-    handler.setFormatter(ColoredFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-    logging.basicConfig(level=logging.INFO, handlers=[handler])
-
-
-setup_default_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -115,56 +72,6 @@ def autodetect_device_type() -> str:
     if int(os.environ.get("RANK", 0)) == 0:
         print(f"Autodetected device type: {device_type}")
     return device_type
-
-
-peak_flops_table: tuple[tuple[frozenset[str], float], ...] = (
-    (frozenset({"gb200"}), 2.5e15),
-    (frozenset({"grace blackwell"}), 2.5e15),
-    (frozenset({"b200"}), 2.25e15),
-    (frozenset({"b100"}), 1.8e15),
-    (frozenset({"h200", "nvl"}), 836e12),
-    (frozenset({"h200", "pcie"}), 836e12),
-    (frozenset({"h200"}), 989e12),
-    (frozenset({"h100", "nvl"}), 835e12),
-    (frozenset({"h100", "pcie"}), 756e12),
-    (frozenset({"h100"}), 989e12),
-    (frozenset({"h800", "nvl"}), 989e12),
-    (frozenset({"h800"}), 756e12),
-    (frozenset({"a100"}), 312e12),
-    (frozenset({"a800"}), 312e12),
-    (frozenset({"a40"}), 149.7e12),
-    (frozenset({"a30"}), 165e12),
-    (frozenset({"l40s"}), 362e12),
-    (frozenset({"l40-s"}), 362e12),
-    (frozenset({"l40 s"}), 362e12),
-    (frozenset({"l4"}), 121e12),
-    (frozenset({"mi355"}), 2.5e15),
-    (frozenset({"mi325"}), 1.3074e15),
-    (frozenset({"mi300x"}), 1.3074e15),
-    (frozenset({"mi300a"}), 980.6e12),
-    (frozenset({"mi250x"}), 383e12),
-    (frozenset({"mi250"}), 362.1e12),
-    (frozenset({"5090"}), 209.5e12),
-    (frozenset({"4090"}), 165.2e12),
-    (frozenset({"3090"}), 71e12),
-)
-
-
-def get_peak_flops(device_name: str) -> float:
-    """Return the BF16 peak FLOP/s for a known GPU model.
-
-    Args:
-        device_name: GPU model string as returned by torch.cuda.get_device_name().
-
-    Returns:
-        Peak BF16 FLOP/s as a float. Returns 0 for unrecognised GPU names.
-    """
-    name = device_name.lower()
-    for patterns, flops in peak_flops_table:
-        if all(p in name for p in patterns):
-            return flops
-    logger.warning(f"Peak flops undefined for: {device_name}, MFU will show as 0%")
-    return 0.0
 
 
 def get_cache_dir() -> str:
