@@ -1,5 +1,4 @@
-"""
-Pretrain a Llama model via Transformers Trainer + PyTorch FSDP.
+"""Pretrain a Llama model via Transformers Trainer + PyTorch FSDP.
 
 Single GPU:
     python -m scripts.pretrain

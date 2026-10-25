@@ -1,5 +1,4 @@
-"""
-Bits-per-byte evaluation metric.
+"""Bits-per-byte evaluation metric.
 
 Bits-per-byte (bpb) is a vocab-size-independent loss metric: it normalises the
 sum of cross-entropy nats by the number of UTF-8 bytes the target tokens
@@ -47,8 +46,7 @@ def evaluate_bpb(
     steps: int,
     token_bytes: torch.Tensor,
 ) -> float:
-    """
-    Evaluate bits-per-byte on *steps* batches from *batches*.
+    """Evaluate bits-per-byte on *steps* batches from *batches*.
 
     Args:
         model: Transformers causal language model
@@ -88,8 +86,7 @@ def evaluate_bpb(
 
 
 def compute_token_bytes(tokenizer: Any, device: torch.device | str = "cpu") -> torch.Tensor:
-    """
-    Build the token_bytes tensor from a tokenizer.
+    """Build the token_bytes tensor from a tokenizer.
 
     Entry i is the number of UTF-8 bytes that token i decodes to, or 0 for
     special tokens (they should not contribute to the bpb metric).

@@ -1,5 +1,5 @@
-"""
-SmolTalk conversational dataset by HuggingFace.
+"""SmolTalk conversational dataset by HuggingFace.
+
 https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk
 
 Train split: ~460 K rows. Test split: ~24 K rows.

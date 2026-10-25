@@ -1,5 +1,4 @@
-"""
-BPE tokenizers used by tinygpt.
+"""BPE tokenizers used by tinygpt.
 
 On-disk runtime format:
 - `tokenizer.json`: HuggingFace tokenizers BPE

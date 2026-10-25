@@ -1,5 +1,4 @@
-"""
-Model serialization utilities for tinygpt.
+"""Model serialization utilities for tinygpt.
 
 Runtime model directories use a Hugging Face style layout:
 - `config.json`
@@ -138,7 +137,6 @@ def save_checkpoint_assets(
     tokenizer_dir: str | None = None,
 ) -> None:
     """Write project metadata alongside a checkpoint saved by Transformers."""
-
     if metadata is not None:
         metadata_path = os.path.join(output_dir, METADATA_NAME)
         with open(metadata_path, "w", encoding="utf-8") as f:

@@ -1,7 +1,7 @@
-"""
-Tests for the dataloader:
-  - BOS token starts every row
-  - bestfit packing doesn't drop tokens (all tokens in buffer used)
+"""Tests for the dataloader.
+
+- BOS token starts every row
+- bestfit packing doesn't drop tokens (all tokens in buffer used).
 """
 
 from itertools import cycle, islice

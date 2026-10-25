@@ -1,5 +1,4 @@
-"""
-Distill a student model against a teacher via Transformers Trainer.
+"""Distill a student model against a teacher via Transformers Trainer.
 
 Loss is computed on assistant tokens only (mask = 1) and combines
 supervised CE with online KL distillation from a teacher model.

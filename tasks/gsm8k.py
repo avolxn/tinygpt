@@ -1,5 +1,5 @@
-"""
-GSM8K (Grade School Math 8K) task.
+"""GSM8K (Grade School Math 8K) task.
+
 https://huggingface.co/datasets/openai/gsm8k
 
 The dataset uses << >> tool call markers which we map to python parts.

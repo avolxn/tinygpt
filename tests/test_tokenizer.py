@@ -1,6 +1,6 @@
-"""
-Tests for HuggingFaceTokenizer: encode/decode round-trip, special tokens,
-conversation rendering, loss mask.
+"""Tests for HuggingFaceTokenizer.
+
+Covers encode/decode round-trips, special tokens, conversation rendering, and loss masks.
 """
 
 import os

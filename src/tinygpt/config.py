@@ -73,6 +73,7 @@ def make_config(
         head_dim: Attention head dimension; model_dim is rounded up to a multiple.
         vocab_size: Vocabulary size.
         sequence_len: Maximum sequence length.
+
     Returns:
         A standard LlamaConfig.
     """

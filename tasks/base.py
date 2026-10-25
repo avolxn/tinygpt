@@ -1,5 +1,4 @@
-"""
-Base classes for all Tasks.
+"""Base classes for all Tasks.
 
 A Task is a dataset of conversations with optional evaluation criteria.
 """
@@ -94,8 +93,7 @@ class Task:
 
 
 class TaskMixture(Task):
-    """
-    Uniformly-shuffled mixture of multiple Task objects.
+    """Uniformly-shuffled mixture of multiple Task objects.
 
     Pass a task multiple times to oversample it.
     """

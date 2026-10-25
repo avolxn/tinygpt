@@ -1,5 +1,5 @@
-"""
-MMLU evaluation task.
+"""MMLU evaluation task.
+
 https://huggingface.co/datasets/cais/mmlu
 """
 

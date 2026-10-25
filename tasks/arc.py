@@ -1,5 +1,5 @@
-"""
-ARC (AI2 Reasoning Challenge) task.
+"""ARC (AI2 Reasoning Challenge) task.
+
 https://huggingface.co/datasets/allenai/ai2_arc
 """
 

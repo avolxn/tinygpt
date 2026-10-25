@@ -1,5 +1,4 @@
-"""
-CustomJSON task for loading conversations from a local JSONL file.
+"""CustomJSON task for loading conversations from a local JSONL file.
 
 Each line must be a JSON array of message objects with 'role' and 'content'
 fields, e.g.:

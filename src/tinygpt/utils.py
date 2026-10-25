@@ -1,5 +1,4 @@
-"""
-Hardware helpers, logging, cache I/O, and MFU tables for tinygpt.
+"""Hardware helpers, logging, cache I/O, and MFU tables for tinygpt.
 
 Distributed training setup lives in tinygpt.distributed.
 """

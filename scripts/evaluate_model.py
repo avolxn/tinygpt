@@ -1,5 +1,4 @@
-"""
-Evaluate a trained tinygpt model.
+"""Evaluate a trained tinygpt model.
 
 Supported modes (comma-separated via --eval):
   bpb     : bits-per-byte on train/val splits of a text dataset

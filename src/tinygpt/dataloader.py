@@ -1,5 +1,4 @@
-"""
-Distributed data loader using HF `datasets` streaming.
+"""Distributed data loader using HF `datasets` streaming.
 
 BOS-aligned bestfit packing:
   - Every row starts with BOS token

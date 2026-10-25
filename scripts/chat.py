@@ -1,5 +1,4 @@
-"""
-Interactive CLI chat with a vLLM model.
+"""Interactive CLI chat with a vLLM model.
 
 Usage:
     python -m scripts.chat --vllm-model data/distill_checkpoints/student

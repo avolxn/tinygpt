@@ -1,5 +1,4 @@
-"""
-Spelling/counting tasks used to strengthen small-model distillation.
+"""Spelling/counting tasks used to strengthen small-model distillation.
 
 1. SimpleSpelling: spell a word character-by-character
 2. SpellingBee: count occurrences of a letter in a word, including Python verification

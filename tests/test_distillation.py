@@ -1,6 +1,4 @@
-"""
-Tests for online distillation helpers.
-"""
+"""Tests for online distillation helpers."""
 
 import pytest
 import torch

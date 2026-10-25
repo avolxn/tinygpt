@@ -1,5 +1,4 @@
-"""
-HuggingFace Trainer integration for tinygpt.
+"""HuggingFace Trainer integration for tinygpt.
 
 TinyGPTTrainer subclasses transformers.Trainer to plug in:
 - tinygpt's multi-group AdamW optimizer (make_optimizer)

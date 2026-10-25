@@ -1,6 +1,4 @@
-"""
-Tests for Hugging Face style model serialization helpers.
-"""
+"""Tests for Hugging Face style model serialization helpers."""
 
 import argparse
 import os

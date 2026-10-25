@@ -1,5 +1,4 @@
-"""
-Combined MuonAdamW optimizer for tinygpt.
+"""Combined MuonAdamW optimizer for tinygpt.
 
 Uses torch.optim.Muon for 2D transformer block weight matrices, and
 torch.optim.AdamW for embeddings, lm_head, and scalar parameters.
@@ -27,8 +26,7 @@ def make_param_groups(
     muon_momentum: float = 0.95,
     muon_ns_steps: int = 5,
 ) -> list[dict[str, Any]]:
-    """
-    Split model parameters into MuonAdamW-friendly groups.
+    """Split model parameters into MuonAdamW-friendly groups.
 
     Groups:
       - matrix_params   : 2-D transformer weights → Muon (weight decay)
@@ -115,8 +113,7 @@ def make_param_groups(
 
 
 class MuonAdamW(torch.optim.Optimizer):
-    """
-    Combined optimizer: torch.optim.Muon for 2D matrix params, AdamW for rest.
+    """Combined optimizer: torch.optim.Muon for 2D matrix params, AdamW for rest.
 
     Wraps torch.optim.Muon and torch.optim.AdamW as sub-optimizers.
     Gradient synchronization is handled externally (FSDP with NO_SHARD or DDP)
@@ -193,8 +190,7 @@ def make_optimizer(
     muon_momentum: float = 0.95,
     muon_ns_steps: int = 5,
 ) -> MuonAdamW:
-    """
-    Create a MuonAdamW optimizer with per-group learning rates.
+    """Create a MuonAdamW optimizer with per-group learning rates.
 
     Call this AFTER FSDP wrapping so parameter objects are the correct ones.
     Requires FSDP ShardingStrategy.NO_SHARD for multi-GPU correctness —
@@ -251,8 +247,7 @@ def get_lr_multiplier(
     warmdown_ratio: float = 0.65,
     final_lr_frac: float = 0.05,
 ) -> float:
-    """
-    Compute the LR multiplier for a given step.
+    """Compute the LR multiplier for a given step.
 
     Schedule:
       [0, warmup_steps)           : linear ramp 0 → 1

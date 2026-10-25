@@ -1,6 +1,4 @@
-"""
-Helpers for online teacher-student distillation.
-"""
+"""Helpers for online teacher-student distillation."""
 
 from __future__ import annotations
 
