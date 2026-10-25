@@ -62,7 +62,7 @@ jobs:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
       - run: uv sync --frozen --extra cpu --group dev
-      - run: uv run --extra cpu mypy src/
+      - run: uv run --extra cpu mypy src scripts tasks infra/airflow/dags
 
   test:
     runs-on: ubuntu-latest
