@@ -35,7 +35,7 @@ COMMON_ENV = {
 }
 
 
-def bash_task(task_id: str, bash_command: str, *, retries: int = 0) -> BashOperator:
+def bash_task(task_id: str, bash_command: str, *, retries: int = 0, trigger_rule: str = "all_success") -> BashOperator:
     """Create a project Bash task with inherited secrets and no XCom payload."""
     return BashOperator(
         task_id=task_id,
@@ -45,6 +45,7 @@ def bash_task(task_id: str, bash_command: str, *, retries: int = 0) -> BashOpera
         append_env=True,
         do_xcom_push=False,
         retries=retries,
+        trigger_rule=trigger_rule,
     )
 
 
@@ -198,6 +199,7 @@ else
   "$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" "${ARGS[@]}"
 fi
 """,
+        trigger_rule="none_failed",
     )
 
     evaluate_chat = bash_task(

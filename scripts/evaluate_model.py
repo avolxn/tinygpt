@@ -144,7 +144,7 @@ if __name__ == "__main__":
             tokens = tokenizer.encode(prompt, prepend="<|bos|>")
             sample = vllm.generate(
                 tokenizer.decode(tokens),
-                max_tokens=20,
+                max_tokens=args.max_new_tokens,
                 temperature=0,
                 top_k=args.top_k,
                 stop=["<|assistant_end|>", "<|bos|>"],
