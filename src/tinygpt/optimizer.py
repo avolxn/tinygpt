@@ -179,6 +179,7 @@ class MuonAdamW(torch.optim.Optimizer):
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self._muon.load_state_dict(state_dict["muon"])
         self._adamw.load_state_dict(state_dict["adamw"])
+        self.param_groups = self._muon.param_groups + self._adamw.param_groups
 
 
 def make_optimizer(

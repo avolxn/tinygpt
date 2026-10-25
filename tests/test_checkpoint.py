@@ -21,6 +21,23 @@ from tinygpt.checkpoint import (
     save_model_checkpoint,
 )
 from tinygpt.config import RuntimeConfig, make_config
+from tinygpt.optimizer import MuonAdamW
+
+
+def test_optimizer_resume_keeps_scheduler_groups() -> None:
+    matrix = torch.nn.Parameter(torch.ones(2, 2))
+    scalar = torch.nn.Parameter(torch.ones(2))
+    optimizer = MuonAdamW(
+        [
+            {"kind": "muon", "params": [matrix], "lr": 0.01},
+            {"kind": "adamw", "params": [scalar], "lr": 0.01},
+        ]
+    )
+    optimizer.load_state_dict(optimizer.state_dict())
+    assert optimizer.param_groups[0] is optimizer._muon.param_groups[0]
+    assert optimizer.param_groups[1] is optimizer._adamw.param_groups[0]
+    optimizer.param_groups[0]["lr"] = 0.123
+    assert optimizer._muon.param_groups[0]["lr"] == 0.123
 
 
 def make_test_model() -> LlamaForCausalLM:
