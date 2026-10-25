@@ -151,7 +151,11 @@ class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
     """Wraps an infinite (inputs, targets) generator into an IterableDataset.
 
     Items are already full batches of shape (B, T). The DataLoader must be
-    created with batch_size=None so they are passed through unchanged."""
+    created with batch_size=None so they are passed through unchanged.
+
+    Args:
+        loader: Infinite iterator yielding (inputs, targets) tensor pairs.
+    """
 
     def __init__(self, loader: Iterator[tuple[torch.Tensor, torch.Tensor]]) -> None:
         self._loader = loader
@@ -165,7 +169,20 @@ class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
 
 
 class TinyGPTTrainer(Trainer):
-    """Trainer subclass tailored for tinygpt."""
+    """Trainer subclass tailored for tinygpt.
+
+    Args:
+        matrix_lr: Learning rate for transformer block weight matrices (Muon).
+        embedding_lr: Learning rate for embedding parameters (AdamW).
+        scalar_lr: Learning rate for scalar/1-D parameters (AdamW).
+        muon_momentum: Momentum for the Muon optimizer (default 0.95).
+        muon_ns_steps: Newton-Schulz iteration steps for Muon (default 5).
+        warmdown_ratio: Fraction of total steps used for cosine decay.
+        final_lr_frac: LR at the end as a fraction of peak LR.
+        train_loader: Infinite iterator yielding (inputs, targets) batches.
+        eval_fn: Optional callable (model, step) -> dict[str, float] for
+        custom evaluation metrics (e.g. bpb or distillation loss).
+    """
 
     def __init__(
         self,
@@ -207,7 +224,11 @@ class TinyGPTTrainer(Trainer):
         self._tokenizer_dir = tokenizer_dir
 
     def get_train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
-        """Return a DataLoader that passes pre-batched items through unchanged."""
+        """Return a DataLoader that passes pre-batched items through unchanged.
+
+        Returns:
+            DataLoader wrapping our infinite bestfit-packed iterator.
+        """
         dataset = PreBatchedIterableDataset(self._train_loader)
         return DataLoader(dataset, batch_size=None, num_workers=0, pin_memory=False)
 
@@ -218,7 +239,17 @@ class TinyGPTTrainer(Trainer):
         return_outputs: bool = False,
         num_items_in_batch: torch.Tensor | int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Compute loss against the dataloader's already-shifted labels."""
+        """Compute loss against the dataloader's already-shifted labels.
+
+        Args:
+            model: A Transformers causal language model.
+            inputs: Dict with 'input_ids' and 'labels' keys.
+            return_outputs: If True, also return a dict with the loss.
+            num_items_in_batch: Ignored; present for API compatibility.
+
+        Returns:
+            Loss scalar, or (loss, {"loss": loss}) if return_outputs is True.
+        """
         input_ids = inputs["input_ids"]
         labels = inputs["labels"]
 
@@ -257,7 +288,14 @@ class TinyGPTTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     def create_optimizer(self, model: Any = None) -> torch.optim.Optimizer:
-        """Create the selected optimizer with project parameter groups."""
+        """Create the selected optimizer with project parameter groups.
+
+        Args:
+            model: Ignored; uses self.model.
+
+        Returns:
+            AdamW or MuonAdamW with the configured parameter groups.
+        """
         assert self.model is not None
         if self._optimizer_name == "adamw":
             self.optimizer = make_adamw_optimizer(
@@ -288,7 +326,15 @@ class TinyGPTTrainer(Trainer):
         num_training_steps: int,
         optimizer: torch.optim.Optimizer | None = None,
     ) -> torch.optim.lr_scheduler.LRScheduler:
-        """Create a LambdaLR scheduler using tinygpt's warmup + linear decay."""
+        """Create a LambdaLR scheduler using tinygpt's warmup + linear decay.
+
+        Args:
+            num_training_steps: Total number of training steps.
+            optimizer: Optimizer to attach the scheduler to.
+
+        Returns:
+            LambdaLR scheduler wrapping get_lr_multiplier.
+        """
         if optimizer is None:
             optimizer = self.optimizer
         assert optimizer is not None
@@ -310,7 +356,16 @@ class TinyGPTTrainer(Trainer):
         ignore_keys: Any = None,
         metric_key_prefix: str = "eval",
     ) -> dict[str, float]:
-        """Run evaluation using the pluggable eval_fn."""
+        """Run evaluation using the pluggable eval_fn.
+
+        Args:
+            eval_dataset: Ignored; evaluation uses eval_fn.
+            ignore_keys: Ignored.
+            metric_key_prefix: Prefix for metric keys in the returned dict.
+
+        Returns:
+            Dict of evaluation metrics prefixed with metric_key_prefix.
+        """
         if self._eval_fn is None:
             return {}
         assert self.model is not None
@@ -328,7 +383,13 @@ class TinyGPTTrainer(Trainer):
         return prefixed
 
     def save_model(self, output_dir: str | None = None, _internal_call: bool = False) -> None:
-        """Save model weights and config in a Hugging Face style directory."""
+        """Save model weights and config in a Hugging Face style directory.
+
+        Args:
+            output_dir: Directory to save the checkpoint. Defaults to
+                self.args.output_dir.
+            _internal_call: Forwarded to Trainer to distinguish internal checkpoint saves.
+        """
         if output_dir is None:
             output_dir = self.args.output_dir
         assert output_dir is not None
