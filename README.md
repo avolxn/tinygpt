@@ -1,4 +1,8 @@
-# tinygpt
+# TinyGPT
+
+> **Training curves — MLflow screenshot to be added after the full run.**
+> Show pretraining and distillation loss and validation curves against training
+> steps, with run names and key parameters visible.
 
 A distributed language model training pipeline covering teacher preparation,
 student pretraining, online distillation, evaluation, and inference. The project
@@ -56,14 +60,19 @@ complete Trainer checkpoint.
 
 ## Orchestration and tracking
 
+The stack starts separate Airflow API, scheduler, and DAG processor services,
+MLflow, and PostgreSQL with built-in defaults. No environment file is required.
+
+> **Pipeline execution — Airflow screenshot to be added after the full run.**
+> Show the completed GPU DAG with teacher preparation, pretraining, distillation,
+> and evaluation tasks visible, including their final statuses and durations.
+
 With Docker Compose installed:
 
 ```bash
 bash runs/airflow.sh
 ```
 
-The stack starts separate Airflow API, scheduler, and DAG processor services,
-MLflow, and PostgreSQL with built-in defaults. No environment file is required.
 Airflow is available at `http://localhost:8081` and MLflow at
 `http://localhost:5000`. Trigger the `tinygpt_training` DAG to run the pipeline.
 The generated Airflow login password is stored inside the container at
@@ -85,12 +94,3 @@ uv run --no-sync python -m scripts.chat --vllm-model data/distill_checkpoints/di
 uv run --no-sync python -m scripts.evaluate_model --eval chat --vllm-model data/distill_checkpoints/distill
 ```
 
-## Run evidence
-
-> **Airflow screenshot — to be added after the full run.**
-> Show the completed GPU DAG with teacher preparation, pretraining, distillation,
-> and evaluation tasks visible, including their final statuses and durations.
-
-> **MLflow screenshot — to be added after the full run.**
-> Show the corresponding pretraining and distillation runs with loss and
-> validation curves against training steps, with run names and parameters visible.
