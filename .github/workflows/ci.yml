@@ -25,60 +25,20 @@ jobs:
         run: docker compose -f infra/airflow/compose.yaml logs --tail 100
       - if: always()
         run: docker compose -f infra/airflow/compose.yaml down --volumes
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Cache uv
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-      - run: uv sync --frozen --extra cpu --group dev
-      - run: uv run --extra cpu ruff check src scripts tasks tests infra/airflow/dags
-
-  format:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Cache uv
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-      - run: uv sync --frozen --extra cpu --group dev
-      - run: uv run --extra cpu ruff format --check src scripts tasks tests infra/airflow/dags
-
-  typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Cache uv
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-      - run: uv sync --frozen --extra cpu --group dev
-      - run: uv run --extra cpu mypy src scripts tasks infra/airflow/dags
-
-  test:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - name: Cache uv
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-3.12-${{ hashFiles('**/uv.lock') }}
+          enable-cache: true
       - run: uv sync --frozen --extra cpu --group dev
+      - run: uv run --no-sync ruff check src scripts tasks tests infra/airflow/dags
+      - run: uv run --no-sync ruff format --check src scripts tasks tests infra/airflow/dags
+      - run: uv run --no-sync mypy src scripts tasks infra/airflow/dags
       - run: docker pull python:3.12-slim
-      - run: uv run --extra cpu pytest tests/ -v --cov=src --cov-report=xml --cov-report=term-missing
+      - run: uv run --no-sync pytest tests/ -v --cov=src --cov-report=xml --cov-report=term-missing
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
