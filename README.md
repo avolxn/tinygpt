@@ -61,14 +61,11 @@ The Compose stack runs separate Airflow API, scheduler, and DAG processor servic
 a MLflow server, and PostgreSQL databases for both services.
 
 ```bash
-cp infra/airflow/.env.example infra/airflow/.env
-```
-
-Set `POSTGRES_PASSWORD` and `AIRFLOW_JWT_SECRET` in that file, then run:
-
-```bash
 bash runs/airflow.sh
 ```
+
+Settings have built-in defaults; no secrets file or manual configuration is required.
+Override them through environment variables or an optional `infra/airflow/.env`.
 
 Airflow is available at `http://localhost:8081`; MLflow at `http://localhost:5000`.
 Trigger the `tinygpt_training` DAG to configure a pipeline run. Airflow's Simple Auth

@@ -9,9 +9,6 @@ on:
 jobs:
   infrastructure:
     runs-on: ubuntu-latest
-    env:
-      POSTGRES_PASSWORD: ci-postgres
-      AIRFLOW_JWT_SECRET: ci-airflow-jwt-secret
     steps:
       - uses: actions/checkout@v4
       - run: docker compose -f infra/airflow/compose.yaml config --quiet
