@@ -1,4 +1,18 @@
+import subprocess
+
+import pytest
+
 from tinygpt.execution import execute_code
+
+
+@pytest.fixture(autouse=True)
+def require_docker() -> None:
+    try:
+        result = subprocess.run(["docker", "image", "inspect", "python:3.12-slim"], capture_output=True)
+    except FileNotFoundError:
+        pytest.skip("Docker is required for isolated execution tests")
+    if result.returncode:
+        pytest.skip("Docker daemon and python:3.12-slim are required")
 
 
 def test_execute_code_captures_stdout() -> None:
