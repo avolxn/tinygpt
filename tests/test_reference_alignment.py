@@ -1,4 +1,6 @@
 import math
+import sys
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -11,6 +13,36 @@ from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
 from tinygpt.metrics import evaluate_loss
 from tinygpt.scheduler import get_lr_multiplier
 from tinygpt.train import TinyGPTTrainer, causal_lm_loss
+
+
+def _distributed_loss_worker(rank, rendezvous):
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor([[2.0, 0.0], [0.0, 1.0]]))
+
+        def forward(self, input_ids):
+            return SimpleNamespace(logits=self.weight[input_ids])
+
+    torch.distributed.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2)
+    try:
+        inputs = torch.tensor([[rank, rank]])
+        labels = torch.tensor([[1, -1]]) if rank == 0 else torch.tensor([[0, 0]])
+        actual = evaluate_loss(Model(), iter([(inputs, labels)]), 1)
+        expected = (math.log(math.exp(2) + 1) + 2 * math.log(1 + math.e)) / 3
+        assert actual == pytest.approx(expected)
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Distributed CPU integration runs on Linux CI")
+def test_distributed_validation_loss(tmp_path):
+    torch.multiprocessing.spawn(
+        _distributed_loss_worker,
+        args=((tmp_path / "rendezvous").as_uri(),),
+        nprocs=2,
+        join=True,
+    )
 
 
 def test_validation_loss_weights_supervised_tokens():
