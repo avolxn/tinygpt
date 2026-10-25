@@ -34,6 +34,8 @@ def execute_code(
         name,
         "--network=none",
         "--read-only",
+        "--log-driver=none",
+        "--ulimit=fsize=1048576:1048576",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         "--pids-limit=32",
@@ -48,13 +50,12 @@ def execute_code(
             "--init",
             "-i",
             "python:3.12-slim",
-            "timeout",
-            "--signal=KILL",
+            "sh",
+            "-c",
+            'timeout --signal=KILL "$1" python -I -B - > /tmp/stdout 2> /tmp/stderr; '
+            'status=$?; cat /tmp/stdout; cat /tmp/stderr >&2; exit "$status"',
+            "evaluation",
             f"{timeout}s",
-            "python",
-            "-I",
-            "-B",
-            "-",
         ]
     )
     try:

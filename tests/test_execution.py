@@ -34,3 +34,9 @@ def test_execute_code_times_out() -> None:
 
     assert not result.success
     assert result.timeout
+
+
+def test_execute_code_bounds_output() -> None:
+    result = execute_code('import os\nwhile True: os.write(1, b"x" * 65536)')
+    assert not result.success
+    assert len(result.stdout.encode()) <= 1048576
