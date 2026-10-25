@@ -16,9 +16,6 @@ cd "$ROOT"
 export OMP_NUM_THREADS=1
 mkdir -p data
 
-command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-[ -d ".venv" ] || uv venv
-
 MLFLOW_RUN="${MLFLOW_RUN:-distill}"
 DEVICE_TYPE="${DEVICE_TYPE:-cuda}"
 TEACHER_MODEL="${TEACHER_MODEL:-karpathy/nanochat-d32}"
@@ -29,9 +26,9 @@ NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
 
 if [ "$DEVICE_TYPE" = "cuda" ]; then
-  uv sync --extra gpu
+  uv sync --frozen --extra gpu
 else
-  uv sync --extra cpu
+  uv sync --frozen --extra cpu
 fi
 # shellcheck source=/dev/null
 source .venv/bin/activate

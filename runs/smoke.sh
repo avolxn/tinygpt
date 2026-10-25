@@ -11,9 +11,6 @@ cd "$ROOT"
 
 mkdir -p data
 
-command -v uv &>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-[ -d ".venv" ] || uv venv
-
 MLFLOW_RUN="${MLFLOW_RUN:-smoke}"
 DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
 TEACHER_MODEL="${TEACHER_MODEL:-karpathy/nanochat-d32}"
@@ -21,9 +18,9 @@ TEACHER_DIR="${TEACHER_DIR:-data/teacher_smoke}"
 TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
 
 if [ "$DEVICE_TYPE" = "cuda" ]; then
-  uv sync --extra gpu
+  uv sync --frozen --extra gpu
 else
-  uv sync --extra cpu
+  uv sync --frozen --extra cpu
 fi
 # shellcheck source=/dev/null
 source .venv/bin/activate
@@ -40,6 +37,12 @@ TinyGPT smoke test.
 The sky is blue because shorter wavelengths scatter more strongly.
 Paris is the capital of France.
 Two plus two equals four.
+EOF
+
+VAL_CORPUS="data/smoke_validation.txt"
+cat >"$VAL_CORPUS" <<'EOF'
+Light scatters as it travels through the atmosphere.
+France has its capital in Paris.
 EOF
 
 IDENTITY_JSONL="data/smoke_identity.jsonl"
@@ -63,6 +66,7 @@ python -m scripts.pretrain \
   --eval-tokens 2048 \
   --dataset "" \
   --txt "$CORPUS" \
+  --val-txt "$VAL_CORPUS" \
   --run "$MLFLOW_RUN" \
   --run-name smoke \
   --out-dir data
