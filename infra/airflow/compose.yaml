@@ -69,13 +69,14 @@ services:
       - ./init.sql:/docker-entrypoint-initdb.d/mlflow.sql:ro
 
   mlflow:
+    entrypoint: [/opt/tinygpt/.venv/bin/mlflow]
     build:
       context: ../..
       dockerfile: infra/airflow/Dockerfile
       args:
         TINYGPT_EXTRA: cpu
     command: >-
-      /opt/tinygpt/.venv/bin/mlflow server
+      server
       --host 0.0.0.0
       --port 5000
       --backend-store-uri postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres/mlflow
