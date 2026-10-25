@@ -146,7 +146,7 @@ fi
         """set -euo pipefail
 if [[ "$DEVICE_TYPE" != "cuda" ]]; then
   echo "Skipping base vLLM evaluation on non-CUDA workers"
-  exit 0
+  exit 99
 fi
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 ARGS=(
@@ -205,7 +205,7 @@ fi
         """set -euo pipefail
 if [[ "$DEVICE_TYPE" != "cuda" ]]; then
   echo "Skipping vLLM chat evaluation on non-CUDA workers"
-  exit 0
+  exit 99
 fi
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 ARGS=(

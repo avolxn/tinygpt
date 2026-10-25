@@ -18,7 +18,7 @@ jobs:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
       - run: uv sync --frozen --extra cpu --group dev
-      - run: uv run --extra cpu ruff check src/
+      - run: uv run --extra cpu ruff check src scripts tasks tests infra/airflow/dags
 
   format:
     runs-on: ubuntu-latest
@@ -31,7 +31,7 @@ jobs:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
       - run: uv sync --frozen --extra cpu --group dev
-      - run: uv run --extra cpu ruff format --check src/
+      - run: uv run --extra cpu ruff format --check src scripts tasks tests infra/airflow/dags
 
   typecheck:
     runs-on: ubuntu-latest
