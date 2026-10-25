@@ -129,6 +129,7 @@ def scaling_param_counts(model: Any) -> dict[str, int]:
     counts["total"] = sum(counts.values())
     return counts
 
+
 dist_requested, preflight_rank, _, _ = get_dist_info()
 if preflight_rank == 0:
     require_mlflow_tracking()

@@ -60,9 +60,7 @@ def test_bash_tasks_inherit_secrets_without_xcom() -> None:
     operator_call = next(
         call
         for call in ast.walk(tree)
-        if isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Name)
-        and call.func.id == "BashOperator"
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "BashOperator"
     )
     keywords = {keyword.arg: keyword.value for keyword in operator_call.keywords}
 

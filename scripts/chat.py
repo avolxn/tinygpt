@@ -64,11 +64,8 @@ if __name__ == "__main__":
         response_tokens = tokenizer.encode(response)
         print(response, end="", flush=True)
         print()
-        conversation_tokens.extend(
-            [user_start, *user_ids, user_end, assistant_start, *response_tokens, assistant_end]
-        )
+        conversation_tokens.extend([user_start, *user_ids, user_end, assistant_start, *response_tokens, assistant_end])
         return response
-
 
     if args.prompt:
         run_turn(args.prompt)
