@@ -3,8 +3,13 @@
 import pytest
 import torch
 
-from tinygpt.config import TinyGPTConfig
+from tinygpt.config import TinyGPTConfig, make_config
 from tinygpt.model import TinyGPTForCausalLM
+
+
+def test_attention_windows_round_up_at_fractional_quarter_context() -> None:
+    config = make_config(4, sequence_len=513)
+    assert config.attention_windows() == [256, 256, 256, 513]
 
 
 @pytest.fixture()

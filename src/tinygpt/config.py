@@ -49,7 +49,7 @@ class TinyGPTConfig(NanoChatConfig):  # type: ignore[no-untyped-call]
 
     def attention_windows(self) -> list[int]:
         """Return the inclusive left window of each layer, as in nanochat."""
-        short = math.ceil((self.max_position_embeddings // 4) / 128) * 128
+        short = math.ceil(self.max_position_embeddings / 512) * 128
         windows = [
             short if self.window_pattern[i % len(self.window_pattern)] == "S" else self.max_position_embeddings
             for i in range(self.transformer_depth)
