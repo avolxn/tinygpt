@@ -12,6 +12,24 @@ from tests.helpers import make_test_tokenizer
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 
+def test_system_message_matches_nanochat_user_prefix() -> None:
+    tokenizer = make_test_tokenizer(["Be concise. Hello. Hi."])
+    system = {
+        "messages": [
+            {"role": "system", "content": "Be concise."},
+            {"role": "user", "content": "Hello."},
+            {"role": "assistant", "content": "Hi."},
+        ]
+    }
+    merged = {
+        "messages": [
+            {"role": "user", "content": "Be concise.\n\nHello."},
+            {"role": "assistant", "content": "Hi."},
+        ]
+    }
+    assert tokenizer.render_conversation(system) == tokenizer.render_conversation(merged)
+
+
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
 def tokenizer() -> HuggingFaceTokenizer:
     texts = [

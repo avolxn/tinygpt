@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Cheap teacher-to-student smoke test for CPU or a low-end GPU.
+# Short teacher-to-student integration check with a reduced student.
 #
 # From repo root:
 #   bash runs/smoke.sh
@@ -25,11 +25,9 @@ fi
 # shellcheck source=/dev/null
 source .venv/bin/activate
 
-if [ ! -f "$TEACHER_DIR/config.json" ] || [ ! -f "$TEACHER_DIR/tokenizer.json" ]; then
-  python -m scripts.prepare_teacher \
-    --model "$TEACHER_MODEL" \
-    --out-dir "$TEACHER_DIR"
-fi
+python -m scripts.prepare_teacher \
+  --model "$TEACHER_MODEL" \
+  --out-dir "$TEACHER_DIR"
 
 CORPUS="data/smoke_corpus.txt"
 cat >"$CORPUS" <<'EOF'
@@ -45,8 +43,8 @@ Light scatters as it travels through the atmosphere.
 France has its capital in Paris.
 EOF
 
-IDENTITY_JSONL="data/smoke_identity.jsonl"
-cat >"$IDENTITY_JSONL" <<'EOF'
+CONVERSATIONS_JSONL="data/smoke_conversations.jsonl"
+cat >"$CONVERSATIONS_JSONL" <<'EOF'
 [{"role":"user","content":"Say hello in one sentence."},{"role":"assistant","content":"Hello from TinyGPT."}]
 [{"role":"user","content":"What is 2 + 2?"},{"role":"assistant","content":"2 + 2 = 4."}]
 EOF
@@ -82,8 +80,8 @@ python -m scripts.distill \
   --num-iterations 20 \
   --eval-every 10 \
   --eval-tokens 2048 \
-  --tasks identity \
-  --identity-conversations "$IDENTITY_JSONL" \
+  --tasks custom \
+  --conversations "$CONVERSATIONS_JSONL" \
   --run "$MLFLOW_RUN" \
   --run-name smoke \
   --out-dir data

@@ -1,5 +1,7 @@
 FROM apache/airflow:3.1.7-python3.12
 
+COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
+
 USER root
 RUN apt-get update \
     && apt-get install --no-install-recommends -y curl \

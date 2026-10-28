@@ -5,12 +5,10 @@ Usage:
 """
 
 import argparse
-from typing import cast
-
-from transformers import AutoTokenizer
 
 from tinygpt.checkpoint import resolve_model_directory
 from tinygpt.inference import VLLM
+from tinygpt.tokenizer import HuggingFaceTokenizer
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Chat with tinygpt")
@@ -25,7 +23,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     model_dir = resolve_model_directory(args.vllm_model)
-    tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
+    tokenizer = HuggingFaceTokenizer.from_directory(model_dir)
     vllm = VLLM(
         model_dir,
         tensor_parallel_size=args.vllm_tensor_parallel_size,
@@ -41,13 +39,13 @@ if __name__ == "__main__":
 
     def run_turn(user_input: str) -> str:
         messages.append({"role": "user", "content": user_input})
-        prompt = cast(str, tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
-        response = vllm.generate(
+        prompt = list(tokenizer.tokenizer.apply_chat_template(messages, add_generation_prompt=True))
+        response = vllm.generate_conversation(
             prompt,
+            tokenizer,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_k=args.top_k,
-            stop=["<|assistant_end|>", "<|bos|>"],
         )
         print(response, flush=True)
         messages.append({"role": "assistant", "content": response})

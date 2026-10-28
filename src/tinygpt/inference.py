@@ -2,6 +2,11 @@
 
 from typing import Any
 
+import torch
+
+from tinygpt.execution import use_calculator
+from tinygpt.tokenizer import HuggingFaceTokenizer
+
 
 class VLLM:
     """Thin adapter around vLLM's offline ``LLM`` API."""
@@ -24,12 +29,13 @@ class VLLM:
             model=model,
             tensor_parallel_size=tensor_parallel_size,
             trust_remote_code=trust_remote_code,
+            dtype="bfloat16" if torch.cuda.is_bf16_supported() else "float16",
         )
         self._sampling_params = SamplingParams
 
     def generate(
         self,
-        prompt: str,
+        prompt: str | list[int],
         *,
         max_tokens: int,
         temperature: float,
@@ -47,7 +53,7 @@ class VLLM:
 
     def generate_batch(
         self,
-        prompts: list[str],
+        prompts: list[str | list[int]],
         *,
         max_tokens: int,
         temperature: float,
@@ -73,8 +79,77 @@ class VLLM:
         if stop:
             params["stop"] = stop
 
-        outputs = self._llm.generate(prompts, self._sampling_params(**params), use_tqdm=False)
+        requests = [{"prompt_token_ids": p} if isinstance(p, list) else p for p in prompts]
+        outputs = self._llm.generate(requests, self._sampling_params(**params), use_tqdm=False)
         texts = [output.outputs[0].text for output in outputs if output.outputs]
         if len(texts) != len(prompts) or not all(isinstance(text, str) for text in texts):
             raise RuntimeError("vLLM returned an incomplete completion batch")
         return texts
+
+    def choose_tokens(self, prompts: list[list[int]], candidates: list[list[int]]) -> list[int]:
+        """Select the highest-logit answer token among each question's choices.
+
+        Args:
+            prompts: Tokenized questions including the assistant prefix.
+            candidates: Allowed single-token answers for each prompt.
+
+        Returns:
+            The greedy token from the restricted answer vocabulary per question.
+        """
+        params = [self._sampling_params(max_tokens=1, temperature=0.0, allowed_token_ids=ids) for ids in candidates]
+        outputs = self._llm.generate([{"prompt_token_ids": p} for p in prompts], params, use_tqdm=False)
+        return [int(result.outputs[0].token_ids[0]) for result in outputs]
+
+    def generate_conversation(
+        self,
+        prompt: list[int],
+        tokenizer: HuggingFaceTokenizer,
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_k: int | None = None,
+    ) -> str:
+        """Generate a chat response with nanochat's calculator tool protocol.
+
+        Args:
+            prompt: Tokenized conversation ending with the assistant prefix.
+            tokenizer: The unchanged teacher tokenizer.
+            max_tokens: Total sampled-token budget across tool continuations.
+            temperature: Sampling temperature, with zero selecting greedy decoding.
+            top_k: Optional vocabulary sampling cap.
+
+        Returns:
+            Assistant text, including calculator markers and supplied outputs.
+        """
+        vocabulary = tokenizer.get_vocab()
+        python_start, python_end = (vocabulary[name] for name in ("<|python_start|>", "<|python_end|>"))
+        endings = [vocabulary["<|assistant_end|>"], tokenizer.get_bos_token_id()]
+        generated: list[int] = []
+        remaining = max_tokens
+        while remaining > 0:
+            params = self._sampling_params(
+                max_tokens=remaining,
+                temperature=temperature,
+                top_k=top_k or -1,
+                stop_token_ids=[python_end, *endings],
+                skip_special_tokens=False,
+            )
+            response = self._llm.generate([{"prompt_token_ids": prompt + generated}], params, use_tqdm=False)[
+                0
+            ].outputs[0]
+            tokens = list(response.token_ids)
+            if not tokens:
+                break
+            remaining -= len(tokens)
+            generated.extend(tokens)
+            if tokens[-1] in endings:
+                generated.pop()
+                break
+            if tokens[-1] == python_end and python_start in generated:
+                start = len(generated) - 1 - generated[::-1].index(python_start)
+                result = use_calculator(tokenizer.decode(generated[start + 1 : -1]))
+                if result is not None:
+                    forced = tokenizer.encode(result, prepend="<|output_start|>", append="<|output_end|>")[:remaining]
+                    remaining -= len(forced)
+                    generated.extend(forced)
+        return tokenizer.decode(generated)

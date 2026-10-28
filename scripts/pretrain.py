@@ -1,4 +1,4 @@
-"""Pretrain a Llama model via Transformers Trainer + PyTorch FSDP.
+"""Pretrain the nanochat architecture via Transformers Trainer + PyTorch FSDP.
 
 Single GPU:
     python -m scripts.pretrain
@@ -21,10 +21,9 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import argparse
 import json
 from collections.abc import Iterator
-from typing import Any
 
 import torch
-from transformers import LlamaForCausalLM
+from tasks.core import evaluate_core
 
 from tinygpt.checkpoint import (
     build_checkpoint_metadata,
@@ -48,8 +47,15 @@ from tinygpt.distributed import (
     print0,
 )
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
+from tinygpt.model import TinyGPTForCausalLM, enable_float8_training
 from tinygpt.tokenizer import HuggingFaceTokenizer
-from tinygpt.train import MlflowMetadataCallback, TinyGPTTrainer, build_training_arguments, require_mlflow_tracking
+from tinygpt.train import (
+    MlflowMetadataCallback,
+    TinyGPTTrainer,
+    build_training_arguments,
+    parse_training_args,
+    require_mlflow_tracking,
+)
 from tinygpt.utils import autodetect_device_type, compute_dtype, compute_dtype_reason
 
 parser = argparse.ArgumentParser(description="Pretrain tinygpt")
@@ -57,7 +63,7 @@ add_runtime_arguments(parser)
 parser.add_argument(
     "--teacher-model",
     type=str,
-    required=True,
+    default="",
     help="Prepared Hugging Face teacher directory; its tokenizer initializes the student",
 )
 # Distributed
@@ -68,12 +74,15 @@ parser.add_argument(
     choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"],
     help="FSDP sharding strategy",
 )
-parser.add_argument("--optimizer", choices=["adamw", "muon"], default="adamw")
 # Model architecture
 parser.add_argument("--depth", type=int, default=20)
 parser.add_argument("--aspect-ratio", type=int, default=64)
 parser.add_argument("--head-dim", type=int, default=128)
 parser.add_argument("--max-seq-len", type=int, default=2048)
+parser.add_argument("--window-pattern", default="SSSL", help="Nanochat short/full attention pattern")
+parser.add_argument("--attention-backend", choices=["sdpa", "flash_attention_2", "flash_attention_3"], default=None)
+parser.add_argument("--fp8", action="store_true", help="Use TorchAO FP8 linear layers on H100 or newer GPUs")
+parser.add_argument("--fp8-recipe", choices=["tensorwise", "rowwise"], default="tensorwise")
 # Data
 parser.add_argument("--dataset", type=str, default=CLIMBMIX_DATASET)
 parser.add_argument("--txt", type=str, default="", help="Local .txt file (overrides --dataset)")
@@ -91,9 +100,7 @@ parser.add_argument("--lm-head-lr", type=float, default=0.008, help="LR for lm_h
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="LR for embedding parameters (AdamW)")
 parser.add_argument("--scalar-lr", type=float, default=0.5, help="LR for scalar/1-D parameters (AdamW)")
 parser.add_argument("--weight-decay", type=float, default=0.28)
-parser.add_argument("--grad-clip", type=float, default=1.0)
-parser.add_argument("--muon-momentum", type=float, default=0.95, help="Momentum for Muon optimizer")
-parser.add_argument("--muon-ns-steps", type=int, default=5, help="Newton-Schulz iterations for Muon")
+parser.add_argument("--grad-clip", type=float, default=0.0)
 # LR schedule
 parser.add_argument("--warmup-steps", type=int, default=40)
 parser.add_argument("--warmdown-ratio", type=float, default=0.65)
@@ -105,33 +112,20 @@ parser.add_argument(
 # Evaluation / sampling
 parser.add_argument("--eval-every", type=int, default=250)
 parser.add_argument("--eval-tokens", type=int, default=80 * 524288)
+parser.add_argument("--core-every", type=int, default=2000)
+parser.add_argument("--core-max-per-task", type=int, default=500)
 parser.add_argument("--save-every", type=int, default=-1)
 
 
-args = parser.parse_args()
+args = parse_training_args(parser)
+if not args.teacher_model:
+    parser.error("--teacher-model is required for a new training run")
 if args.txt and args.eval_every > 0:
     if not args.val_txt:
         parser.error("Local text evaluation requires --val-txt or --eval-every -1")
     if os.path.samefile(args.txt, args.val_txt):
         parser.error("Training and validation files must be different")
 runtime_config = RuntimeConfig.from_namespace(args)
-
-
-def scaling_param_counts(model: Any) -> dict[str, int]:
-    """Bucket Llama parameters for the scaling-law calculation."""
-    counts = {
-        "wte": model.get_input_embeddings().weight.numel(),
-        "value_embeds": 0,
-        "lm_head": model.lm_head.weight.numel(),
-        "transformer_matrices": sum(
-            parameter.numel()
-            for name, parameter in model.named_parameters()
-            if name.startswith("model.layers.") and parameter.dim() >= 2
-        ),
-        "scalars": sum(parameter.numel() for parameter in model.parameters() if parameter.dim() < 2),
-    }
-    counts["total"] = sum(counts.values())
-    return counts
 
 
 dist_requested, preflight_rank, _, _ = get_dist_info()
@@ -158,7 +152,14 @@ config = make_config(
     head_dim=args.head_dim,
     vocab_size=vocab_size,
     sequence_len=args.max_seq_len,
+    window_pattern=args.window_pattern,
 )
+config._attn_implementation = args.attention_backend or (
+    "flash_attention_3" if device_type == "cuda" and compute_dtype == torch.bfloat16 else "sdpa"
+)
+config.bos_token_id = tokenizer.get_bos_token_id()
+config.eos_token_id = tokenizer.encode_special("<|assistant_end|>")
+config.pad_token_id = config.eos_token_id
 model_config_kwargs = config.to_dict()
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 
@@ -176,15 +177,15 @@ if args.resume_from:
         raise ValueError("--resume-from requires a complete Trainer checkpoint")
 else:
     with torch.device("meta"):
-        model = LlamaForCausalLM(config)  # type: ignore[no-untyped-call]
+        model = TinyGPTForCausalLM(config)
     model.to_empty(device=device)
     model.apply(model._init_weights)
 
-param_counts = scaling_param_counts(model)
-scaling_params = param_counts["transformer_matrices"] + param_counts["lm_head"]
+if args.fp8:
+    enable_float8_training(model, args.fp8_recipe)
 
-if args.optimizer == "muon" and is_dist and args.sharding_strategy != "NO_SHARD":
-    raise ValueError("Muon requires --sharding-strategy NO_SHARD; use --optimizer adamw with sharded FSDP")
+param_counts = model.scaling_param_counts()
+scaling_params = param_counts["transformer_matrices"] + param_counts["lm_head"]
 
 if param_counts:
     print0("Parameter counts:")
@@ -201,8 +202,8 @@ d12_config = make_config(
     sequence_len=args.max_seq_len,
 )
 with torch.device("meta"):
-    d12_model = LlamaForCausalLM(d12_config)  # type: ignore[no-untyped-call]
-d12_counts = scaling_param_counts(d12_model)
+    d12_model = TinyGPTForCausalLM(d12_config)
+d12_counts = d12_model.scaling_param_counts()
 d12_scaling_params = d12_counts["transformer_matrices"] + d12_counts["lm_head"]
 target_tokens = int(args.target_param_data_ratio * scaling_params)
 d12_target_tokens = args.target_param_data_ratio * d12_scaling_params
@@ -218,6 +219,7 @@ weight_decay = compute_scaled_weight_decay(
     target_tokens=target_tokens,
     d12_target_tokens=d12_target_tokens,
 )
+batch_lr_scale = (total_batch_size / 524288) ** 0.5
 
 if args.num_iterations > 0:
     num_iterations = args.num_iterations
@@ -270,7 +272,14 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
     eval_loader = make_loader("val")
     bpb = evaluate_bpb(eval_model, eval_loader, eval_steps, token_bytes)
     print0(f"Step {step:05d} | val bpb: {bpb:.6f}")
-    return {"bpb": bpb}
+    metrics = {"bpb": bpb}
+    if args.core_every > 0 and step > 0 and step % args.core_every == 0:
+        metrics.update(
+            evaluate_core(
+                eval_model, tokenizer, device, max_per_task=args.core_max_per_task, directory=runtime_config.out_dir
+            )
+        )
+    return metrics
 
 
 training_args = build_training_arguments(
@@ -312,13 +321,11 @@ trainer = TinyGPTTrainer(
     args=training_args,
     callbacks=callbacks,
     eval_dataset=[0] if args.eval_every > 0 else None,
-    matrix_lr=args.matrix_lr,
-    embedding_lr=args.embedding_lr,
-    scalar_lr=args.scalar_lr,
-    lm_head_lr=args.lm_head_lr,
-    muon_momentum=args.muon_momentum,
-    muon_ns_steps=args.muon_ns_steps,
-    optimizer_name=args.optimizer,
+    matrix_lr=args.matrix_lr * batch_lr_scale,
+    embedding_lr=args.embedding_lr * batch_lr_scale,
+    scalar_lr=args.scalar_lr * batch_lr_scale,
+    lm_head_lr=args.lm_head_lr * batch_lr_scale,
+    schedule_pretrain=True,
     warmdown_ratio=args.warmdown_ratio,
     final_lr_frac=args.final_lr_frac,
     train_loader=train_loader,

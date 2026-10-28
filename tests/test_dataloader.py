@@ -139,13 +139,13 @@ def test_text_data_loader_reads_local_documents(tmp_path, tokenizer: HuggingFace
     assert (inputs[:, 0] == tokenizer.get_bos_token_id()).all()
 
 
-def test_conversation_loader_crops_oversized_conversations() -> None:
+def test_conversation_loader_pads_instead_of_cropping() -> None:
     class Tokenizer:
         def get_bos_token_id(self) -> int:
             return 0
 
         def render_conversation(self, conversation, max_tokens):
-            return list(range(10)), [1] * 10
+            return [1, 2, 3][:max_tokens], [0, 1, 1][:max_tokens]
 
     task = [{"messages": []}]
     loader = conversation_data_loader(Tokenizer(), task, B=1, T=4, device="cpu")
@@ -153,7 +153,7 @@ def test_conversation_loader_crops_oversized_conversations() -> None:
 
     assert inputs.shape == (1, 4)
     assert targets.shape == (1, 4)
-    assert (targets >= 0).all()
+    assert targets.tolist() == [[2, 3, -1, -1]]
 
 
 def test_text_data_loader_rejects_empty_files(tmp_path, tokenizer: HuggingFaceTokenizer) -> None:

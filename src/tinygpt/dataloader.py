@@ -12,20 +12,22 @@ from collections.abc import Callable, Iterator
 from functools import lru_cache
 from typing import Any
 
+import pyarrow.parquet as pq
 import torch
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
-from huggingface_hub import list_repo_files
+from huggingface_hub import hf_hub_download, list_repo_files
 
 from tinygpt.distributed import get_dist_info
 
 logger = logging.getLogger(__name__)
 CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
+CLIMBMIX_REVISION = "915333b4f8b8684f39aeaafea600fea6f43fb703"
 
 
 @lru_cache(maxsize=1)
 def _climbmix_parquet_files() -> tuple[str, ...]:
-    files = list_repo_files(CLIMBMIX_DATASET, repo_type="dataset")
+    files = list_repo_files(CLIMBMIX_DATASET, repo_type="dataset", revision=CLIMBMIX_REVISION)
     parquet_files = sorted(f for f in files if f.endswith(".parquet"))
     if len(parquet_files) < 2:
         raise RuntimeError(f"Expected at least two parquet shards in {CLIMBMIX_DATASET}, got {len(parquet_files)}")
@@ -72,6 +74,19 @@ def document_batches(
         A list of document strings for the current rank.
     """
     resolved_name, resolved_split, data_files = resolve_dataset_source(dataset_name, split)
+    if dataset_name == CLIMBMIX_DATASET:
+        assert data_files is not None
+        # Match nanochat's row-group/rank ordering, using Hub caching and locks
+        # instead of implementing another downloader or dataset abstraction.
+        while True:
+            for url in data_files["train"]:
+                filename = url.removeprefix(f"hf://datasets/{CLIMBMIX_DATASET}/")
+                path = hf_hub_download(CLIMBMIX_DATASET, filename, repo_type="dataset", revision=CLIMBMIX_REVISION)
+                parquet = pq.ParquetFile(path)
+                for row_group in range(rank, parquet.num_row_groups, world_size):
+                    texts = parquet.read_row_group(row_group).column(text_field).to_pylist()
+                    for offset in range(0, len(texts), batch_size):
+                        yield texts[offset : offset + batch_size]
     ds = load_dataset(resolved_name, split=resolved_split, data_files=data_files, streaming=True)
     if world_size > 1:
         ds = split_dataset_by_node(ds, rank=rank, world_size=world_size)
@@ -255,6 +270,7 @@ def conversation_data_loader(
     B: int,
     T: int,
     device: torch.device | str = "cuda",
+    progress: list[float] | None = None,
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     """Conversation dataloader that packs tokenized examples with loss masking.
 
@@ -267,6 +283,7 @@ def conversation_data_loader(
         B: Batch size (number of sequences per step).
         T: Sequence length.
         device: Target device for the output tensors.
+        progress: Optional single-element list updated with the consumed epoch fraction.
 
     Yields:
         An (inputs, targets) tuple of (B, T) long tensors where non-assistant
@@ -294,6 +311,7 @@ def conversation_data_loader(
 
     conv_buffer: list[tuple[list[int], list[int]]] = []
     cursor = 0
+    consumed = rank
 
     def refill() -> None:
         nonlocal cursor
@@ -302,7 +320,7 @@ def conversation_data_loader(
                 break
             idx = indices[cursor % len(indices)]
             conv = task[idx % n]
-            ids, mask = tokenizer.render_conversation(conv, max_tokens=T + 1)
+            ids, mask = tokenizer.render_conversation(conv, max_tokens=T)
             conv_buffer.append((ids, mask))
             cursor += 1
 
@@ -313,8 +331,7 @@ def conversation_data_loader(
             target_buffer[row_idx].fill_(-1)
 
             while pos < row_capacity:
-                if not conv_buffer:
-                    refill()
+                refill()
                 if not conv_buffer:
                     break
 
@@ -328,16 +345,10 @@ def conversation_data_loader(
                         best_len = conv_len
 
                 if best_idx < 0:
-                    shortest_idx = min(range(len(conv_buffer)), key=lambda i: len(conv_buffer[i][0]))
-                    ids, mask = conv_buffer.pop(shortest_idx)
-                    ids = ids[:remaining]
-                    mask = mask[:remaining]
-                    best_len = len(ids)
-                    if best_len == 0:
-                        continue
-
-                else:
-                    ids, mask = conv_buffer.pop(best_idx)
+                    # Nanochat pads conversation rows instead of cropping answers.
+                    break
+                ids, mask = conv_buffer.pop(best_idx)
+                consumed += world_size
                 row_buffer[row_idx, pos : pos + best_len] = torch.tensor(ids, dtype=torch.long)
                 target_buffer[row_idx, pos : pos + best_len] = torch.tensor(
                     [token_id if mask_val else -1 for token_id, mask_val in zip(ids, mask, strict=True)],
@@ -349,4 +360,6 @@ def conversation_data_loader(
         cpu_targets.copy_(target_buffer[:, 1:])
         gpu_inputs.copy_(cpu_inputs, non_blocking=use_cuda)
         gpu_targets.copy_(cpu_targets, non_blocking=use_cuda)
+        if progress is not None:
+            progress[0] = min(1.0, consumed / n)
         yield gpu_inputs, gpu_targets

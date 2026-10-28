@@ -1,4 +1,4 @@
-"""Llama model and shared training-run configuration."""
+"""Nanochat architecture and shared training-run configuration."""
 
 from __future__ import annotations
 
@@ -7,7 +7,55 @@ import math
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
-from transformers import LlamaConfig
+import torch
+from transformers import NanoChatConfig
+
+# Architecture and recipe reference, recorded in every student checkpoint.
+NANOCHAT_REVISION = "92d63d4e8bb4df75c3b71618f31ddde2378b2bcd"
+
+
+class TinyGPTConfig(NanoChatConfig):  # type: ignore[no-untyped-call]
+    """Describe the nanochat architecture used by the student.
+
+    Args:
+        window_pattern: Repeated short/full attention pattern, with a full final layer.
+        transformer_depth: Number of Transformer blocks, excluding the input smear cache.
+        **kwargs: Standard Transformers NanoChat configuration fields.
+    """
+
+    model_type = "tinygpt"
+
+    def __init__(self, window_pattern: str = "SSSL", transformer_depth: int | None = None, **kwargs: Any) -> None:
+        depth = transformer_depth if transformer_depth is not None else int(kwargs.get("num_hidden_layers", 12))
+        if depth < 1:
+            raise ValueError("transformer_depth must be positive")
+        # Transformers/vLLM hybrid configs count all cache-bearing blocks:
+        # one input convolution, followed by the requested Transformer depth.
+        kwargs["num_hidden_layers"] = depth + 1
+        kwargs.setdefault("intermediate_size", 4 * int(kwargs.get("hidden_size", 768)))
+        # PyTorch 2.10's RMSNorm uses the accumulator epsilon, also for bf16 inputs.
+        kwargs.setdefault("rms_norm_eps", torch.finfo(torch.float32).eps)
+        super().__init__(**kwargs)
+        self.transformer_depth = depth
+        self.layers_block_type = ["mamba"] + ["attention"] * depth
+        self.num_key_value_heads = self.num_key_value_heads or self.num_attention_heads
+        if not window_pattern or set(window_pattern) - {"S", "L"}:
+            raise ValueError("window_pattern must contain only S and L")
+        self.window_pattern = window_pattern
+        self.nanochat_revision = NANOCHAT_REVISION
+        self.use_cache = False
+        self.padded_vocab_size = math.ceil(self.vocab_size / 64) * 64
+        self.rope_parameters = {"rope_type": "default", "rope_theta": 100000.0}
+
+    def attention_windows(self) -> list[int]:
+        """Return the inclusive left window of each layer, as in nanochat."""
+        short = math.ceil((self.max_position_embeddings // 4) / 128) * 128
+        windows = [
+            short if self.window_pattern[i % len(self.window_pattern)] == "S" else self.max_position_embeddings
+            for i in range(self.transformer_depth)
+        ]
+        windows[-1] = self.max_position_embeddings
+        return windows
 
 
 @dataclass(frozen=True)
@@ -61,8 +109,9 @@ def make_config(
     head_dim: int = 128,
     vocab_size: int = 32768,
     sequence_len: int = 2048,
-) -> LlamaConfig:
-    """Build a LlamaConfig from a depth scalar.
+    window_pattern: str = "SSSL",
+) -> TinyGPTConfig:
+    """Build the nanochat architecture from a depth scalar.
 
     model_dim is set to depth * aspect_ratio, rounded up to the next multiple
     of head_dim so that head_dim divides evenly.
@@ -73,9 +122,10 @@ def make_config(
         head_dim: Attention head dimension; model_dim is rounded up to a multiple.
         vocab_size: Vocabulary size.
         sequence_len: Maximum sequence length.
+        window_pattern: Repeated short/full attention pattern.
 
     Returns:
-        A standard LlamaConfig.
+        A Transformers configuration for the nanochat student.
     """
     for name, value in (
         ("depth", depth),
@@ -90,7 +140,8 @@ def make_config(
     base_dim = depth * aspect_ratio
     model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
     num_heads = model_dim // head_dim
-    return LlamaConfig(
+    return TinyGPTConfig(
+        window_pattern=window_pattern,
         vocab_size=vocab_size,
         max_position_embeddings=sequence_len,
         hidden_size=model_dim,

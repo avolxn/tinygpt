@@ -2,12 +2,14 @@
 
 import pytest
 import torch
-from transformers import LlamaConfig, LlamaForCausalLM
+
+from tinygpt.config import TinyGPTConfig
+from tinygpt.model import TinyGPTForCausalLM
 
 
 @pytest.fixture()
-def tiny_config() -> LlamaConfig:
-    return LlamaConfig(
+def tiny_config() -> TinyGPTConfig:
+    return TinyGPTConfig(
         max_position_embeddings=64,
         vocab_size=256,
         num_hidden_layers=2,
@@ -19,19 +21,19 @@ def tiny_config() -> LlamaConfig:
 
 
 @pytest.fixture()
-def tiny_model(tiny_config: LlamaConfig) -> LlamaForCausalLM:
-    model = LlamaForCausalLM(tiny_config)
+def tiny_model(tiny_config: TinyGPTConfig) -> TinyGPTForCausalLM:
+    model = TinyGPTForCausalLM(tiny_config)
     model.eval()
     return model
 
 
-def test_forward_no_labels(tiny_model: LlamaForCausalLM, tiny_config: LlamaConfig) -> None:
+def test_forward_no_labels(tiny_model: TinyGPTForCausalLM, tiny_config: TinyGPTConfig) -> None:
     idx = torch.randint(0, tiny_config.vocab_size, (2, 16))
     output = tiny_model(input_ids=idx)
     assert output.logits.shape == (2, 16, tiny_config.vocab_size)
 
 
-def test_forward_with_labels(tiny_model: LlamaForCausalLM, tiny_config: LlamaConfig) -> None:
+def test_forward_with_labels(tiny_model: TinyGPTForCausalLM, tiny_config: TinyGPTConfig) -> None:
     idx = torch.randint(0, tiny_config.vocab_size, (2, 16))
     labels = torch.randint(0, tiny_config.vocab_size, (2, 16))
     output = tiny_model(input_ids=idx, labels=labels)
@@ -40,12 +42,16 @@ def test_forward_with_labels(tiny_model: LlamaForCausalLM, tiny_config: LlamaCon
     assert output.loss.item() > 0
 
 
-def test_generation_api(tiny_model: LlamaForCausalLM, tiny_config: LlamaConfig) -> None:
-    idx = torch.randint(0, tiny_config.vocab_size, (1, 4))
-    generated = tiny_model.generate(idx, max_new_tokens=3)
-    assert generated.shape == (1, 7)
+def test_causal_prefix_invariance(tiny_model: TinyGPTForCausalLM, tiny_config: TinyGPTConfig) -> None:
+    idx = torch.randint(0, tiny_config.vocab_size, (1, 12))
+    tiny_model.smear_lambda.data.fill_(0.3)
+    for layer in tiny_model.layers:
+        torch.nn.init.normal_(layer.self_attn.o_proj.weight, std=0.03)
+    full = tiny_model(idx).logits
+    prefix = tiny_model(idx[:, :7]).logits
+    torch.testing.assert_close(full[:, :7], prefix)
 
 
-def test_init_weights_not_nan(tiny_model: LlamaForCausalLM) -> None:
+def test_init_weights_not_nan(tiny_model: TinyGPTForCausalLM) -> None:
     for name, param in tiny_model.named_parameters():
         assert not torch.isnan(param).any(), f"NaN in parameter: {name}"

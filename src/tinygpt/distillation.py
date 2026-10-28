@@ -6,6 +6,7 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from transformers import AutoModelForCausalLM
 
 from tinygpt.tokenizer import SPECIAL_TOKENS
@@ -27,7 +28,7 @@ def load_teacher_model(
     model: Any = AutoModelForCausalLM.from_pretrained(
         model_ref,
         local_files_only=True,
-        dtype="auto",
+        dtype=torch.float16 if device.type == "cuda" and not torch.cuda.is_bf16_supported() else "auto",
     )
     model.to(device)
     model.eval()
@@ -95,7 +96,21 @@ def masked_distillation_loss(
     if not bool(valid_mask.any()):
         return student_logits.new_zeros(())
 
-    student_log_probs = F.log_softmax(student_logits / temperature, dim=-1)
-    teacher_probs = F.softmax(teacher_logits / temperature, dim=-1)
-    per_token_kl = F.kl_div(student_log_probs, teacher_probs, reduction="none").sum(dim=-1)
-    return per_token_kl.masked_select(valid_mask).mean() * (temperature**2)
+    def chunk_loss(student: torch.Tensor, teacher: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        log_probs = F.log_softmax(student.float() / temperature, dim=-1)
+        probabilities = F.softmax(teacher.float() / temperature, dim=-1)
+        per_token = F.kl_div(log_probs, probabilities, reduction="none").sum(dim=-1)
+        return per_token.masked_select(mask).sum()
+
+    # Recompute vocabulary-sized intermediates per chunk during backward instead
+    # of retaining several full (batch, sequence, vocabulary) probability tensors.
+    size = student_logits.size(-1)
+    loss = student_logits.new_zeros(())
+    for student, teacher, mask in zip(
+        torch.split(student_logits.reshape(-1, size), 1024),
+        torch.split(teacher_logits.reshape(-1, size), 1024),
+        torch.split(valid_mask.reshape(-1), 1024),
+        strict=True,
+    ):
+        loss = loss + checkpoint(chunk_loss, student, teacher, mask, use_reentrant=False, preserve_rng_state=False)
+    return loss / valid_mask.sum() * (temperature**2)

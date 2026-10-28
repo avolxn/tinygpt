@@ -40,6 +40,7 @@ from tinygpt.train import (
     MlflowMetadataCallback,
     TinyGPTTrainer,
     build_training_arguments,
+    parse_training_args,
     require_mlflow_tracking,
     resolve_training_value,
 )
@@ -50,16 +51,15 @@ add_runtime_arguments(parser)
 parser.add_argument(
     "--checkpoint",
     type=str,
-    required=True,
+    default="",
     help="Student model directory or Trainer output directory",
 )
 parser.add_argument("--resume-from", type=str, default="", help="Distillation model or full Trainer checkpoint")
 parser.add_argument(
     "--sharding-strategy", type=str, default="FULL_SHARD", choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"]
 )
-parser.add_argument("--optimizer", choices=["adamw", "muon"], default="adamw")
 # Training horizon
-parser.add_argument("--num-iterations", type=int, default=-1, help="Optimization steps (-1 = approximate one epoch)")
+parser.add_argument("--num-iterations", type=int, default=-1, help="Optimization steps (-1 = one conversational epoch)")
 # Batch sizes (default: inherit from pretrain metadata when available)
 parser.add_argument("--device-batch-size", type=int, default=None)
 parser.add_argument("--total-batch-size", type=int, default=None, help="Total batch size in tokens")
@@ -71,7 +71,7 @@ parser.add_argument("--embedding-lr", type=float, default=None)
 parser.add_argument("--scalar-lr", type=float, default=None)
 parser.add_argument("--init-lr-frac", type=float, default=0.8)
 parser.add_argument("--weight-decay", type=float, default=0.0)
-parser.add_argument("--grad-clip", type=float, default=1.0)
+parser.add_argument("--grad-clip", type=float, default=0.0)
 # LR schedule
 parser.add_argument("--warmup-ratio", type=float, default=0.0)
 parser.add_argument("--warmdown-ratio", type=float, default=0.5)
@@ -83,7 +83,7 @@ parser.add_argument("--eval-tokens", type=int, default=40 * 524288)
 parser.add_argument(
     "--teacher-model",
     type=str,
-    required=True,
+    default="",
     help="Prepared local teacher directory in Hugging Face format",
 )
 parser.add_argument(
@@ -93,26 +93,30 @@ parser.add_argument(
     choices=["same", "cuda", "cpu", "mps"],
     help="Device for the teacher model; 'same' reuses the student device",
 )
-parser.add_argument("--distill-alpha", type=float, default=0.5, help="Teacher KL weight in [0, 1]")
-parser.add_argument("--distill-temperature", type=float, default=1.0, help="Temperature for KL distillation")
+parser.add_argument("--distill-alpha", type=float, default=0.75, help="Teacher KL weight in (0, 1]")
+parser.add_argument("--distill-temperature", type=float, default=1.5, help="Temperature for KL distillation")
 # Task mixture
 parser.add_argument(
     "--tasks",
     type=str,
-    default="smoltalk,mmlu,gsm8k,identity,spelling",
-    help="Comma-separated task groups: smoltalk,mmlu,gsm8k,identity,spelling",
+    default="smoltalk,mmlu,gsm8k",
+    help="Comma-separated task groups: smoltalk,mmlu,gsm8k,custom",
 )
 parser.add_argument(
-    "--identity-conversations",
+    "--conversations",
     type=str,
-    default="data/identity_conversations.jsonl",
-    help="Path to identity_conversations.jsonl",
+    default="",
+    help="Local JSONL conversations for --tasks custom",
 )
 parser.add_argument("--mmlu-epochs", type=int, default=3)
 parser.add_argument("--gsm8k-epochs", type=int, default=4)
 
 
-args = parser.parse_args()
+args = parse_training_args(parser)
+if not args.checkpoint and not args.resume_from:
+    parser.error("--checkpoint is required for a new distillation run")
+if not args.teacher_model:
+    parser.error("--teacher-model is required for a new distillation run")
 runtime_config = RuntimeConfig.from_namespace(args)
 
 dist_requested, preflight_rank, _, _ = get_dist_info()
@@ -125,12 +129,10 @@ master_process = rank == 0
 
 print0(f"compute_dtype: {compute_dtype} ({compute_dtype_reason})")
 
-if not 0.0 <= args.distill_alpha <= 1.0:
-    raise ValueError(f"--distill-alpha must be in [0, 1], got {args.distill_alpha}")
+if not 0.0 < args.distill_alpha <= 1.0:
+    raise ValueError(f"--distill-alpha must be in (0, 1], got {args.distill_alpha}")
 if args.distill_temperature <= 0:
     raise ValueError(f"--distill-temperature must be > 0, got {args.distill_temperature}")
-if args.optimizer == "muon" and is_dist and args.sharding_strategy != "NO_SHARD":
-    raise ValueError("Muon requires --sharding-strategy NO_SHARD; use --optimizer adamw with sharded FSDP")
 
 model_ref = args.resume_from or args.checkpoint
 model, meta = build_model_from_checkpoint(model_ref, device, phase="train")
@@ -138,9 +140,13 @@ resume_checkpoint = resolve_trainer_checkpoint(model_ref) if args.resume_from el
 if args.resume_from and resume_checkpoint is None:
     raise ValueError("--resume-from requires a complete Trainer checkpoint")
 student_dir = meta["model_dir"]
+optimizer_checkpoint = None if args.resume_from else resolve_trainer_checkpoint(student_dir)
+if not args.resume_from and optimizer_checkpoint is None:
+    raise ValueError("Distillation requires a full pretraining checkpoint to retain optimizer moments")
 tokenizer = HuggingFaceTokenizer.from_directory(student_dir)
 sequence_len = args.max_seq_len or meta["model_config"]["max_position_embeddings"]
 pretrain_user_config = meta.get("user_config", {})
+derived = meta.get("derived_values", {})
 
 
 args.device_batch_size = int(
@@ -148,7 +154,7 @@ args.device_batch_size = int(
         "device_batch_size",
         args.device_batch_size,
         32,
-        meta.get("device_batch_size"),
+        derived.get("device_batch_size"),
         pretrain_user_config.get("device_batch_size"),
     )
 )
@@ -157,7 +163,7 @@ args.total_batch_size = int(
         "total_batch_size",
         args.total_batch_size,
         524288,
-        meta.get("total_batch_size"),
+        derived.get("total_batch_size"),
         pretrain_user_config.get("total_batch_size"),
     )
 )
@@ -168,7 +174,6 @@ args.lm_head_lr = float(
         args.lm_head_lr,
         0.004,
         pretrain_user_config.get("lm_head_lr"),
-        pretrain_user_config.get("unembedding_lr"),
     )
 )
 args.embedding_lr = float(
@@ -176,10 +181,11 @@ args.embedding_lr = float(
 )
 args.scalar_lr = float(resolve_training_value("scalar_lr", args.scalar_lr, 0.5, pretrain_user_config.get("scalar_lr")))
 
-args.matrix_lr *= args.init_lr_frac
-args.lm_head_lr *= args.init_lr_frac
-args.embedding_lr *= args.init_lr_frac
-args.scalar_lr *= args.init_lr_frac
+if not args.resume_from:
+    args.matrix_lr *= args.init_lr_frac
+    args.lm_head_lr *= args.init_lr_frac
+    args.embedding_lr *= args.init_lr_frac
+    args.scalar_lr *= args.init_lr_frac
 
 
 def resolve_teacher_device() -> torch.device:
@@ -205,12 +211,10 @@ if meta["model_config"]["vocab_size"] != teacher_meta["model_config"]["vocab_siz
     )
 print0(f"Loaded teacher with vocab size {teacher_meta['model_config']['vocab_size']:,}")
 
-student_model = model
-
 task_names = {t.strip() for t in args.tasks.split(",") if t.strip()}
 task_list, val_task_list = build_distillation_tasks(
     task_names,
-    identity_conversations=args.identity_conversations,
+    conversations=args.conversations,
     mmlu_epochs=args.mmlu_epochs,
     gsm8k_epochs=args.gsm8k_epochs,
 )
@@ -221,7 +225,10 @@ if len(task) == 0:
 print0(f"Task mixture: {len(task):,} examples from {task_names}")
 
 val_task = TaskMixture(val_task_list) if args.eval_every > 0 else None
-train_loader = conversation_data_loader(tokenizer, task, args.device_batch_size, sequence_len, device)
+conversation_progress = [0.0] if args.num_iterations <= 0 else None
+train_loader = conversation_data_loader(
+    tokenizer, task, args.device_batch_size, sequence_len, device, progress=conversation_progress
+)
 
 tokens_per_fwdbwd = args.device_batch_size * sequence_len
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * world_size
@@ -255,7 +262,7 @@ def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
     return {"ce_loss": loss}
 
 
-run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['num_hidden_layers']}"
+run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['transformer_depth']}"
 runtime_config = runtime_config.with_run_name(run_name)
 checkpoint_dir = get_checkpoint_dir(runtime_config.out_dir, runtime_config.run_name, phase="distill")
 mlflow_run_name = runtime_config.run if runtime_config.run else runtime_config.run_name
@@ -292,7 +299,7 @@ checkpoint_metadata = build_checkpoint_metadata(
 )
 
 trainer = TinyGPTTrainer(
-    model=student_model,
+    model=model,
     args=training_args,
     callbacks=[MlflowMetadataCallback(checkpoint_metadata)],
     eval_dataset=[0] if args.eval_every > 0 else None,
@@ -302,7 +309,6 @@ trainer = TinyGPTTrainer(
     lm_head_lr=args.lm_head_lr,
     warmdown_ratio=args.warmdown_ratio,
     final_lr_frac=args.final_lr_frac,
-    optimizer_name=args.optimizer,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
     teacher_model=teacher_model,
@@ -310,6 +316,9 @@ trainer = TinyGPTTrainer(
     distill_temperature=args.distill_temperature,
     tokenizer_dir=args.teacher_model,
     checkpoint_metadata=checkpoint_metadata,
+    optimizer_checkpoint=optimizer_checkpoint,
+    conversation_progress=conversation_progress,
+    warmup_ratio=args.warmup_ratio,
 )
 
 try:

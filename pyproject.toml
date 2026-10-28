@@ -12,14 +12,21 @@ dependencies = [
     "tokenizers>=0.22.0",
     "datasets>=4.0.0",
     "mlflow>=3.1.0,<4.0.0",
-    "transformers>=5.6.0,<6.0.0",
+    "transformers>=5.15.1,<5.16.0",
     "huggingface-hub>=1.27.0",
     "psycopg2-binary>=2.9,<3",
+    "filelock>=3.20",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+    "pyarrow>=21.0",
 ]
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]
 build-backend = "uv_build"
+
+[project.entry-points."vllm.general_plugins"]
+tinygpt = "tinygpt:register_vllm"
 
 [dependency-groups]
 dev = [
@@ -79,6 +86,8 @@ cpu = [
     "torch==2.10.0",
 ]
 gpu = [
+    "torchao==0.16.0; platform_system == 'Linux'",
+    "kernels>=0.12.0",
     "torch==2.10.0",
     "torchvision==0.25.0+cu128; platform_system == 'Linux'",
     "torchaudio==2.10.0+cu128; platform_system == 'Linux'",

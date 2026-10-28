@@ -12,12 +12,15 @@ Usage:
 """
 
 import argparse
+import json
 from functools import partial
 from typing import Any
 
+import mlflow
 import torch
 import torch.distributed as dist
 from tasks.arc import ARC
+from tasks.core import evaluate_core
 from tasks.gsm8k import GSM8K
 from tasks.humaneval import HumanEval
 from tasks.mmlu import MMLU
@@ -28,6 +31,7 @@ from tinygpt.distributed import compute_cleanup, compute_init, get_dist_info, pr
 from tinygpt.inference import VLLM
 from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
+from tinygpt.train import require_mlflow_tracking
 from tinygpt.utils import autodetect_device_type
 
 if __name__ == "__main__":
@@ -38,7 +42,10 @@ if __name__ == "__main__":
         default="",
         help="Path to a model directory or Trainer output directory",
     )
-    parser.add_argument("--eval", type=str, default="bpb,sample", help="Comma-separated modes: bpb,sample,chat")
+    parser.add_argument(
+        "--eval", type=str, default="core,bpb,sample", help="Comma-separated modes: core,bpb,sample,chat"
+    )
+    parser.add_argument("--max-per-task", type=int, default=-1, help="CORE examples per task; negative uses all")
     parser.add_argument("--tasks", type=str, default="", help="Tasks for chat eval, pipe-separated. Default = all.")
     parser.add_argument("--dataset", type=str, default=CLIMBMIX_DATASET)
     parser.add_argument("--text-field", type=str, default="text")
@@ -59,10 +66,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     eval_modes = {m.strip() for m in args.eval.split(",")}
-    allowed_modes = {"bpb", "sample", "chat"}
+    allowed_modes = {"core", "bpb", "sample", "chat"}
     unknown_modes = eval_modes - allowed_modes
     if not eval_modes or unknown_modes:
-        parser.error(f"--eval must contain only bpb,sample,chat; unknown: {', '.join(sorted(unknown_modes))}")
+        parser.error(f"--eval must contain only core,bpb,sample,chat; unknown: {', '.join(sorted(unknown_modes))}")
     if args.device_batch_size <= 0:
         parser.error("--device-batch-size must be positive")
     if args.split_tokens <= 0:
@@ -80,7 +87,7 @@ if __name__ == "__main__":
     if args.vllm_tensor_parallel_size <= 0:
         parser.error("--vllm-tensor-parallel-size must be positive")
 
-    needs_local_model = "bpb" in eval_modes
+    needs_local_model = bool(eval_modes & {"core", "bpb"})
     needs_vllm = bool(eval_modes & {"sample", "chat"})
     dist_requested, _, _, _ = get_dist_info()
     if needs_vllm and dist_requested:
@@ -88,7 +95,7 @@ if __name__ == "__main__":
     if needs_vllm and not args.vllm_model:
         parser.error("--vllm-model is required for sample/chat evaluation")
     if needs_local_model and not args.checkpoint:
-        parser.error("--checkpoint is required for bpb evaluation")
+        parser.error("--checkpoint is required for core/bpb evaluation")
     tokenizer_ref = args.checkpoint or args.vllm_model
     if not tokenizer_ref:
         parser.error("--checkpoint or --vllm-model is required to load the tokenizer")
@@ -126,6 +133,10 @@ if __name__ == "__main__":
     if needs_local_model:
         print0(f"Loaded model from {args.checkpoint} (step {meta.get('step', '?')})")
     print0(f"Eval modes: {', '.join(sorted(eval_modes))}")
+    evaluation_results: dict[str, float] = {}
+    if "core" in eval_modes:
+        evaluation_results.update(evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task))
+        print0(f"CORE: {evaluation_results['core']:.6f}")
 
     # -----------------------------------------------------------------------------
     # Sampling
@@ -143,7 +154,7 @@ if __name__ == "__main__":
         ]:
             tokens = tokenizer.encode(prompt, prepend="<|bos|>")
             sample = vllm.generate(
-                tokenizer.decode(tokens),
+                tokens,
                 max_tokens=args.max_new_tokens,
                 temperature=0,
                 top_k=args.top_k,
@@ -171,6 +182,7 @@ if __name__ == "__main__":
                 text_field=args.text_field,
             )
             bpb = evaluate_bpb(model, loader, steps, token_bytes)
+            evaluation_results[f"{split}_bpb"] = bpb
             print0(f"{split} bpb: {bpb:.6f}")
 
     # -----------------------------------------------------------------------------
@@ -215,13 +227,12 @@ def run_generative_eval(
     for i in range(ddp_rank, num_problems, ddp_world_size):
         conversation = task_object[i]
         encoded_prompt = tokenizer.render_for_completion(conversation)
-        completions = vllm.generate_batch(
-            [tokenizer.decode(encoded_prompt)] * num_samples,
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-            top_k=top_k,
-            stop=["<|assistant_end|>", "<|bos|>"],
-        )
+        completions = [
+            vllm.generate_conversation(
+                encoded_prompt, tokenizer, max_tokens=max_new_tokens, temperature=temperature, top_k=top_k
+            )
+            for _ in range(num_samples)
+        ]
         passed = any(task_object.evaluate(conversation, c) for c in completions)
         total += 1
         num_passed += int(passed)
@@ -266,17 +277,15 @@ def run_categorical_eval(task_object: Any, batch_size: int, max_problems: int | 
         i0, i1 = i * batch_size, min((i + 1) * batch_size, num_problems)
         conversations = [task_object[ii] for ii in range(i0, i1)]
         prompt_ids = [tokenizer.render_for_completion(conv) for conv in conversations]
-        completions = vllm.generate_batch(
-            [tokenizer.decode(ids) for ids in prompt_ids],
-            max_tokens=1,
-            temperature=0.0,
-        )
+        candidates = [[tokenizer.encode(letter) for letter in conv["letters"]] for conv in conversations]
+        if any(len(ids) != 1 for choices in candidates for ids in choices):
+            raise ValueError("Categorical evaluation requires single-token answer letters")
+        predictions = vllm.choose_tokens(prompt_ids, [[ids[0] for ids in choices] for choices in candidates])
 
-        for conversation, completion in zip(conversations, completions, strict=True):
+        for conversation, choices, prediction in zip(conversations, candidates, predictions, strict=True):
             letters: list[str] = conversation["letters"]
-            normalized = completion.strip()
-            predicted = next((letter for letter in letters if normalized.startswith(letter)), None)
-            num_passed += int(predicted is not None and task_object.evaluate(conversation, predicted))
+            predicted = letters[[ids[0] for ids in choices].index(prediction)]
+            num_passed += int(task_object.evaluate(conversation, predicted))
             total += 1
 
     if is_dist:
@@ -334,6 +343,7 @@ if __name__ == "__main__":
             else:
                 acc = run_categorical_eval(task_obj, batch_size=args.device_batch_size, max_problems=args.max_problems)
             results[task_name] = acc
+            evaluation_results[task_name] = acc
             print0(f"{task_name}: {100 * acc:.2f}%")
 
         # ChatCORE metric (mean-centered accuracy over baseline chance levels)
@@ -341,5 +351,13 @@ if __name__ == "__main__":
             centered = [(results[t] - BASELINES[t]) / (1.0 - BASELINES[t]) for t in ALL_TASKS]
             chatcore = sum(centered) / len(centered)
             print0(f"\nChatCORE: {100 * chatcore:.2f}%")
+            evaluation_results["chatcore"] = chatcore
 
+    if rank == 0:
+        print0(json.dumps(evaluation_results, indent=2))
+        require_mlflow_tracking()
+        with mlflow.start_run(run_name="evaluation", tags={"checkpoint": tokenizer_dir}):
+            mlflow.log_params(vars(args))
+            mlflow.log_metrics(evaluation_results)
+            mlflow.log_dict(evaluation_results, "evaluation.json")
     compute_cleanup()

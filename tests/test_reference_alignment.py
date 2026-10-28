@@ -1,3 +1,4 @@
+import copy
 import math
 import sys
 from types import SimpleNamespace
@@ -5,14 +6,77 @@ from types import SimpleNamespace
 import pytest
 import torch
 from tasks.distillation import build_distillation_tasks
-from tasks.spellingbee import SimpleSpelling, SpellingBee
-from transformers import LlamaForCausalLM, TrainerCallback, TrainingArguments
+from transformers import TrainerCallback, TrainingArguments
 
 from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weight_decay, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
 from tinygpt.metrics import evaluate_loss
+from tinygpt.model import TinyGPTForCausalLM
 from tinygpt.optimizer import get_lr_multiplier
 from tinygpt.train import TinyGPTTrainer, causal_lm_loss
+
+
+def _fsdp_optimizer_worker(rank, rendezvous):
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_optimizer_state_dict,
+        set_optimizer_state_dict,
+    )
+    from torch.distributed.device_mesh import init_device_mesh
+    from torch.distributed.fsdp import fully_shard
+
+    from tinygpt.optimizer import make_optimizer
+
+    torch.set_num_threads(1)
+    torch.distributed.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2)
+    try:
+        torch.manual_seed(42)
+        reference = TinyGPTForCausalLM(make_config(3, aspect_ratio=16, head_dim=16, vocab_size=64, sequence_len=8))
+        with torch.no_grad():
+            for parameter in reference.parameters():
+                parameter.add_(torch.randn_like(parameter) * 0.03)
+        model = copy.deepcopy(reference)
+        mesh = init_device_mesh("cpu", (2,))
+        for layer in model.layers:
+            fully_shard(layer, mesh=mesh)
+        fully_shard(model, mesh=mesh)
+        optimizer = make_optimizer(model, weight_decay=0.0)
+        expected_optimizer = make_optimizer(reference, weight_decay=0.0)
+        inputs = torch.randint(0, 64, (2, 8))
+        for iteration in range(2):
+            model(inputs[rank : rank + 1]).logits.square().mean().backward()
+            reference(inputs).logits.square().mean().backward()
+            optimizer.step()
+            expected_optimizer.step()
+            for name, parameter in model.named_parameters():
+                torch.testing.assert_close(
+                    parameter.full_tensor(),
+                    dict(reference.named_parameters())[name],
+                    rtol=2e-4,
+                    atol=2e-5,
+                    msg=f"{iteration}: {name}",
+                )
+            optimizer.zero_grad()
+            expected_optimizer.zero_grad()
+            if iteration == 0:
+                state = get_optimizer_state_dict(
+                    model, optimizer, options=StateDictOptions(full_state_dict=True, cpu_offload=True)
+                )
+                optimizer = make_optimizer(model, weight_decay=0.0)
+                set_optimizer_state_dict(
+                    model, optimizer, state, options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+                )
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_fsdp2_muon_matches_unsharded_training_and_resumes(tmp_path):
+    torch.multiprocessing.spawn(
+        _fsdp_optimizer_worker,
+        args=((tmp_path / "fsdp-rendezvous").as_uri(),),
+        nprocs=2,
+        join=True,
+    )
 
 
 def _distributed_loss_worker(rank, rendezvous):
@@ -21,7 +85,7 @@ def _distributed_loss_worker(rank, rendezvous):
             super().__init__()
             self.weight = torch.nn.Parameter(torch.tensor([[2.0, 0.0], [0.0, 1.0]]))
 
-        def forward(self, input_ids):
+        def forward(self, input_ids, **kwargs):
             return SimpleNamespace(logits=self.weight[input_ids])
 
     torch.distributed.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2)
@@ -46,7 +110,7 @@ def test_distributed_validation_loss(tmp_path):
 
 
 def test_validation_loss_weights_supervised_tokens():
-    model = LlamaForCausalLM(make_config(1, aspect_ratio=8, head_dim=8, vocab_size=32, sequence_len=8))
+    model = TinyGPTForCausalLM(make_config(1, aspect_ratio=8, head_dim=8, vocab_size=32, sequence_len=8))
     model.eval()
     inputs = torch.tensor([[1, 2, 3, 4]])
     labels = [torch.tensor([[2, -1, -1, -1]]), torch.tensor([[2, 3, 4, 5]])]
@@ -64,7 +128,7 @@ def test_evaluation_preserves_mode_and_calls_callbacks(tmp_path):
             control.should_training_stop = True
             return control
 
-    model = LlamaForCausalLM(make_config(1, aspect_ratio=8, head_dim=8, vocab_size=32, sequence_len=8))
+    model = TinyGPTForCausalLM(make_config(1, aspect_ratio=8, head_dim=8, vocab_size=32, sequence_len=8))
     model.eval()
     trainer = TinyGPTTrainer(
         model=model,
@@ -110,7 +174,7 @@ def test_climbmix_source_uses_last_shard_for_validation(monkeypatch):
 
 def test_all_ignored_targets_return_zero_loss_not_nan():
     config = make_config(1, aspect_ratio=32, head_dim=32, vocab_size=64, sequence_len=8)
-    model = LlamaForCausalLM(config)
+    model = TinyGPTForCausalLM(config)
     idx = torch.randint(0, config.vocab_size, (2, 4))
     targets = torch.full((2, 4), -1, dtype=torch.long)
 
@@ -120,7 +184,7 @@ def test_all_ignored_targets_return_zero_loss_not_nan():
     assert loss.item() == 0.0
 
 
-def test_identity_only_distillation_validation_uses_identity_dataset(tmp_path):
+def test_custom_distillation_uses_local_conversations(tmp_path):
     identity_path = tmp_path / "identity.jsonl"
     identity_path.write_text(
         '[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello."}]\n',
@@ -128,21 +192,21 @@ def test_identity_only_distillation_validation_uses_identity_dataset(tmp_path):
     )
 
     train_tasks, val_tasks = build_distillation_tasks(
-        {"identity"},
-        identity_conversations=str(identity_path),
+        {"custom"},
+        conversations=str(identity_path),
         mmlu_epochs=3,
         gsm8k_epochs=4,
     )
 
-    assert len(train_tasks) == 2
+    assert len(train_tasks) == 1
     assert len(val_tasks) == 1
     assert all(type(task).__name__ == "CustomJSON" for task in train_tasks + val_tasks)
 
 
 def test_default_distillation_validation_matches_reference_core_mix():
     _, val_tasks = build_distillation_tasks(
-        {"smoltalk", "mmlu", "gsm8k", "identity", "spelling"},
-        identity_conversations="missing.jsonl",
+        {"smoltalk", "mmlu", "gsm8k"},
+        conversations="missing.jsonl",
         mmlu_epochs=3,
         gsm8k_epochs=4,
     )
@@ -181,13 +245,6 @@ def test_scaling_rejects_zero_reference_counts():
             target_tokens=0,
             d12_target_tokens=1,
         )
-
-
-def test_spelling_tasks_reject_non_positive_sizes():
-    with pytest.raises(ValueError, match="size must be positive"):
-        SimpleSpelling(size=0)
-    with pytest.raises(ValueError, match="size must be positive"):
-        SpellingBee(size=0)
 
 
 def test_scheduler_handles_zero_warmup_and_warmdown():

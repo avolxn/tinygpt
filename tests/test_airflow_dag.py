@@ -8,7 +8,6 @@ EXPECTED_TASKS = {
     "prepare_teacher",
     "pretrain",
     "evaluate_base",
-    "download_identity",
     "distill",
     "evaluate_chat",
 }

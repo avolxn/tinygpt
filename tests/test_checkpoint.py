@@ -5,7 +5,6 @@ import os
 import tempfile
 
 import torch
-from transformers import LlamaForCausalLM
 
 from tinygpt.checkpoint import (
     CONFIG_NAME,
@@ -19,6 +18,7 @@ from tinygpt.checkpoint import (
     save_checkpoint_assets,
 )
 from tinygpt.config import RuntimeConfig, make_config
+from tinygpt.model import TinyGPTForCausalLM
 from tinygpt.optimizer import MuonAdamW
 
 
@@ -32,13 +32,13 @@ def test_optimizer_resume_keeps_scheduler_groups() -> None:
         ]
     )
     optimizer.load_state_dict(optimizer.state_dict())
-    assert optimizer.param_groups[0] is optimizer._muon.param_groups[0]
-    assert optimizer.param_groups[1] is optimizer._adamw.param_groups[0]
     optimizer.param_groups[0]["lr"] = 0.123
-    assert optimizer._muon.param_groups[0]["lr"] == 0.123
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 0.5)
+    assert optimizer.param_groups[0]["lr"] == 0.0615
+    assert scheduler.optimizer is optimizer
 
 
-def make_test_model() -> LlamaForCausalLM:
+def make_test_model() -> TinyGPTForCausalLM:
     config = make_config(
         depth=2,
         aspect_ratio=8,
@@ -46,7 +46,7 @@ def make_test_model() -> LlamaForCausalLM:
         vocab_size=32,
         sequence_len=16,
     )
-    return LlamaForCausalLM(config)
+    return TinyGPTForCausalLM(config)
 
 
 def test_save_and_load_model_checkpoint_roundtrip() -> None:

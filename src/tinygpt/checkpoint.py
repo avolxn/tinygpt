@@ -20,11 +20,12 @@ import sys
 from typing import Any, cast
 
 import torch
-from transformers import LlamaForCausalLM
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
 from tinygpt.config import RuntimeConfig
+from tinygpt.model import TinyGPTForCausalLM
+from tinygpt.utils import compute_dtype
 
 logger = logging.getLogger(__name__)
 TRAINER_STATE_NAME = "trainer_state.json"
@@ -71,6 +72,9 @@ def build_checkpoint_metadata(
         "python_version": platform.python_version(),
         "platform": platform.platform(),
         "torch_version": torch.__version__,
+        "teacher_source": _load_optional_json(os.path.join(getattr(args, "teacher_model", ""), CONFIG_NAME)).get(
+            "teacher_source"
+        ),
     }
 
 
@@ -137,11 +141,12 @@ def build_model_from_checkpoint(
     model_ref: str,
     device: torch.device,
     phase: str = "eval",
-) -> tuple[LlamaForCausalLM, dict[str, Any]]:
-    """Load a Llama model from a directory or Trainer output."""
+) -> tuple[TinyGPTForCausalLM, dict[str, Any]]:
+    """Load the nanochat student from a directory or Trainer checkpoint."""
     model_dir = resolve_model_directory(model_ref)
     config_dict = _load_json(os.path.join(model_dir, CONFIG_NAME))
-    model: Any = LlamaForCausalLM.from_pretrained(model_dir, dtype=torch.float32)
+    backend = "flash_attention_3" if device.type == "cuda" and compute_dtype == torch.bfloat16 else "sdpa"
+    model: Any = TinyGPTForCausalLM.from_pretrained(model_dir, dtype=torch.float32, attn_implementation=backend)
     model.to(device)
 
     if phase == "eval":
@@ -155,4 +160,4 @@ def build_model_from_checkpoint(
         metadata["step"] = metadata["global_step"]
     metadata["model_config"] = config_dict
     metadata["model_dir"] = model_dir
-    return cast(LlamaForCausalLM, model), metadata
+    return cast(TinyGPTForCausalLM, model), metadata

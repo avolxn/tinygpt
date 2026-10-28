@@ -3,11 +3,13 @@
 import argparse
 import os
 
+from huggingface_hub import model_info
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from tinygpt.tokenizer import CHAT_TEMPLATE, SPECIAL_TOKENS
 
 NANOCHAT_MODEL = "karpathy/nanochat-d32"
+NANOCHAT_REVISION = "22a40d181f09ab94fdc071f286b41ca5c965466a"
 
 parser = argparse.ArgumentParser(description="Prepare a Hugging Face teacher for distillation")
 parser.add_argument("--model", required=True, help="Hugging Face model ID")
@@ -17,8 +19,9 @@ parser.add_argument("--trust-remote-code", action="store_true")
 args = parser.parse_args()
 
 if args.model == NANOCHAT_MODEL and args.revision is None:
-    args.revision = "refs/pr/1"
+    args.revision = NANOCHAT_REVISION
     print(f"Using converted Transformers revision {args.revision} for {NANOCHAT_MODEL}")
+args.revision = model_info(args.model, revision=args.revision).sha
 
 print(f"Downloading teacher from {args.model}")
 tokenizer = AutoTokenizer.from_pretrained(
@@ -30,7 +33,8 @@ tokenizer = AutoTokenizer.from_pretrained(
 if not tokenizer.is_fast:
     raise RuntimeError("Teacher tokenizer must be a fast Hugging Face tokenizer")
 
-tokenizer.add_special_tokens({"additional_special_tokens": SPECIAL_TOKENS})
+if missing := set(SPECIAL_TOKENS) - tokenizer.get_vocab().keys():
+    raise ValueError(f"Teacher tokenizer is missing nanochat tokens: {sorted(missing)}")
 tokenizer.chat_template = CHAT_TEMPLATE
 tokenizer.bos_token = SPECIAL_TOKENS[0]
 if tokenizer.pad_token is None and tokenizer.eos_token is not None:
@@ -43,7 +47,8 @@ model = AutoModelForCausalLM.from_pretrained(
     dtype="auto",
 )
 if model.get_input_embeddings().num_embeddings != len(tokenizer):
-    model.resize_token_embeddings(len(tokenizer))
+    raise ValueError("Teacher vocabulary must match its tokenizer without resizing")
+model.config.teacher_source = {"model": args.model, "revision": args.revision}
 
 os.makedirs(args.out_dir, exist_ok=True)
 model.save_pretrained(args.out_dir, safe_serialization=True)

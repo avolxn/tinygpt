@@ -19,6 +19,9 @@ if [[ -f "infra/airflow/.env" ]]; then
 fi
 COMPOSE_FILES+=(-f infra/airflow/compose.yaml)
 if [[ "${AIRFLOW_GPU:-0}" == "1" ]]; then
+  DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+  export DOCKER_GID
+  docker image inspect python:3.12-slim >/dev/null 2>&1 || docker pull python:3.12-slim
   COMPOSE_FILES+=(-f infra/airflow/compose.gpu.yaml)
 fi
 

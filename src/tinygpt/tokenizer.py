@@ -27,11 +27,15 @@ SPECIAL_TOKENS = [
 CHAT_TEMPLATE = """
 {{- bos_token -}}
 {%- for message in messages -%}
-  {%- if message['role'] != ('user' if loop.index0 % 2 == 0 else 'assistant') -%}
+  {%- set offset = 1 if messages[0]['role'] == 'system' else 0 -%}
+  {%- if loop.index0 < offset -%}{%- continue -%}{%- endif -%}
+  {%- if message['role'] != ('user' if (loop.index0 - offset) % 2 == 0 else 'assistant') -%}
     {{- raise_exception('Messages must alternate user and assistant roles') -}}
   {%- endif -%}
   {%- if message['role'] == 'user' -%}
-    {{- '<|user_start|>' + message['content'] + '<|user_end|>' -}}
+    {{- '<|user_start|>' -}}
+    {%- if offset and loop.index0 == 1 -%}{{- messages[0]['content'] + '\n\n' -}}{%- endif -%}
+    {{- message['content'] + '<|user_end|>' -}}
   {%- else -%}
     {{- '<|assistant_start|>' -}}
     {%- if message['content'] is string -%}

@@ -41,6 +41,8 @@ def get_dist_info() -> tuple[bool, int, int, int]:
         A (is_dist, rank, local_rank, world_size) tuple. When not distributed,
         returns (False, 0, 0, 1).
     """
+    if is_distributed_initialized():
+        return True, dist.get_rank(), int(os.environ.get("LOCAL_RANK", 0)), dist.get_world_size()
     if is_distributed_requested():
         rank = int(os.environ["RANK"])
         local_rank = int(os.environ["LOCAL_RANK"])
@@ -96,6 +98,10 @@ def compute_init(device_type: str = "cuda", seed: int = 42) -> tuple[bool, int, 
         dist.barrier()
     else:
         device = torch.device(device_type)
+        if is_dist:
+            if device_type != "cpu":
+                raise ValueError("Distributed training requires CUDA or CPU")
+            dist.init_process_group(backend="gloo")
 
     if rank == 0:
         logger.info("Distributed world size: %s", world_size)

@@ -4,3 +4,7 @@ services:
       args:
         TINYGPT_EXTRA: gpu
     gpus: all
+    group_add:
+      - "${DOCKER_GID:-0}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

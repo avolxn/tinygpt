@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import string
 import subprocess
 import uuid
 from dataclasses import dataclass
@@ -15,6 +16,47 @@ class ExecutionResult:
     error: str | None = None
     timeout: bool = False
     memory_exceeded: bool = False
+
+
+def use_calculator(expression: str) -> str | None:
+    """Evaluate nanochat's arithmetic/string-count tool inside the existing sandbox.
+
+    Args:
+        expression: Generated calculator expression, optionally containing commas.
+
+    Returns:
+        Printed result, or None for unsupported or unsuccessful expressions.
+    """
+    expression = expression.replace(",", "")
+    arithmetic = all(char in "0123456789*+-/.() " for char in expression) and "**" not in expression
+    forbidden = (
+        "__",
+        "import",
+        "exec",
+        "eval",
+        "compile",
+        "open",
+        "file",
+        "input",
+        "raw_input",
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "getattr",
+        "setattr",
+        "delattr",
+        "hasattr",
+    )
+    counting = (
+        all(char in string.ascii_letters + string.digits + "'\"()._ " for char in expression)
+        and ".count(" in expression
+        and not any(word in expression.lower() for word in forbidden)
+    )
+    if not expression or not (arithmetic or counting):
+        return None
+    result = execute_code(f"print(eval({expression!r}, {{'__builtins__': {{}}}}, {{}}))", timeout=3.0)
+    return result.stdout.strip() if result.success else None
 
 
 def execute_code(

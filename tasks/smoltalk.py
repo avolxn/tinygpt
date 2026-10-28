@@ -51,11 +51,10 @@ class SmolTalk(Task):
         """
         row = self.ds[index]
         messages: list[dict[str, str]] = row["messages"]
-        if messages and messages[0]["role"] == "system":
-            messages = messages[1:]
-        if len(messages) < 2:
+        dialogue = messages[1:] if messages and messages[0]["role"] == "system" else messages
+        if len(dialogue) < 2:
             raise ValueError("SmolTalk messages must have at least 2 messages")
-        for i, msg in enumerate(messages):
+        for i, msg in enumerate(dialogue):
             expected = "user" if i % 2 == 0 else "assistant"
             if msg["role"] != expected:
                 raise ValueError(f"Message {i} role {msg['role']!r} != {expected!r}")

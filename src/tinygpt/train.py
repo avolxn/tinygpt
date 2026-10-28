@@ -1,7 +1,7 @@
 """HuggingFace Trainer integration for tinygpt.
 
 TinyGPTTrainer subclasses transformers.Trainer to plug in:
-- tinygpt's multi-group AdamW optimizer (make_optimizer)
+- nanochat's MuonAdamW parameter groups and update schedules
 - tinygpt's warmup + linear LR schedule (get_lr_multiplier)
 - Pre-batched infinite iterators as data sources (no re-batching)
 - tinygpt's Hugging Face style model directory format
@@ -10,6 +10,8 @@ TinyGPTTrainer subclasses transformers.Trainer to plug in:
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -20,14 +22,32 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import Trainer, TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
-from tinygpt.checkpoint import save_checkpoint_assets
+from tinygpt.checkpoint import METADATA_NAME, resolve_model_directory, save_checkpoint_assets
 from tinygpt.distillation import masked_distillation_loss
 from tinygpt.distributed import print0
-from tinygpt.optimizer import get_lr_multiplier, make_adamw_optimizer, make_optimizer
+from tinygpt.optimizer import get_lr_multiplier, make_optimizer, schedule_muon
 
 
 class MlflowTrackingError(RuntimeError):
     """Raised when the configured MLflow tracking backend is unavailable."""
+
+
+def parse_training_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
+    """Restore the saved recipe on resume, allowing explicit CLI overrides.
+
+    Args:
+        parser: Training entry point's parser, including ``--resume-from``.
+
+    Returns:
+        Arguments inheriting the original run's settings when resuming.
+    """
+    args = parser.parse_args()
+    if args.resume_from:
+        directory = resolve_model_directory(args.resume_from)
+        with open(os.path.join(directory, METADATA_NAME), encoding="utf-8") as stream:
+            parser.set_defaults(**json.load(stream)["user_config"])
+        args = parser.parse_args()
+    return args
 
 
 def require_mlflow_tracking() -> str:
@@ -44,7 +64,7 @@ def require_mlflow_tracking() -> str:
 
 def model_logits(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
     """Run a Transformers causal LM and return its logits tensor."""
-    output = model(input_ids=input_ids)
+    output = model(input_ids=input_ids, use_cache=False)
     logits = getattr(output, "logits", output)
     if not isinstance(logits, torch.Tensor):
         raise TypeError(f"Model output does not contain logits: {type(output)!r}")
@@ -109,13 +129,14 @@ def build_training_arguments(
 ) -> TrainingArguments:
     """Build the shared HuggingFace Trainer arguments for all training phases."""
     evaluation_enabled = eval_every > 0
-    fsdp = None
+    fsdp = False
     fsdp_config: dict[str, Any] | None = None
     if fsdp_sharding_strategy in {"FULL_SHARD", "SHARD_GRAD_OP"}:
-        fsdp = f"{fsdp_sharding_strategy.lower()} auto_wrap"
+        fsdp = True
         fsdp_config = {
-            "transformer_layer_cls_to_wrap": ["LlamaDecoderLayer"],
-            "use_orig_params": True,
+            "version": 2,
+            "transformer_layer_cls_to_wrap": ["Block"],
+            "reshard_after_forward": fsdp_sharding_strategy == "FULL_SHARD",
         }
     return TrainingArguments(
         output_dir=output_dir,
@@ -141,9 +162,10 @@ def build_training_arguments(
         fp16=False,
         prediction_loss_only=True,
         disable_tqdm=disable_tqdm,
-        fsdp=fsdp,
+        fsdp=fsdp,  # type: ignore[arg-type]  # Transformers accepts bool; its annotation still says str.
         fsdp_config=fsdp_config,
         ddp_find_unused_parameters=False,
+        torch_compile=device_type == "cuda",
     )
 
 
@@ -176,9 +198,7 @@ class TinyGPTTrainer(Trainer):
         matrix_lr: Learning rate for transformer block weight matrices (Muon).
         embedding_lr: Learning rate for embedding parameters (AdamW).
         scalar_lr: Learning rate for scalar/1-D parameters (AdamW).
-        muon_momentum: Momentum for the Muon optimizer (default 0.95).
-        muon_ns_steps: Newton-Schulz iteration steps for Muon (default 5).
-        warmdown_ratio: Fraction of total steps used for cosine decay.
+        warmdown_ratio: Fraction of total steps used for linear learning-rate decay.
         final_lr_frac: LR at the end as a fraction of peak LR.
         train_loader: Infinite iterator yielding (inputs, targets) batches.
         eval_fn: Optional callable (model, step) -> dict[str, float] for
@@ -191,10 +211,7 @@ class TinyGPTTrainer(Trainer):
         matrix_lr: float,
         embedding_lr: float,
         scalar_lr: float,
-        lm_head_lr: float | None = None,
-        muon_momentum: float = 0.95,
-        muon_ns_steps: int = 5,
-        optimizer_name: str = "adamw",
+        lm_head_lr: float = 0.008,
         warmdown_ratio: float = 0.65,
         final_lr_frac: float = 0.05,
         train_loader: Iterator[tuple[torch.Tensor, torch.Tensor]],
@@ -204,16 +221,20 @@ class TinyGPTTrainer(Trainer):
         distill_temperature: float = 1.0,
         checkpoint_metadata: dict[str, Any] | None = None,
         tokenizer_dir: str | None = None,
+        schedule_pretrain: bool = False,
+        optimizer_checkpoint: str | None = None,
+        conversation_progress: list[float] | None = None,
+        warmup_ratio: float = 0.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
+        if teacher_model is not None and not 0.0 < distill_alpha <= 1.0:
+            raise ValueError("Teacher-student training requires a positive distillation weight")
+        self.model_accepts_loss_kwargs = False
         self._matrix_lr = matrix_lr
         self._embedding_lr = embedding_lr
         self._scalar_lr = scalar_lr
         self._lm_head_lr = lm_head_lr
-        self._muon_momentum = muon_momentum
-        self._muon_ns_steps = muon_ns_steps
-        self._optimizer_name = optimizer_name
         self._warmdown_ratio = warmdown_ratio
         self._final_lr_frac = final_lr_frac
         self._train_loader = train_loader
@@ -223,6 +244,13 @@ class TinyGPTTrainer(Trainer):
         self._distill_temperature = distill_temperature
         self._checkpoint_metadata = checkpoint_metadata or {}
         self._tokenizer_dir = tokenizer_dir
+        self._optimizer_checkpoint = optimizer_checkpoint
+        if schedule_pretrain:
+            self.add_callback(MuonScheduleCallback(warmdown_ratio))
+        if conversation_progress is not None:
+            self.add_callback(
+                ConversationScheduleCallback(conversation_progress, warmup_ratio, warmdown_ratio, final_lr_frac)
+            )
 
     def get_train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
         """Return a DataLoader that passes pre-batched items through unchanged.
@@ -254,7 +282,7 @@ class TinyGPTTrainer(Trainer):
         input_ids = inputs["input_ids"]
         labels = inputs["labels"]
 
-        if self._teacher_model is None or self._distill_alpha <= 0:
+        if self._teacher_model is None:
             loss = causal_lm_loss(model, input_ids, labels)
             return (loss, {"loss": loss}) if return_outputs else loss
 
@@ -270,7 +298,7 @@ class TinyGPTTrainer(Trainer):
 
         teacher_device = next(self._teacher_model.parameters()).device
         teacher_input_ids = input_ids.to(teacher_device)
-        with torch.inference_mode():
+        with torch.no_grad():
             teacher_logits = model_logits(self._teacher_model, teacher_input_ids)
         teacher_logits = teacher_logits.to(student_logits.device)
 
@@ -298,29 +326,29 @@ class TinyGPTTrainer(Trainer):
             AdamW or MuonAdamW with the configured parameter groups.
         """
         assert self.model is not None
-        if self._optimizer_name == "adamw":
-            self.optimizer = make_adamw_optimizer(
-                self.model,
-                matrix_lr=self._matrix_lr,
-                embedding_lr=self._embedding_lr,
-                scalar_lr=self._scalar_lr,
-                lm_head_lr=self._lm_head_lr,
-                weight_decay=self.args.weight_decay,
-            )
-        elif self._optimizer_name == "muon":
-            self.optimizer = make_optimizer(
-                self.model,
-                matrix_lr=self._matrix_lr,
-                embedding_lr=self._embedding_lr,
-                scalar_lr=self._scalar_lr,
-                lm_head_lr=self._lm_head_lr,
-                weight_decay=self.args.weight_decay,
-                muon_momentum=self._muon_momentum,
-                muon_ns_steps=self._muon_ns_steps,
-            )
-        else:
-            raise ValueError(f"Unknown optimizer: {self._optimizer_name}")
+        self.optimizer = make_optimizer(
+            self.model,
+            matrix_lr=self._matrix_lr,
+            embedding_lr=self._embedding_lr,
+            scalar_lr=self._scalar_lr,
+            lm_head_lr=self._lm_head_lr,
+            weight_decay=self.args.weight_decay,
+        )
         return self.optimizer
+
+    def _load_optimizer_and_scheduler(self, checkpoint: str | None) -> None:
+        """Resume training or warm-start distillation with native Trainer/FSDP loading."""
+        if checkpoint is not None or self._optimizer_checkpoint is None:
+            super()._load_optimizer_and_scheduler(checkpoint)
+            return
+        assert self.optimizer is not None and self.lr_scheduler is not None
+        groups = [{k: group[k] for k in ("lr", "initial_lr")} for group in self.optimizer.param_groups]
+        scheduler_state = self.lr_scheduler.state_dict()
+        super()._load_optimizer_and_scheduler(self._optimizer_checkpoint)
+        # Retain reference pretraining moments while starting the distillation schedule.
+        for group, settings in zip(self.optimizer.param_groups, groups, strict=True):
+            group.update(settings)
+        self.lr_scheduler.load_state_dict(scheduler_state)
 
     def create_scheduler(
         self,
@@ -413,3 +441,57 @@ class MlflowMetadataCallback(TrainerCallback):
             return
         if mlflow.active_run() is not None:
             mlflow.log_dict(self._metadata, "tinygpt_metadata.json")
+
+
+class MuonScheduleCallback(TrainerCallback):
+    """Update momentum and cautious decay before each pretraining optimizer step.
+
+    Args:
+        warmdown_ratio: Fraction of training used for the reference warmdown.
+    """
+
+    def __init__(self, warmdown_ratio: float) -> None:
+        self.warmdown_ratio = warmdown_ratio
+
+    def on_step_begin(
+        self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs: Any
+    ) -> None:
+        """Keep optimizer scheduling aligned with Trainer's restored global step."""
+        schedule_muon(kwargs["optimizer"], state.global_step, state.max_steps, self.warmdown_ratio)
+
+
+class ConversationScheduleCallback(TrainerCallback):
+    """Schedule and stop distillation by consumed conversations, as in nanochat.
+
+    Args:
+        progress: Consumed-epoch fraction updated by the packing iterator.
+        warmup: Warmup fraction of the conversational epoch.
+        warmdown: Warmdown fraction of the conversational epoch.
+        final_lr: Final learning-rate fraction.
+    """
+
+    def __init__(self, progress: list[float], warmup: float, warmdown: float, final_lr: float) -> None:
+        self.progress = progress
+        self.warmup = warmup
+        self.warmdown = warmdown
+        self.final_lr = final_lr
+
+    def on_step_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs: Any) -> None:
+        """Synchronize consumed progress and apply the next optimizer step's rates."""
+        progress = torch.tensor(self.progress[0], device=args.device)
+        if torch.distributed.is_initialized():
+            torch.distributed.all_reduce(progress, op=torch.distributed.ReduceOp.MAX)
+        value = float(progress.item())
+        if value < self.warmup:
+            multiplier = (value + 1e-8) / self.warmup
+        elif value <= 1 - self.warmdown or not self.warmdown:
+            multiplier = 1.0
+        else:
+            fraction = (value - (1 - self.warmdown)) / self.warmdown
+            multiplier = (1 - fraction) + fraction * self.final_lr
+        for group in kwargs["optimizer"].param_groups:
+            group["lr"] = group["initial_lr"] * multiplier
+        if value >= 1:
+            control.should_training_stop = True
+            control.should_save = True
+            control.should_evaluate = args.eval_strategy != "no"

@@ -23,9 +23,12 @@ COMMON_ENV = {
     "TXT_INPUT": "{{ params.txt }}",
     "DEVICE_TYPE": "{{ params.device_type }}",
     "NPROC_PER_NODE": "{{ params.nproc_per_node }}",
+    "TENSOR_PARALLEL_SIZE": "{{ params.tensor_parallel_size }}",
     "DEPTH": "{{ params.depth }}",
+    "FP8": "{{ params.fp8 | lower }}",
     "MAX_SEQ_LEN": "{{ params.max_seq_len }}",
     "DEVICE_BATCH_SIZE": "{{ params.device_batch_size }}",
+    "DISTILL_BATCH_SIZE": "{{ params.distill_batch_size }}",
     "TOTAL_BATCH_SIZE": "{{ params.total_batch_size }}",
     "PRETRAIN_ITERATIONS": "{{ params.pretrain_iterations }}",
     "DISTILL_ITERATIONS": "{{ params.distill_iterations }}",
@@ -58,7 +61,7 @@ with DAG(
     max_active_runs=1,
     params={
         "experiment": Param(
-            "airflow-smoke",
+            "tinygpt",
             type="string",
             pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
             description="Safe artifact and MLflow run prefix",
@@ -77,25 +80,28 @@ with DAG(
             description="Hugging Face dataset used when txt is empty",
         ),
         "txt": Param("", type="string", description="Optional local text file with one document per line"),
-        "device_type": Param("cpu", type="string", enum=["cpu", "cuda"]),
-        "nproc_per_node": Param(1, type="integer", minimum=1, maximum=64),
-        "depth": Param(2, type="integer", minimum=1, maximum=128),
-        "max_seq_len": Param(128, type="integer", minimum=32, maximum=65_536),
-        "device_batch_size": Param(1, type="integer", minimum=1),
-        "total_batch_size": Param(128, type="integer", minimum=1),
-        "pretrain_iterations": Param(2, type="integer", minimum=1),
-        "distill_iterations": Param(2, type="integer", minimum=1),
+        "device_type": Param("cuda", type="string", enum=["cpu", "cuda"]),
+        "nproc_per_node": Param(8, type="integer", minimum=1, maximum=64),
+        "tensor_parallel_size": Param(1, type="integer", minimum=1, maximum=64),
+        "depth": Param(20, type="integer", minimum=1, maximum=128),
+        "fp8": Param(False, type="boolean"),
+        "max_seq_len": Param(2048, type="integer", minimum=32, maximum=65_536),
+        "device_batch_size": Param(16, type="integer", minimum=1),
+        "distill_batch_size": Param(4, type="integer", minimum=1),
+        "total_batch_size": Param(-1, type="integer", minimum=-1),
+        "pretrain_iterations": Param(-1, type="integer", minimum=-1),
+        "distill_iterations": Param(-1, type="integer", minimum=-1),
         "distill_tasks": Param(
-            "identity",
+            "smoltalk,mmlu,gsm8k",
             type="string",
-            pattern=r"^(smoltalk|mmlu|gsm8k|identity|spelling)(,(smoltalk|mmlu|gsm8k|identity|spelling))*$",
+            pattern=r"^(smoltalk|mmlu|gsm8k)(,(smoltalk|mmlu|gsm8k))*$",
         ),
         "chat_eval_tasks": Param(
-            "MMLU",
+            "",
             type="string",
-            enum=["ARC-Easy", "ARC-Challenge", "MMLU", "GSM8K", "HumanEval"],
+            enum=["", "ARC-Easy", "ARC-Challenge", "MMLU", "GSM8K", "HumanEval"],
         ),
-        "max_eval_problems": Param(4, type="integer", minimum=1),
+        "max_eval_problems": Param(-1, type="integer", minimum=-1),
     },
     tags=["tinygpt", "distillation"],
 ) as dag:
@@ -126,13 +132,15 @@ ARGS=(
   --device-batch-size "$DEVICE_BATCH_SIZE"
   --total-batch-size "$TOTAL_BATCH_SIZE"
   --num-iterations "$PRETRAIN_ITERATIONS"
-  --eval-every -1
   --out-dir "$ARTIFACT_DIR"
   --run-name "$RUN_NAME"
   --run "$RUN_NAME-pretrain"
 )
 if [[ -n "$TXT_INPUT" ]]; then
-  ARGS+=(--txt "$TXT_INPUT")
+  ARGS+=(--txt "$TXT_INPUT" --eval-every -1)
+fi
+if [[ "$FP8" == "true" ]]; then
+  ARGS+=(--fp8)
 fi
 if [[ "$NPROC_PER_NODE" -eq 1 ]]; then
   "$PYTHON_BIN" "${ARGS[@]}"
@@ -145,30 +153,17 @@ fi
     evaluate_base = bash_task(
         "evaluate_base",
         """set -euo pipefail
-if [[ "$DEVICE_TYPE" != "cuda" ]]; then
-  echo "Skipping base vLLM evaluation on non-CUDA workers"
-  exit 99
-fi
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 ARGS=(
   -m scripts.evaluate_model
   --checkpoint "$ARTIFACT_DIR/pretrain_checkpoints/$RUN_NAME"
-  --eval sample
-  --vllm-model "$ARTIFACT_DIR/pretrain_checkpoints/$RUN_NAME"
+  --eval core,bpb
+  --device-type "$DEVICE_TYPE"
+  --dataset "$DATASET"
+  --text-field "$TEXT_FIELD"
+  --device-batch-size "$DEVICE_BATCH_SIZE"
 )
-"$PYTHON_BIN" "${ARGS[@]}" --vllm-tensor-parallel-size "$NPROC_PER_NODE"
-""",
-        retries=1,
-    )
-
-    download_identity = bash_task(
-        "download_identity",
-        """set -euo pipefail
-IDENTITY_PATH="data/airflow/$RUN_NAME/identity_conversations.jsonl"
-mkdir -p "$(dirname "$IDENTITY_PATH")"
-curl -fsSL --retry 3 \
-  -o "$IDENTITY_PATH" \
-  https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
+"$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" "${ARGS[@]}"
 """,
         retries=1,
     )
@@ -181,14 +176,11 @@ ARGS=(
   -m scripts.distill
   --checkpoint "$ARTIFACT_DIR/pretrain_checkpoints/$RUN_NAME"
   --teacher-model "$ARTIFACT_DIR/teacher"
-  --identity-conversations "$ARTIFACT_DIR/identity_conversations.jsonl"
   --tasks "$DISTILL_TASKS"
   --device-type "$DEVICE_TYPE"
   --max-seq-len "$MAX_SEQ_LEN"
-  --device-batch-size "$DEVICE_BATCH_SIZE"
-  --total-batch-size "$TOTAL_BATCH_SIZE"
+  --device-batch-size "$DISTILL_BATCH_SIZE"
   --num-iterations "$DISTILL_ITERATIONS"
-  --eval-every -1
   --out-dir "$ARTIFACT_DIR"
   --run-name "$RUN_NAME"
   --run "$RUN_NAME-distill"
@@ -217,12 +209,13 @@ ARGS=(
   --eval chat
   --vllm-model "$ARTIFACT_DIR/distill_checkpoints/$RUN_NAME"
   --tasks "$CHAT_EVAL_TASKS"
-  --max-problems "$MAX_EVAL_PROBLEMS"
 )
-"$PYTHON_BIN" "${ARGS[@]}" --vllm-tensor-parallel-size "$NPROC_PER_NODE"
+if [[ "$MAX_EVAL_PROBLEMS" -gt 0 ]]; then
+  ARGS+=(--max-problems "$MAX_EVAL_PROBLEMS")
+fi
+"$PYTHON_BIN" "${ARGS[@]}" --vllm-tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
 """,
         retries=1,
     )
 
     prepare_teacher >> pretrain >> evaluate_base >> distill >> evaluate_chat
-    prepare_teacher >> download_identity >> distill

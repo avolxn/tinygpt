@@ -39,6 +39,22 @@ def test_masked_distillation_loss_ignores_masked_positions() -> None:
     torch.testing.assert_close(masked, expected)
 
 
+def test_chunked_distillation_matches_full_loss_and_gradients() -> None:
+    student = torch.randn(2, 1050, 7, requires_grad=True)
+    teacher = torch.randn_like(student)
+    labels = torch.randint(-1, 7, (2, 1050))
+    temperature = 1.5
+    actual = masked_distillation_loss(student, teacher, labels, temperature)
+    per_token = torch.nn.functional.kl_div(
+        torch.log_softmax(student / temperature, -1), torch.softmax(teacher / temperature, -1), reduction="none"
+    ).sum(-1)
+    expected = per_token[labels != -1].mean() * temperature**2
+    torch.testing.assert_close(actual, expected)
+    actual_grad = torch.autograd.grad(actual, student, retain_graph=True)[0]
+    expected_grad = torch.autograd.grad(expected, student)[0]
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
 def test_validate_teacher_tokenizer_compatibility_accepts_matching_tokenizers() -> None:
     student = FakeTokenizer(vocab_size=64)
     teacher = FakeTokenizer(vocab_size=64)
