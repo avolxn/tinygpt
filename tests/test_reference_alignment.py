@@ -1,6 +1,5 @@
 import copy
 import math
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -10,10 +9,20 @@ from transformers import TrainerCallback, TrainingArguments
 
 from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weight_decay, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
-from tinygpt.metrics import evaluate_loss
+from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.model import TinyGPTForCausalLM
 from tinygpt.optimizer import get_lr_multiplier, make_param_groups
 from tinygpt.train import TinyGPTTrainer, causal_lm_loss
+
+
+def test_bpb_counts_raw_bytes_instead_of_unicode_replacement_characters():
+    from tests.helpers import make_test_tokenizer
+
+    tokenizer = make_test_tokenizer(["Hello café."])
+    counts = compute_token_bytes(tokenizer)
+    for text in ("café", "こんにちは", "😀"):
+        assert sum(counts[token].item() for token in tokenizer.encode(text)) == len(text.encode("utf-8"))
+    assert all(counts[token] == 0 for token in tokenizer.tokenizer.all_special_ids)
 
 
 def test_distillation_lr_fraction_applies_to_every_parameter_family(tmp_path):
@@ -95,7 +104,7 @@ def test_fsdp2_muon_matches_unsharded_training_and_resumes(tmp_path):
     )
 
 
-def _distributed_loss_worker(rank, rendezvous):
+def _distributed_bpb_worker(rank, rendezvous):
     class Model(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -108,33 +117,32 @@ def _distributed_loss_worker(rank, rendezvous):
     try:
         inputs = torch.tensor([[rank, rank]])
         labels = torch.tensor([[1, -1]]) if rank == 0 else torch.tensor([[0, 0]])
-        actual = evaluate_loss(Model(), iter([(inputs, labels)]), 1)
-        expected = (math.log(math.exp(2) + 1) + 2 * math.log(1 + math.e)) / 3
+        actual = evaluate_bpb(Model(), iter([(inputs, labels)]), 1, torch.ones(2, dtype=torch.int32))
+        expected = (math.log(math.exp(2) + 1) + 2 * math.log(1 + math.e)) / (3 * math.log(2))
         assert actual == pytest.approx(expected)
     finally:
         torch.distributed.destroy_process_group()
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Distributed CPU integration runs on Linux CI")
-def test_distributed_validation_loss(tmp_path):
+def test_distributed_validation_bpb(tmp_path):
     torch.multiprocessing.spawn(
-        _distributed_loss_worker,
+        _distributed_bpb_worker,
         args=((tmp_path / "rendezvous").as_uri(),),
         nprocs=2,
         join=True,
     )
 
 
-def test_validation_loss_weights_supervised_tokens():
+def test_validation_bpb_weights_supervised_tokens():
     model = TinyGPTForCausalLM(make_config(1, aspect_ratio=8, head_dim=8, vocab_size=32, sequence_len=8))
     model.eval()
     inputs = torch.tensor([[1, 2, 3, 4]])
     labels = [torch.tensor([[2, -1, -1, -1]]), torch.tensor([[2, 3, 4, 5]])]
-    expected = sum(causal_lm_loss(model, inputs, y, reduction="sum").item() for y in labels) / 5
-    actual = evaluate_loss(model, iter((inputs, y) for y in labels), 2)
+    expected = sum(causal_lm_loss(model, inputs, y, reduction="sum").item() for y in labels) / (5 * math.log(2))
+    token_bytes = torch.ones(32, dtype=torch.int32)
+    actual = evaluate_bpb(model, iter((inputs, y) for y in labels), 2, token_bytes)
     assert actual == pytest.approx(expected)
-    with pytest.raises(ValueError, match="no supervised tokens"):
-        evaluate_loss(model, iter([(inputs, torch.full_like(inputs, -1))]), 1)
+    assert math.isinf(evaluate_bpb(model, iter([(inputs, torch.full_like(inputs, -1))]), 1, token_bytes))
 
 
 def test_evaluation_preserves_mode_and_calls_callbacks(tmp_path):

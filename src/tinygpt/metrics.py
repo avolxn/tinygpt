@@ -16,26 +16,9 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+from tokenizers.decoders import ByteLevel
 
 from tinygpt.train import causal_lm_loss
-
-
-@torch.no_grad()
-def evaluate_loss(
-    model: torch.nn.Module,
-    batches: Iterator[tuple[torch.Tensor, torch.Tensor]],
-    steps: int,
-) -> float:
-    """Compute token-weighted cross entropy across batches and distributed ranks."""
-    totals = torch.zeros(2, dtype=torch.float64, device=next(model.parameters()).device)
-    for inputs, labels in itertools.islice(batches, steps):
-        totals[0] += causal_lm_loss(model, inputs, labels, reduction="sum").double()
-        totals[1] += labels.ne(-1).sum()
-    if dist.is_initialized():
-        dist.all_reduce(totals, op=dist.ReduceOp.SUM)
-    if totals[1].item() == 0:
-        raise ValueError("Evaluation contains no supervised tokens")
-    return float((totals[0] / totals[1]).item())
 
 
 @torch.no_grad()
@@ -97,13 +80,12 @@ def compute_token_bytes(tokenizer: Any, device: torch.device | str = "cpu") -> t
     Returns:
         1-D int32 tensor of shape (vocab_size,)
     """
-    vocab_size = tokenizer.get_vocab_size()
-    special_set = set(tokenizer.get_special_tokens())
-    token_bytes_list: list[int] = []
-    for token_id in range(vocab_size):
-        token_str = tokenizer.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
-        else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
+    native = tokenizer.tokenizer
+    if not isinstance(native.backend_tokenizer.decoder, ByteLevel):
+        raise ValueError("BPB evaluation requires the teacher's byte-level tokenizer")
+    special_ids = set(native.all_special_ids)
+    tokens = native.convert_ids_to_tokens(list(range(tokenizer.get_vocab_size())))
+    # Each ByteLevel vocabulary character represents one raw byte. Unicode
+    # decoding would replace incomplete UTF-8 byte sequences with U+FFFD.
+    token_bytes_list = [0 if token_id in special_ids else len(token) for token_id, token in enumerate(tokens)]
     return torch.tensor(token_bytes_list, dtype=torch.int32, device=device)

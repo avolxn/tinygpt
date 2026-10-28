@@ -127,7 +127,7 @@ def evaluate_core(
         random.Random(1337).shuffle(data)
         if max_per_task > 0:
             data = data[:max_per_task]
-        correct = torch.zeros((), dtype=torch.float64, device=device)
+        correct = torch.zeros((), dtype=torch.float32, device=device)
         # Equal forward counts keep FSDP collectives aligned for uneven task lengths.
         for batch in range((len(data) + world - 1) // world):
             index = batch * world + rank

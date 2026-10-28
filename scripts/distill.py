@@ -34,7 +34,7 @@ from tinygpt.distributed import (
     get_dist_info,
     print0,
 )
-from tinygpt.metrics import evaluate_loss
+from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.train import (
     MlflowMetadataCallback,
@@ -144,6 +144,7 @@ optimizer_checkpoint = None if args.resume_from else resolve_trainer_checkpoint(
 if not args.resume_from and optimizer_checkpoint is None:
     raise ValueError("Distillation requires a full pretraining checkpoint to retain optimizer moments")
 tokenizer = HuggingFaceTokenizer.from_directory(student_dir)
+token_bytes = compute_token_bytes(tokenizer, device=device)
 sequence_len = args.max_seq_len or meta["model_config"]["max_position_embeddings"]
 pretrain_user_config = meta.get("user_config", {})
 derived = meta.get("derived_values", {})
@@ -248,12 +249,12 @@ eval_steps = max(1, args.eval_tokens // world_tokens_per_fwdbwd)
 
 
 def eval_fn(eval_model: torch.nn.Module, step: int) -> dict[str, float]:
-    """Evaluate student cross entropy on the held-out validation mixture."""
+    """Evaluate student bits per byte on nanochat's held-out conversational mixture."""
     assert val_task is not None
     eval_loader = conversation_data_loader(tokenizer, val_task, args.device_batch_size, sequence_len, device)
-    loss = evaluate_loss(eval_model, eval_loader, eval_steps)
-    print0(f"Step {step:05d} | val CE loss: {loss:.4f}")
-    return {"ce_loss": loss}
+    bpb = evaluate_bpb(eval_model, eval_loader, eval_steps, token_bytes)
+    print0(f"Step {step:05d} | val bpb: {bpb:.6f}")
+    return {"bpb": bpb}
 
 
 run_name = runtime_config.run_name if runtime_config.run_name else f"d{meta['model_config']['transformer_depth']}"
