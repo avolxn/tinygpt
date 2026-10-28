@@ -200,6 +200,7 @@ class TinyGPTTrainer(Trainer):
         scalar_lr: Learning rate for scalar/1-D parameters (AdamW).
         warmdown_ratio: Fraction of total steps used for linear learning-rate decay.
         final_lr_frac: LR at the end as a fraction of peak LR.
+        init_lr_frac: Initial multiplier for every parameter family, including smear.
         train_loader: Infinite iterator yielding (inputs, targets) batches.
         eval_fn: Optional callable (model, step) -> dict[str, float] for
         custom evaluation metrics (e.g. bpb or distillation loss).
@@ -214,6 +215,7 @@ class TinyGPTTrainer(Trainer):
         lm_head_lr: float = 0.008,
         warmdown_ratio: float = 0.65,
         final_lr_frac: float = 0.05,
+        init_lr_frac: float = 1.0,
         train_loader: Iterator[tuple[torch.Tensor, torch.Tensor]],
         eval_fn: Callable[[nn.Module, int], dict[str, float]] | None = None,
         teacher_model: nn.Module | None = None,
@@ -237,6 +239,7 @@ class TinyGPTTrainer(Trainer):
         self._lm_head_lr = lm_head_lr
         self._warmdown_ratio = warmdown_ratio
         self._final_lr_frac = final_lr_frac
+        self._init_lr_frac = init_lr_frac
         self._train_loader = train_loader
         self._eval_fn = eval_fn
         self._teacher_model = teacher_model
@@ -334,6 +337,9 @@ class TinyGPTTrainer(Trainer):
             lm_head_lr=self._lm_head_lr,
             weight_decay=self.args.weight_decay,
         )
+        for group in self.optimizer.param_groups:
+            group["lr"] *= self._init_lr_frac
+            group["initial_lr"] = group["lr"]
         return self.optimizer
 
     def _load_optimizer_and_scheduler(self, checkpoint: str | None) -> None:

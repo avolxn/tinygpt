@@ -181,12 +181,6 @@ args.embedding_lr = float(
 )
 args.scalar_lr = float(resolve_training_value("scalar_lr", args.scalar_lr, 0.5, pretrain_user_config.get("scalar_lr")))
 
-if not args.resume_from:
-    args.matrix_lr *= args.init_lr_frac
-    args.lm_head_lr *= args.init_lr_frac
-    args.embedding_lr *= args.init_lr_frac
-    args.scalar_lr *= args.init_lr_frac
-
 
 def resolve_teacher_device() -> torch.device:
     if args.teacher_device == "same":
@@ -309,6 +303,7 @@ trainer = TinyGPTTrainer(
     lm_head_lr=args.lm_head_lr,
     warmdown_ratio=args.warmdown_ratio,
     final_lr_frac=args.final_lr_frac,
+    init_lr_frac=args.init_lr_frac,
     train_loader=train_loader,
     eval_fn=eval_fn if args.eval_every > 0 else None,
     teacher_model=teacher_model,

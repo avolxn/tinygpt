@@ -12,8 +12,24 @@ from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weigh
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
 from tinygpt.metrics import evaluate_loss
 from tinygpt.model import TinyGPTForCausalLM
-from tinygpt.optimizer import get_lr_multiplier
+from tinygpt.optimizer import get_lr_multiplier, make_param_groups
 from tinygpt.train import TinyGPTTrainer, causal_lm_loss
+
+
+def test_distillation_lr_fraction_applies_to_every_parameter_family(tmp_path):
+    model = TinyGPTForCausalLM(make_config(1, aspect_ratio=32, head_dim=32, vocab_size=64, sequence_len=8))
+    trainer = TinyGPTTrainer(
+        model=model,
+        args=TrainingArguments(output_dir=str(tmp_path), use_cpu=True, report_to=[]),
+        matrix_lr=0.02,
+        embedding_lr=0.3,
+        scalar_lr=0.5,
+        init_lr_frac=0.8,
+        train_loader=iter([]),
+    )
+    original_groups = make_param_groups(model)
+    for actual, original in zip(trainer.create_optimizer().param_groups, original_groups, strict=True):
+        assert actual["lr"] == pytest.approx(original["lr"] * 0.8)
 
 
 def _fsdp_optimizer_worker(rank, rendezvous):
