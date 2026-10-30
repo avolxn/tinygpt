@@ -76,7 +76,7 @@ def test_bash_tasks_inherit_secrets_without_xcom() -> None:
 def test_remote_transport_quotes_inputs_and_propagates_failure(tmp_path: Path) -> None:
     """Run the transmitted script in a clean shell, as a remote SSH server does."""
     ssh = tmp_path / "ssh"
-    ssh.write_text('#!/bin/bash\n[[ " $* " == *" -n "* ]] && exit 0\nexec env -i PATH="$PATH" bash -se\n')
+    ssh.write_text('#!/bin/bash\n[[ " $* " == *" -n "* ]] && exit 0\nexec env -i HOME="$HOME" PATH="$PATH" bash -se\n')
     ssh.chmod(0o755)
     tree = parse_dag()
     assignment = next(node for node in tree.body if isinstance(node, ast.Assign) and node.targets[0].id == "COMMON_ENV")
@@ -84,6 +84,7 @@ def test_remote_transport_quotes_inputs_and_propagates_failure(tmp_path: Path) -
     literal = "example'; touch INJECTED; # $(touch INJECTED)"
     env.update(
         PATH=f"{tmp_path}:{os.environ['PATH']}",
+        HOME=str(tmp_path),
         REMOTE_HOST="root@worker",
         REMOTE_WORKSPACE=str(tmp_path),
         RUN_NAME=literal,
