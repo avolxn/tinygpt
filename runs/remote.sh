@@ -34,6 +34,10 @@ SETUP
   exit
 fi
 
+# sshd leaves a Unix forwarding socket behind when a session closes. Tasks in
+# this DAG are sequential, so remove that stale listener before the next one.
+"${SSH[@]}" -n "$REMOTE_HOST" "rm -f $REMOTE_DIR/docker.sock"
+
 {
   echo 'set -euo pipefail'
   printf 'cd %s\n' "$REMOTE_DIR"
@@ -52,7 +56,7 @@ fi
   echo 'export PATH="$PWD/bin:$PATH"'
   echo 'export HF_HOME="$PWD/.cache/huggingface" TORCHINDUCTOR_CACHE_DIR="$PWD/.cache/torchinductor"'
   cat
-} | "${SSH[@]}" -o ExitOnForwardFailure=yes -o StreamLocalBindUnlink=yes \
+} | "${SSH[@]}" -o ExitOnForwardFailure=yes \
   -R 127.0.0.1:15000:mlflow:5000 \
   -R "$REMOTE_WORKSPACE/docker.sock:/var/run/docker.sock" \
   "$REMOTE_HOST" bash -se
