@@ -176,3 +176,10 @@ def test_tool_output_is_not_supervised(tokenizer: HuggingFaceTokenizer) -> None:
     python_end = ids.index(tokenizer.encode_special("<|python_end|>"))
     assert all(mask[python_start : python_end + 1])
     assert mask[-1] == 1
+
+
+def test_completion_prompt_contains_token_ids(tokenizer: HuggingFaceTokenizer) -> None:
+    conversation = {"messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi"}]}
+    ids = tokenizer.render_for_completion(conversation)
+    assert all(isinstance(token, int) for token in ids)
+    assert ids[-1] == tokenizer.encode_special("<|assistant_start|>")

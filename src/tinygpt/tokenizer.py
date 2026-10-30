@@ -270,4 +270,8 @@ class HuggingFaceTokenizer:
             raise ValueError("Conversation must contain at least one assistant message")
         if messages[-1]["role"] != "assistant":
             raise ValueError("Last message must be from assistant")
-        return list(self.tokenizer.apply_chat_template(messages[:-1], add_generation_prompt=True))
+        return list(
+            self.tokenizer.apply_chat_template(
+                messages[:-1], tokenize=True, return_dict=False, add_generation_prompt=True
+            )
+        )
