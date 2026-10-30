@@ -37,7 +37,7 @@ from vllm.utils.torch_utils import direct_register_custom_op
 from tinygpt.model import norm
 
 
-class PreviousEmbedding(MambaBase):  # type: ignore[misc]
+class PreviousEmbedding(nn.Module, MambaBase):  # type: ignore[misc]
     """Retrieve the preceding embedding through vLLM's native short-conv cache.
 
     Args:
@@ -95,8 +95,10 @@ def previous_embedding(x: torch.Tensor, output: torch.Tensor, prefix: str) -> No
     prefills = metadata.num_prefill_tokens
     weight = layer.weight.to(x.dtype)
     if decodes:
+        # The native update overwrites its input; preserve the current embedding
+        # for the smear gate and residual after retrieving the previous one.
         output[:decodes] = causal_conv1d_update(
-            x[:decodes].contiguous(),
+            x[:decodes].clone(),
             state,
             weight,
             None,
@@ -219,7 +221,7 @@ class Block(nn.Module):
         return cast(torch.Tensor, x + hidden)
 
 
-@support_torch_compile
+@support_torch_compile(dynamic_arg_dims={"input_ids": 0, "positions": -1})
 class TinyGPTForCausalLM(nn.Module, HasInnerState, IsHybrid):  # type: ignore[misc]
     """Expose the nanochat student through vLLM's model plugin protocol.
 
@@ -273,9 +275,13 @@ class TinyGPTForCausalLM(nn.Module, HasInnerState, IsHybrid):  # type: ignore[mi
         """Use vLLM's native state copying for short convolutions."""
         return MambaStateCopyFuncCalculator.short_conv_state_copy_func()
 
+    def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Apply token embeddings through vLLM's model interface."""
+        return cast(torch.Tensor, self.embed_tokens(input_ids))
+
     def forward(self, input_ids: torch.Tensor, positions: torch.Tensor, **kwargs: Any) -> torch.Tensor:
         """Return final hidden states for interleaved requests and chunked prefill."""
-        x = norm(self.embed_tokens(input_ids), self.config.rms_norm_eps)
+        x = norm(self.embed_input_ids(input_ids), self.config.rms_norm_eps)
         previous = self.previous(x)
         gate = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[..., : self.smear_gate.in_features]))
         x = x + gate * previous
