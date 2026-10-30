@@ -18,6 +18,23 @@ if [[ -f "infra/airflow/.env" ]]; then
   COMPOSE_FILES+=(--env-file infra/airflow/.env)
 fi
 COMPOSE_FILES+=(-f infra/airflow/compose.yaml)
+if [[ -n "${REMOTE_HOST:-}" ]]; then
+  if [[ "${AIRFLOW_GPU:-0}" == "1" ]]; then
+    echo "Choose either a remote worker or local GPU execution." >&2
+    exit 1
+  fi
+  if ! ssh-add -l >/dev/null 2>&1; then
+    ssh-add "${REMOTE_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+  fi
+  if [[ "$(uname)" == "Darwin" ]]; then
+    export SSH_AGENT_SOCKET=/run/host-services/ssh-auth.sock
+  else
+    export SSH_AGENT_SOCKET="${SSH_AUTH_SOCK:?Start ssh-agent before connecting a remote worker}"
+  fi
+  export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 0)"
+  docker image inspect python:3.12-slim >/dev/null 2>&1 || docker pull python:3.12-slim
+  COMPOSE_FILES+=(-f infra/airflow/compose.remote.yaml)
+fi
 if [[ "${AIRFLOW_GPU:-0}" == "1" ]]; then
   DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
   export DOCKER_GID

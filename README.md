@@ -97,6 +97,30 @@ GPU workers require the NVIDIA Container Toolkit and
 socket for isolated evaluation jobs. The DAG defaults to the full d20 recipe;
 its parameters can be reduced for shorter runs.
 
+To keep Airflow, MLflow, and the evaluation sandbox on a local machine while
+training on a Runpod GPU worker, register the local SSH public key with Runpod
+and use its direct TCP SSH address:
+
+```bash
+REMOTE_HOST=root@GPU_HOST REMOTE_PORT=SSH_PORT bash runs/airflow.sh
+```
+
+The scheduler copies the project to `/workspace/tinygpt` on the worker and
+installs the locked GPU dependencies. OpenSSH reverse forwarding connects the
+worker to local MLflow and the local Docker sandbox; neither service requires a
+public port. The local machine must remain awake and connected throughout the
+run. Checkpoints remain on the worker's persistent `/workspace` volume.
+
+For an end-to-end validation on two H100 GPUs, keep `depth=20` and
+`max_seq_len=2048`, set `nproc_per_node=2`, `tensor_parallel_size=2`,
+`device_batch_size=2`, `distill_batch_size=1`, `total_batch_size=16384`,
+`pretrain_iterations=20`, `distill_iterations=20`, `resume_steps=2`,
+`eval_every=10`, `eval_tokens=16384`, `core_max_per_task=2`, and
+`max_eval_problems=2`. Leave `chat_eval_tasks` empty to cover every benchmark.
+This executes every stage with the real teacher and student, including both
+checkpoint resumes; the reduced training horizon does not measure final model
+quality. FP8 can be checked in a separate run with `fp8=true`.
+
 Direct training runs use local SQLite tracking by default. Set
 `MLFLOW_TRACKING_URI` to connect to the MLflow server and
 `MLFLOW_EXPERIMENT_NAME` to select an experiment. Compose settings can be

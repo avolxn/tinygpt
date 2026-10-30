@@ -35,6 +35,10 @@ COMMON_ENV = {
     "DISTILL_TASKS": "{{ params.distill_tasks }}",
     "CHAT_EVAL_TASKS": "{{ params.chat_eval_tasks }}",
     "MAX_EVAL_PROBLEMS": "{{ params.max_eval_problems }}",
+    "EVAL_TOKENS": "{{ params.eval_tokens }}",
+    "EVAL_EVERY": "{{ params.eval_every }}",
+    "CORE_MAX_PER_TASK": "{{ params.core_max_per_task }}",
+    "RESUME_STEPS": "{{ params.resume_steps }}",
 }
 
 
@@ -42,7 +46,12 @@ def bash_task(task_id: str, bash_command: str, *, retries: int = 0, trigger_rule
     """Create a project Bash task with inherited secrets and no XCom payload."""
     return BashOperator(
         task_id=task_id,
-        bash_command=bash_command,
+        bash_command=(
+            "TASK_SCRIPT=$(cat <<'TINYGPT_TASK'\n" + bash_command + "\nTINYGPT_TASK\n)\n"
+            'if [[ -n "${REMOTE_HOST:-}" ]]; then\n'
+            '  printf "%s\\n" "$TASK_SCRIPT" | bash runs/remote.sh\n'
+            'else\n  bash -c "$TASK_SCRIPT"\nfi\n'
+        ),
         cwd=WORKSPACE,
         env=COMMON_ENV,
         append_env=True,
@@ -102,12 +111,34 @@ with DAG(
             enum=["", "ARC-Easy", "ARC-Challenge", "MMLU", "GSM8K", "HumanEval"],
         ),
         "max_eval_problems": Param(-1, type="integer", minimum=-1),
+        "eval_tokens": Param(40 * 524288, type="integer", minimum=1),
+        "eval_every": Param(200, type="integer", minimum=1),
+        "core_max_per_task": Param(-1, type="integer", minimum=-1),
+        "resume_steps": Param(0, type="integer", minimum=0, description="Additional steps to verify checkpoint resume"),
     },
     tags=["tinygpt", "distillation"],
 ) as dag:
+    prepare_worker = BashOperator(
+        task_id="prepare_worker",
+        bash_command='if [[ -n "${REMOTE_HOST:-}" ]]; then bash runs/remote.sh setup; fi',
+        cwd=WORKSPACE,
+        append_env=True,
+        do_xcom_push=False,
+    )
     prepare_teacher = bash_task(
         "prepare_teacher",
         """set -euo pipefail
+if [[ "$DEVICE_TYPE" == "cuda" ]]; then
+"$PYTHON_BIN" - <<'PY'
+from tinygpt.execution import execute_code, use_calculator
+from tinygpt.train import require_mlflow_tracking
+
+require_mlflow_tracking()
+result = execute_code("print(2 + 2)")
+assert result.success and result.stdout.strip() == "4", result
+assert use_calculator("2 + 2") == "4"
+PY
+fi
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 mkdir -p "$ARTIFACT_DIR"
 "$PYTHON_BIN" -m scripts.prepare_teacher \
@@ -132,6 +163,8 @@ ARGS=(
   --device-batch-size "$DEVICE_BATCH_SIZE"
   --total-batch-size "$TOTAL_BATCH_SIZE"
   --num-iterations "$PRETRAIN_ITERATIONS"
+  --eval-every "$EVAL_EVERY"
+  --eval-tokens "$EVAL_TOKENS"
   --out-dir "$ARTIFACT_DIR"
   --run-name "$RUN_NAME"
   --run "$RUN_NAME-pretrain"
@@ -150,6 +183,30 @@ fi
 """,
     )
 
+    resume_pretrain = bash_task(
+        "resume_pretrain",
+        """set -euo pipefail
+if [[ "$RESUME_STEPS" -eq 0 ]]; then exit 0; fi
+if [[ "$PRETRAIN_ITERATIONS" -le 0 ]]; then
+  echo "Resume verification requires a positive pretrain_iterations" >&2
+  exit 1
+fi
+"$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
+  --resume-from "data/airflow/$RUN_NAME/pretrain_checkpoints/$RUN_NAME" \
+  --num-iterations "$((PRETRAIN_ITERATIONS + RESUME_STEPS))" \
+  --run "$RUN_NAME-pretrain-resume"
+"$PYTHON_BIN" - <<'PY'
+import json
+import os
+from tinygpt.checkpoint import resolve_model_directory
+
+directory = resolve_model_directory(f"data/airflow/{os.environ['RUN_NAME']}/pretrain_checkpoints/{os.environ['RUN_NAME']}")
+with open(f"{directory}/trainer_state.json") as stream:
+    assert json.load(stream)["global_step"] == int(os.environ["PRETRAIN_ITERATIONS"]) + int(os.environ["RESUME_STEPS"])
+PY
+""",
+    )
+
     evaluate_base = bash_task(
         "evaluate_base",
         """set -euo pipefail
@@ -162,6 +219,8 @@ ARGS=(
   --dataset "$DATASET"
   --text-field "$TEXT_FIELD"
   --device-batch-size "$DEVICE_BATCH_SIZE"
+  --max-per-task "$CORE_MAX_PER_TASK"
+  --split-tokens "$EVAL_TOKENS"
 )
 "$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" "${ARGS[@]}"
 """,
@@ -181,6 +240,8 @@ ARGS=(
   --max-seq-len "$MAX_SEQ_LEN"
   --device-batch-size "$DISTILL_BATCH_SIZE"
   --num-iterations "$DISTILL_ITERATIONS"
+  --eval-every "$EVAL_EVERY"
+  --eval-tokens "$EVAL_TOKENS"
   --out-dir "$ARTIFACT_DIR"
   --run-name "$RUN_NAME"
   --run "$RUN_NAME-distill"
@@ -192,6 +253,30 @@ else
 fi
 """,
         trigger_rule="none_failed",
+    )
+
+    resume_distill = bash_task(
+        "resume_distill",
+        """set -euo pipefail
+if [[ "$RESUME_STEPS" -eq 0 ]]; then exit 0; fi
+if [[ "$DISTILL_ITERATIONS" -le 0 ]]; then
+  echo "Resume verification requires a positive distill_iterations" >&2
+  exit 1
+fi
+"$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.distill \
+  --resume-from "data/airflow/$RUN_NAME/distill_checkpoints/$RUN_NAME" \
+  --num-iterations "$((DISTILL_ITERATIONS + RESUME_STEPS))" \
+  --run "$RUN_NAME-distill-resume"
+"$PYTHON_BIN" - <<'PY'
+import json
+import os
+from tinygpt.checkpoint import resolve_model_directory
+
+directory = resolve_model_directory(f"data/airflow/{os.environ['RUN_NAME']}/distill_checkpoints/{os.environ['RUN_NAME']}")
+with open(f"{directory}/trainer_state.json") as stream:
+    assert json.load(stream)["global_step"] == int(os.environ["DISTILL_ITERATIONS"]) + int(os.environ["RESUME_STEPS"])
+PY
+""",
     )
 
     evaluate_chat = bash_task(
@@ -218,4 +303,5 @@ fi
         retries=1,
     )
 
-    prepare_teacher >> pretrain >> evaluate_base >> distill >> evaluate_chat
+    prepare_worker >> prepare_teacher >> pretrain >> resume_pretrain >> evaluate_base
+    evaluate_base >> distill >> resume_distill >> evaluate_chat

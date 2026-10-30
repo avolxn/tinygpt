@@ -4,7 +4,7 @@ COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
 
 USER root
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y curl \
+    && apt-get install --no-install-recommends -y curl openssh-client \
     && rm -rf /var/lib/apt/lists/*
 RUN curl -LsSf https://astral.sh/uv/0.10.9/install.sh -o /tmp/uv-install.sh \
     && env UV_INSTALL_DIR=/usr/local/bin sh /tmp/uv-install.sh \

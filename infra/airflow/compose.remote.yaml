@@ -1,0 +1,12 @@
+services:
+  airflow-scheduler:
+    environment:
+      REMOTE_HOST: ${REMOTE_HOST:?Set REMOTE_HOST to the SSH user@host}
+      REMOTE_PORT: ${REMOTE_PORT:-22}
+      REMOTE_WORKSPACE: ${REMOTE_WORKSPACE:-/workspace/tinygpt}
+      SSH_AUTH_SOCK: /run/ssh-agent
+    group_add:
+      - "${DOCKER_GID:-0}"
+    volumes:
+      - ${SSH_AGENT_SOCKET:?Set SSH_AGENT_SOCKET}:/run/ssh-agent
+      - /var/run/docker.sock:/var/run/docker.sock
