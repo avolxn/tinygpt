@@ -18,7 +18,6 @@ from typing import Any
 
 import mlflow
 import torch
-import torch.distributed as dist
 from tasks.arc import ARC
 from tasks.core import evaluate_core
 from tasks.gsm8k import GSM8K
@@ -33,6 +32,113 @@ from tinygpt.metrics import compute_token_bytes, evaluate_bpb
 from tinygpt.tokenizer import HuggingFaceTokenizer
 from tinygpt.train import require_mlflow_tracking
 from tinygpt.utils import autodetect_device_type
+
+
+def run_generative_eval(
+    task_object: Any,
+    vllm: VLLM,
+    tokenizer: HuggingFaceTokenizer,
+    num_samples: int,
+    max_new_tokens: int,
+    temperature: float,
+    top_k: int,
+    max_problems: int | None = None,
+) -> float:
+    """Evaluate a generative task by sampling completions and checking any-pass.
+
+    Args:
+        task_object: Task instance with eval_type == 'generative'.
+        vllm: Inference engine managing GPU parallelism.
+        tokenizer: Teacher tokenizer used to render prompts.
+        num_samples: Number of completions to sample per problem.
+        max_new_tokens: Maximum tokens to generate per sample.
+        temperature: Sampling temperature.
+        top_k: Top-k sampling parameter.
+        max_problems: Cap on problems to evaluate; None means all.
+
+    Returns:
+        Pass rate (fraction of problems where any sample is correct).
+    """
+    if num_samples <= 0:
+        raise ValueError(f"num_samples must be positive, got {num_samples}")
+    if max_new_tokens <= 0:
+        raise ValueError(f"max_new_tokens must be positive, got {max_new_tokens}")
+    if temperature < 0:
+        raise ValueError(f"temperature must be non-negative, got {temperature}")
+    if top_k <= 0:
+        raise ValueError(f"top_k must be positive, got {top_k}")
+    if max_problems is not None and max_problems <= 0:
+        raise ValueError(f"max_problems must be positive, got {max_problems}")
+    num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
+    num_passed, total = 0, 0
+
+    for i in range(num_problems):
+        conversation = task_object[i]
+        encoded_prompt = tokenizer.render_for_completion(conversation)
+        completions = [
+            vllm.generate_conversation(
+                encoded_prompt, tokenizer, max_tokens=max_new_tokens, temperature=temperature, top_k=top_k
+            )
+            for _ in range(num_samples)
+        ]
+        passed = any(task_object.evaluate(conversation, c) for c in completions)
+        total += 1
+        num_passed += int(passed)
+        print(f"\r\033[K{num_passed}/{total} ({100 * num_passed / total:.2f}%)", end="", flush=True)
+
+    print()
+
+    acc = num_passed / total if total else 0.0
+    print0(f"Final: {num_passed}/{total} ({100 * acc:.2f}%)")
+    return acc
+
+
+def run_categorical_eval(
+    task_object: Any,
+    vllm: VLLM,
+    tokenizer: HuggingFaceTokenizer,
+    batch_size: int,
+    max_problems: int | None = None,
+) -> float:
+    """Evaluate a categorical task using argmax over answer-letter logits.
+
+    Args:
+        task_object: Task instance with eval_type == 'categorical'.
+        vllm: Inference engine managing GPU parallelism.
+        tokenizer: Teacher tokenizer used to render prompts.
+        batch_size: Number of problems to evaluate in parallel.
+        max_problems: Cap on problems to evaluate; None means all.
+
+    Returns:
+        Accuracy (fraction of problems answered correctly).
+    """
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+    if max_problems is not None and max_problems <= 0:
+        raise ValueError(f"max_problems must be positive, got {max_problems}")
+    num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
+    num_batches = -(-num_problems // batch_size)  # ceil_div
+    num_passed, total = 0, 0
+
+    for i in range(num_batches):
+        i0, i1 = i * batch_size, min((i + 1) * batch_size, num_problems)
+        conversations = [task_object[ii] for ii in range(i0, i1)]
+        prompt_ids = [tokenizer.render_for_completion(conv) for conv in conversations]
+        candidates = [[tokenizer.encode(letter) for letter in conv["letters"]] for conv in conversations]
+        if any(len(ids) != 1 for choices in candidates for ids in choices):
+            raise ValueError("Categorical evaluation requires single-token answer letters")
+        predictions = vllm.choose_tokens(prompt_ids, [[ids[0] for ids in choices] for choices in candidates])
+
+        for conversation, choices, prediction in zip(conversations, candidates, predictions, strict=True):
+            letters: list[str] = conversation["letters"]
+            predicted = letters[[ids[0] for ids in choices].index(prediction)]
+            num_passed += int(task_object.evaluate(conversation, predicted))
+            total += 1
+
+    acc = num_passed / total if total else 0.0
+    print0(f"Final: {num_passed}/{total} ({100 * acc:.2f}%)")
+    return acc
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate tinygpt model")
@@ -119,16 +225,11 @@ if __name__ == "__main__":
         rank = init_info[1]
         world_size = init_info[3]
         device = init_info[4]
-        dist_info = get_dist_info()
-        is_dist = dist_info[0]
-        ddp_rank = dist_info[1]
-        ddp_world_size = dist_info[3]
         model, meta = build_model_from_checkpoint(args.checkpoint, device, phase="eval")
         token_bytes = compute_token_bytes(tokenizer, device=device)
         sequence_len = meta["model_config"]["max_position_embeddings"]
     else:
         rank, world_size, device = 0, 1, torch.device("cpu")
-        is_dist, ddp_rank, ddp_world_size = False, 0, 1
 
     if needs_local_model:
         print0(f"Loaded model from {args.checkpoint} (step {meta.get('step', '?')})")
@@ -188,121 +289,8 @@ if __name__ == "__main__":
     # -----------------------------------------------------------------------------
     # Chat eval (categorical + generative)
 
-
-def run_generative_eval(
-    task_object: Any,
-    num_samples: int,
-    max_new_tokens: int,
-    temperature: float,
-    top_k: int,
-    max_problems: int | None = None,
-) -> float:
-    """Evaluate a generative task by sampling completions and checking any-pass.
-
-    Args:
-        task_object: Task instance with eval_type == 'generative'.
-        num_samples: Number of completions to sample per problem.
-        max_new_tokens: Maximum tokens to generate per sample.
-        temperature: Sampling temperature.
-        top_k: Top-k sampling parameter.
-        max_problems: Cap on problems to evaluate; None means all.
-
-    Returns:
-        Pass rate (fraction of problems where any sample is correct).
-    """
-    if num_samples <= 0:
-        raise ValueError(f"num_samples must be positive, got {num_samples}")
-    if max_new_tokens <= 0:
-        raise ValueError(f"max_new_tokens must be positive, got {max_new_tokens}")
-    if temperature < 0:
-        raise ValueError(f"temperature must be non-negative, got {temperature}")
-    if top_k <= 0:
-        raise ValueError(f"top_k must be positive, got {top_k}")
-    if max_problems is not None and max_problems <= 0:
-        raise ValueError(f"max_problems must be positive, got {max_problems}")
-    num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
-    num_passed, total = 0, 0
-    assert vllm is not None
-
-    for i in range(ddp_rank, num_problems, ddp_world_size):
-        conversation = task_object[i]
-        encoded_prompt = tokenizer.render_for_completion(conversation)
-        completions = [
-            vllm.generate_conversation(
-                encoded_prompt, tokenizer, max_tokens=max_new_tokens, temperature=temperature, top_k=top_k
-            )
-            for _ in range(num_samples)
-        ]
-        passed = any(task_object.evaluate(conversation, c) for c in completions)
-        total += 1
-        num_passed += int(passed)
-        print(f"\r\033[KRank {ddp_rank} | {num_passed}/{total} ({100 * num_passed / total:.2f}%)", end="", flush=True)
-
-    print()
-
-    if is_dist:
-        passed_t = torch.tensor([num_passed], dtype=torch.long, device=device)
-        total_t = torch.tensor([total], dtype=torch.long, device=device)
-        dist.all_reduce(passed_t, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_t, op=dist.ReduceOp.SUM)
-        num_passed = int(passed_t.item())
-        total = int(total_t.item())
-
-    acc = num_passed / total if total else 0.0
-    print0(f"Final: {num_passed}/{total} ({100 * acc:.2f}%)")
-    return acc
-
-
-def run_categorical_eval(task_object: Any, batch_size: int, max_problems: int | None = None) -> float:
-    """Evaluate a categorical task using argmax over answer-letter logits.
-
-    Args:
-        task_object: Task instance with eval_type == 'categorical'.
-        batch_size: Number of problems to evaluate in parallel.
-        max_problems: Cap on problems to evaluate; None means all.
-
-    Returns:
-        Accuracy (fraction of problems answered correctly).
-    """
-    if batch_size <= 0:
-        raise ValueError(f"batch_size must be positive, got {batch_size}")
-    if max_problems is not None and max_problems <= 0:
-        raise ValueError(f"max_problems must be positive, got {max_problems}")
-    assert vllm is not None
-    num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
-    num_batches = -(-num_problems // batch_size)  # ceil_div
-    num_passed, total = 0, 0
-
-    for i in range(ddp_rank, num_batches, ddp_world_size):
-        i0, i1 = i * batch_size, min((i + 1) * batch_size, num_problems)
-        conversations = [task_object[ii] for ii in range(i0, i1)]
-        prompt_ids = [tokenizer.render_for_completion(conv) for conv in conversations]
-        candidates = [[tokenizer.encode(letter) for letter in conv["letters"]] for conv in conversations]
-        if any(len(ids) != 1 for choices in candidates for ids in choices):
-            raise ValueError("Categorical evaluation requires single-token answer letters")
-        predictions = vllm.choose_tokens(prompt_ids, [[ids[0] for ids in choices] for choices in candidates])
-
-        for conversation, choices, prediction in zip(conversations, candidates, predictions, strict=True):
-            letters: list[str] = conversation["letters"]
-            predicted = letters[[ids[0] for ids in choices].index(prediction)]
-            num_passed += int(task_object.evaluate(conversation, predicted))
-            total += 1
-
-    if is_dist:
-        passed_t = torch.tensor([num_passed], dtype=torch.long, device=device)
-        total_t = torch.tensor([total], dtype=torch.long, device=device)
-        dist.all_reduce(passed_t, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_t, op=dist.ReduceOp.SUM)
-        num_passed = int(passed_t.item())
-        total = int(total_t.item())
-
-    acc = num_passed / total if total else 0.0
-    print0(f"Final: {num_passed}/{total} ({100 * acc:.2f}%)")
-    return acc
-
-
-if __name__ == "__main__":
     if "chat" in eval_modes:
+        assert vllm is not None
         ALL_TASKS: dict[str, Any] = {
             "ARC-Easy": partial(ARC, subset="ARC-Easy", split="test"),
             "ARC-Challenge": partial(ARC, subset="ARC-Challenge", split="test"),
@@ -334,6 +322,8 @@ if __name__ == "__main__":
             if task_obj.eval_type == "generative":
                 acc = run_generative_eval(
                     task_obj,
+                    vllm,
+                    tokenizer,
                     num_samples=args.num_samples,
                     max_new_tokens=args.max_new_tokens,
                     temperature=args.temperature,
@@ -341,7 +331,9 @@ if __name__ == "__main__":
                     max_problems=args.max_problems,
                 )
             else:
-                acc = run_categorical_eval(task_obj, batch_size=args.device_batch_size, max_problems=args.max_problems)
+                acc = run_categorical_eval(
+                    task_obj, vllm, tokenizer, batch_size=args.device_batch_size, max_problems=args.max_problems
+                )
             results[task_name] = acc
             evaluation_results[task_name] = acc
             print0(f"{task_name}: {100 * acc:.2f}%")

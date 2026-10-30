@@ -3,7 +3,7 @@
 On-disk runtime format:
 - `tokenizer.json`: HuggingFace tokenizers BPE
 
-Teacher preparation adds the special tokens required by tinygpt.
+Teacher preparation verifies the required special tokens without changing token IDs.
 """
 
 from typing import Any, cast, overload
@@ -119,17 +119,15 @@ class HuggingFaceTokenizer:
         return cast("int | None", self.tokenizer.convert_tokens_to_ids(text))
 
     def get_bos_token_id(self) -> int:
-        """Return the BOS token id, trying <|bos|> then <|endoftext|>.
+        """Return the teacher's nanochat BOS token ID.
 
         Returns:
             Integer BOS token id.
 
         Raises:
-            RuntimeError: If neither <|bos|> nor <|endoftext|> is found.
+            RuntimeError: If the required <|bos|> token is missing.
         """
         bos = self.encode_special("<|bos|>")
-        if bos is None:
-            bos = self.encode_special("<|endoftext|>")
         if bos is None:
             raise RuntimeError("Failed to find BOS token in tokenizer")
         return bos
