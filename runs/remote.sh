@@ -21,6 +21,7 @@ if ! command -v uv >/dev/null; then
   curl -LsSf https://astral.sh/uv/0.10.9/install.sh | sh
 fi
 export PATH="$HOME/.local/bin:$PWD/bin:$PATH"
+export UV_CACHE_DIR="$PWD/.cache/uv"
 if ! command -v docker >/dev/null; then
   mkdir -p bin
   curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-28.0.1.tgz |
@@ -49,6 +50,7 @@ fi
   printf 'export DOCKER_HOST=%q\n' "unix://$REMOTE_WORKSPACE/docker.sock"
   echo 'export MLFLOW_TRACKING_URI=http://127.0.0.1:15000 OMP_NUM_THREADS=1'
   echo 'export PATH="$PWD/bin:$PATH"'
+  echo 'export HF_HOME="$PWD/.cache/huggingface" TORCHINDUCTOR_CACHE_DIR="$PWD/.cache/torchinductor"'
   cat
 } | "${SSH[@]}" -o ExitOnForwardFailure=yes -o StreamLocalBindUnlink=yes \
   -R 127.0.0.1:15000:mlflow:5000 \
