@@ -89,6 +89,7 @@ bash runs/airflow.sh
 
 Airflow is available at `http://localhost:8081` and MLflow at
 `http://localhost:5000`. Trigger the `tinygpt_training` DAG to run the pipeline.
+On macOS, the launch script uses port `5001` for MLflow to avoid AirPlay Receiver.
 The generated Airflow login password is stored inside the container at
 `/opt/airflow/simple_auth_manager_passwords.json.generated`.
 
