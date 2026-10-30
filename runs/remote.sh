@@ -13,8 +13,8 @@ printf -v REMOTE_DIR '%q' "$REMOTE_WORKSPACE"
 
 if [[ "${1:-}" == "setup" ]]; then
   "${SSH[@]}" "$REMOTE_HOST" "mkdir -p $REMOTE_DIR && chmod 700 $REMOTE_DIR"
-  tar -C /workspace -cf - pyproject.toml uv.lock README.md src scripts tasks runs |
-    "${SSH[@]}" "$REMOTE_HOST" "tar -xf - -C $REMOTE_DIR"
+  tar --exclude=__pycache__ -C /workspace -cf - pyproject.toml uv.lock README.md src scripts tasks runs |
+    "${SSH[@]}" "$REMOTE_HOST" "tar --no-same-owner -xf - -C $REMOTE_DIR"
   "${SSH[@]}" "$REMOTE_HOST" "cd $REMOTE_DIR && bash -se" <<'SETUP'
 set -euo pipefail
 if ! command -v uv >/dev/null; then
