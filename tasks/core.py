@@ -125,13 +125,12 @@ def evaluate_core(
         with (bundle / "eval_data" / task["dataset_uri"]).open() as stream:
             data = [json.loads(line) for line in stream]
         random.Random(1337).shuffle(data)
-        if max_per_task > 0:
-            data = data[:max_per_task]
+        count = min(len(data), max_per_task) if max_per_task > 0 else len(data)
         correct = torch.zeros((), dtype=torch.float32, device=device)
         # Equal forward counts keep FSDP collectives aligned for uneven task lengths.
-        for batch in range((len(data) + world - 1) // world):
+        for batch in range((count + world - 1) // world):
             index = batch * world + rank
-            real = index < len(data)
+            real = index < count
             index = index if real else 0
             rng = random.Random(1234 + index)
             pool = [i for i in range(len(data)) if i != index]
@@ -166,7 +165,7 @@ def evaluate_core(
             correct += int(real and passed)
         if world > 1:
             dist.all_reduce(correct)
-        accuracy = correct.item() / len(data)
+        accuracy = correct.item() / count
         label = task["label"]
         results[label] = accuracy
         centered.append((accuracy - baselines[label]) / (1 - baselines[label]))
