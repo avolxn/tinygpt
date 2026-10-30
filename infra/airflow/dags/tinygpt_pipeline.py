@@ -153,7 +153,7 @@ mkdir -p "$ARTIFACT_DIR"
         """set -euo pipefail
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 ARGS=(
-  -m scripts.pretrain
+  scripts.pretrain
   --teacher-model "$ARTIFACT_DIR/teacher"
   --dataset "$DATASET"
   --text-field "$TEXT_FIELD"
@@ -176,9 +176,9 @@ if [[ "$FP8" == "true" ]]; then
   ARGS+=(--fp8)
 fi
 if [[ "$NPROC_PER_NODE" -eq 1 ]]; then
-  "$PYTHON_BIN" "${ARGS[@]}"
+  "$PYTHON_BIN" -m "${ARGS[@]}"
 else
-  "$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" "${ARGS[@]}"
+  "$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" -m -- "${ARGS[@]}"
 fi
 """,
     )
@@ -191,7 +191,7 @@ if [[ "$PRETRAIN_ITERATIONS" -le 0 ]]; then
   echo "Resume verification requires a positive pretrain_iterations" >&2
   exit 1
 fi
-"$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
+"$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" -m -- scripts.pretrain \
   --resume-from "data/airflow/$RUN_NAME/pretrain_checkpoints/$RUN_NAME" \
   --num-iterations "$((PRETRAIN_ITERATIONS + RESUME_STEPS))" \
   --run "$RUN_NAME-pretrain-resume"
@@ -203,7 +203,7 @@ fi
         """set -euo pipefail
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 ARGS=(
-  -m scripts.evaluate_model
+  scripts.evaluate_model
   --checkpoint "$ARTIFACT_DIR/pretrain_checkpoints/$RUN_NAME"
   --eval core,bpb
   --device-type "$DEVICE_TYPE"
@@ -213,7 +213,7 @@ ARGS=(
   --max-per-task "$CORE_MAX_PER_TASK"
   --split-tokens "$EVAL_TOKENS"
 )
-"$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" "${ARGS[@]}"
+"$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" -m -- "${ARGS[@]}"
 """,
         retries=1,
     )
@@ -223,7 +223,7 @@ ARGS=(
         """set -euo pipefail
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 ARGS=(
-  -m scripts.distill
+  scripts.distill
   --checkpoint "$ARTIFACT_DIR/pretrain_checkpoints/$RUN_NAME"
   --teacher-model "$ARTIFACT_DIR/teacher"
   --tasks "$DISTILL_TASKS"
@@ -238,9 +238,9 @@ ARGS=(
   --run "$RUN_NAME-distill"
 )
 if [[ "$NPROC_PER_NODE" -eq 1 ]]; then
-  "$PYTHON_BIN" "${ARGS[@]}"
+  "$PYTHON_BIN" -m "${ARGS[@]}"
 else
-  "$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" "${ARGS[@]}"
+  "$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" -m -- "${ARGS[@]}"
 fi
 """,
         trigger_rule="none_failed",
@@ -254,7 +254,7 @@ if [[ "$DISTILL_ITERATIONS" -le 0 ]]; then
   echo "Resume verification requires a positive distill_iterations" >&2
   exit 1
 fi
-"$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.distill \
+"$TORCHRUN_BIN" --standalone --nproc_per_node="$NPROC_PER_NODE" -m -- scripts.distill \
   --resume-from "data/airflow/$RUN_NAME/distill_checkpoints/$RUN_NAME" \
   --num-iterations "$((DISTILL_ITERATIONS + RESUME_STEPS))" \
   --run "$RUN_NAME-distill-resume"
@@ -270,7 +270,7 @@ if [[ "$DEVICE_TYPE" != "cuda" ]]; then
 fi
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 ARGS=(
-  -m scripts.evaluate_model
+  scripts.evaluate_model
   --checkpoint "$ARTIFACT_DIR/distill_checkpoints/$RUN_NAME"
   --device-type "$DEVICE_TYPE"
   --eval chat
@@ -280,7 +280,7 @@ ARGS=(
 if [[ "$MAX_EVAL_PROBLEMS" -gt 0 ]]; then
   ARGS+=(--max-problems "$MAX_EVAL_PROBLEMS")
 fi
-"$PYTHON_BIN" "${ARGS[@]}" --vllm-tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
+"$PYTHON_BIN" -m "${ARGS[@]}" --vllm-tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
 """,
         retries=1,
     )
