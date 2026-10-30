@@ -25,7 +25,7 @@ export UV_CACHE_DIR="$PWD/.cache/uv"
 if ! command -v docker >/dev/null; then
   mkdir -p bin
   curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-28.0.1.tgz |
-    tar -xz --strip-components=1 -C bin docker/docker
+    tar --no-same-owner -xz --strip-components=1 -C bin docker/docker
 fi
 uv sync --frozen --extra gpu --python 3.12
 docker --version
