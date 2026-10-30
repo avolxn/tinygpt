@@ -296,6 +296,8 @@ def conversation_data_loader(
     if B <= 0 or T <= 0:
         raise ValueError(f"B and T must be positive, got B={B}, T={T}")
     indices = list(range(rank, n, world_size))
+    if not indices:
+        raise ValueError(f"Conversation task contains no examples for rank {rank}")
 
     bos_token = tokenizer.get_bos_token_id()
     row_capacity = T + 1
@@ -314,15 +316,23 @@ def conversation_data_loader(
     consumed = rank
 
     def refill() -> None:
-        nonlocal cursor
+        nonlocal cursor, consumed
+        skipped = 0
         while len(conv_buffer) < 100:
-            if not indices:
-                break
             idx = indices[cursor % len(indices)]
             conv = task[idx % n]
             ids, mask = tokenizer.render_conversation(conv, max_tokens=T)
-            conv_buffer.append((ids, mask))
             cursor += 1
+            if any(mask[1:]):
+                conv_buffer.append((ids, mask))
+                skipped = 0
+            else:
+                consumed += world_size
+                skipped += 1
+                if skipped == len(indices):
+                    if not conv_buffer:
+                        raise ValueError(f"No assistant targets fit the context for rank {rank}")
+                    break
 
     while True:
         for row_idx in range(B):

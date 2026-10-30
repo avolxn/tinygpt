@@ -162,3 +162,19 @@ def test_text_data_loader_rejects_empty_files(tmp_path, tokenizer: HuggingFaceTo
 
     with pytest.raises(ValueError, match="no non-empty lines"):
         next(text_data_loader(tokenizer, str(source), B=1, T=4, device="cpu"))
+
+
+def test_conversation_loader_skips_truncated_answers() -> None:
+    class Tokenizer:
+        def get_bos_token_id(self):
+            return 0
+
+        def render_conversation(self, conversation, max_tokens):
+            return ([1, 2, 3], [0, 0, int(conversation["answer_fits"])])
+
+    tokenizer = Tokenizer()
+    task = [{"answer_fits": False}, {"answer_fits": True}]
+    _, targets = next(conversation_data_loader(tokenizer, task, B=1, T=4, device="cpu"))
+    assert targets.tolist() == [[-1, 3, -1, -1]]
+    with pytest.raises(ValueError, match="No assistant targets"):
+        next(conversation_data_loader(tokenizer, task[:1], B=1, T=4, device="cpu"))
