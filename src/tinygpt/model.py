@@ -75,7 +75,7 @@ class Attention(nn.Module):
             v = v + gate.transpose(1, 2).unsqueeze(-1) * value_embedding.view(shape).transpose(1, 2)
         q, k = apply_rotary_pos_emb(q, k, *position_embeddings)
         q, k = norm(q, self.config.rms_norm_eps) * 1.2, norm(k, self.config.rms_norm_eps) * 1.2
-        if self.config._attn_implementation.startswith("flash_attention"):
+        if self.config._attn_implementation != "sdpa":
             output, _ = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation](
                 self, q, k, v, None, dropout=0.0, scaling=self.scaling, sliding_window=self.sliding_window + 1
             )
