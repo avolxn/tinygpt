@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Run Airflow task scripts on the GPU worker over OpenSSH. Reverse forwards keep
-# MLflow and the evaluation sandbox on the local machine without public ports.
 set -euo pipefail
 
 REMOTE_PORT="${REMOTE_PORT:-22}"
@@ -35,14 +33,11 @@ SETUP
   exit
 fi
 
-# sshd leaves a Unix forwarding socket behind when a session closes. Tasks in
-# this DAG are sequential, so remove that stale listener before the next one.
 "${SSH[@]}" -n "$REMOTE_HOST" "rm -f $REMOTE_DIR/docker.sock"
 
 {
   echo 'set -euo pipefail'
   printf 'cd %s\n' "$REMOTE_DIR"
-  # Send only the task's explicit inputs; local service credentials stay local.
   for name in RUN_NAME TEACHER_MODEL DATASET TEXT_FIELD TXT_INPUT DEVICE_TYPE \
     NPROC_PER_NODE TENSOR_PARALLEL_SIZE DEPTH FP8 MAX_SEQ_LEN DEVICE_BATCH_SIZE \
     DISTILL_BATCH_SIZE TOTAL_BATCH_SIZE PRETRAIN_ITERATIONS DISTILL_ITERATIONS \

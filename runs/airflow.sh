@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# macOS reserves port 5000 for AirPlay Receiver on many installations.
 if [[ "$(uname)" == "Darwin" ]]; then
   export MLFLOW_PORT="${MLFLOW_PORT:-5001}"
 fi

@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Teacher-to-student pipeline:
-# 1. download and prepare the Hugging Face teacher
-# 2. pretrain a student with the teacher tokenizer
-# 3. distill the teacher into the student
-# 4. evaluate the distilled checkpoint on CUDA
-#
-# From repo root:
-#   bash runs/distill.sh
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"

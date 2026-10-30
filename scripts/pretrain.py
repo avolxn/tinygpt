@@ -66,7 +66,7 @@ parser.add_argument(
     default="",
     help="Prepared Hugging Face teacher directory; its tokenizer initializes the student",
 )
-# Distributed
+
 parser.add_argument(
     "--sharding-strategy",
     type=str,
@@ -74,7 +74,7 @@ parser.add_argument(
     choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"],
     help="FSDP sharding strategy",
 )
-# Model architecture
+
 parser.add_argument("--depth", type=int, default=20)
 parser.add_argument("--aspect-ratio", type=int, default=64)
 parser.add_argument("--head-dim", type=int, default=128)
@@ -83,33 +83,33 @@ parser.add_argument("--window-pattern", default="SSSL", help="Nanochat short/ful
 parser.add_argument("--attention-backend", choices=["sdpa", "flash_attention_2", "flash_attention_3"], default=None)
 parser.add_argument("--fp8", action="store_true", help="Use TorchAO FP8 linear layers on H100 or newer GPUs")
 parser.add_argument("--fp8-recipe", choices=["tensorwise", "rowwise"], default="tensorwise")
-# Data
+
 parser.add_argument("--dataset", type=str, default=CLIMBMIX_DATASET)
 parser.add_argument("--txt", type=str, default="", help="Local .txt file (overrides --dataset)")
 parser.add_argument("--val-txt", default="", help="Separate local validation text file")
 parser.add_argument("--text-field", type=str, default="text")
-# Training horizon
+
 parser.add_argument("--num-iterations", type=int, default=-1)
 parser.add_argument("--target-param-data-ratio", type=float, default=12)
-# Batch sizes
+
 parser.add_argument("--device-batch-size", type=int, default=32)
 parser.add_argument("--total-batch-size", type=int, default=-1)
-# Optimizer (MuonAdamW: Muon for matrix params, AdamW for embeddings/scalars)
+
 parser.add_argument("--matrix-lr", type=float, default=0.02, help="LR for transformer matrix weights (Muon)")
 parser.add_argument("--lm-head-lr", type=float, default=0.008, help="LR for lm_head / unembedding parameters (AdamW)")
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="LR for embedding parameters (AdamW)")
 parser.add_argument("--scalar-lr", type=float, default=0.5, help="LR for scalar/1-D parameters (AdamW)")
 parser.add_argument("--weight-decay", type=float, default=0.28)
 parser.add_argument("--grad-clip", type=float, default=0.0)
-# LR schedule
+
 parser.add_argument("--warmup-steps", type=int, default=40)
 parser.add_argument("--warmdown-ratio", type=float, default=0.65)
 parser.add_argument("--final-lr-frac", type=float, default=0.05)
-# Resume
+
 parser.add_argument(
     "--resume-from", type=str, default="", help="Model directory or Trainer output directory to resume from"
 )
-# Evaluation / sampling
+
 parser.add_argument("--eval-every", type=int, default=250)
 parser.add_argument("--eval-tokens", type=int, default=80 * 524288)
 parser.add_argument("--core-every", type=int, default=2000)

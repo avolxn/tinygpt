@@ -76,8 +76,7 @@ def document_batches(
     resolved_name, resolved_split, data_files = resolve_dataset_source(dataset_name, split)
     if dataset_name == CLIMBMIX_DATASET:
         assert data_files is not None
-        # Match nanochat's row-group/rank ordering, using Hub caching and locks
-        # instead of implementing another downloader or dataset abstraction.
+
         while True:
             for url in data_files["train"]:
                 filename = url.removeprefix(f"hf://datasets/{CLIMBMIX_DATASET}/")
@@ -355,7 +354,6 @@ def conversation_data_loader(
                         best_len = conv_len
 
                 if best_idx < 0:
-                    # Nanochat pads conversation rows instead of cropping answers.
                     break
                 ids, mask = conv_buffer.pop(best_idx)
                 consumed += world_size

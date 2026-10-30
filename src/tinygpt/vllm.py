@@ -95,8 +95,6 @@ def previous_embedding(x: torch.Tensor, output: torch.Tensor, prefix: str) -> No
     prefills = metadata.num_prefill_tokens
     weight = layer.weight.to(x.dtype)
     if decodes:
-        # The native update overwrites its input; preserve the current embedding
-        # for the smear gate and residual after retrieving the previous one.
         output[:decodes] = causal_conv1d_update(
             x[:decodes].clone(),
             state,
@@ -201,7 +199,7 @@ class Block(nn.Module):
             gate = gate.narrow(-1, self.kv_start, self.kv_heads)
             value_embedding = value_embedding.narrow(-1, self.kv_start * self.head_dim, self.kv_size)
             v = v + (3 * torch.sigmoid(gate)).repeat_interleave(self.head_dim, dim=-1) * value_embedding
-        # vLLM RoPE rotates in the positive direction; nanochat uses its transpose.
+
         q = q.view(-1, self.heads, self.head_dim)
         k = k.view(-1, self.kv_heads, self.head_dim)
         q = torch.cat((q[..., : self.head_dim // 2], -q[..., self.head_dim // 2 :]), dim=-1).reshape(-1, self.q_size)

@@ -85,7 +85,7 @@ def test_get_bos_token_id(tokenizer: HuggingFaceTokenizer) -> None:
 
 
 def test_vocab_size(tokenizer: HuggingFaceTokenizer) -> None:
-    # Small corpus may not generate enough merges to fill the full vocab_size budget
+
     assert tokenizer.get_vocab_size() <= 512
 
 
@@ -108,9 +108,9 @@ def test_render_conversation_basic(tokenizer: HuggingFaceTokenizer) -> None:
     ids, mask = tokenizer.render_conversation(conv)
     assert len(ids) == len(mask)
     assert ids[0] == tokenizer.get_bos_token_id(), "First token should be BOS"
-    # There should be some supervised (mask=1) tokens
+
     assert any(m == 1 for m in mask), "At least some tokens should be supervised"
-    # Non-assistant tokens should have mask=0
+
     assert mask[0] == 0, "BOS should not be supervised"
 
 
@@ -123,7 +123,7 @@ def test_render_conversation_mask_assistant_only(tokenizer: HuggingFaceTokenizer
         ]
     }
     ids, mask = tokenizer.render_conversation(conv)
-    # Decode and find positions of user_start / user_end
+
     user_start = tokenizer.encode_special("<|user_start|>")
     user_end = tokenizer.encode_special("<|user_end|>")
     if user_start in ids and user_end in ids:

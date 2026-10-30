@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Short teacher-to-student integration check with a reduced student.
-#
-# From repo root:
-#   bash runs/smoke.sh
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"

@@ -75,7 +75,6 @@ class GSM8K(Task):
         question = row["question"]
         answer = row["answer"]
 
-        # Parse tool calls encoded as <<expr=result>>
         parts: list[dict[str, str]] = []
         for chunk in re.split(r"(<<[^>]+>>)", answer):
             if chunk.startswith("<<") and chunk.endswith(">>"):

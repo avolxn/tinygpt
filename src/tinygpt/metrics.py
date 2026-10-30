@@ -85,7 +85,6 @@ def compute_token_bytes(tokenizer: Any, device: torch.device | str = "cpu") -> t
         raise ValueError("BPB evaluation requires the teacher's byte-level tokenizer")
     special_ids = set(native.all_special_ids)
     tokens = native.convert_ids_to_tokens(list(range(tokenizer.get_vocab_size())))
-    # Each ByteLevel vocabulary character represents one raw byte. Unicode
-    # decoding would replace incomplete UTF-8 byte sequences with U+FFFD.
+
     token_bytes_list = [0 if token_id in special_ids else len(token) for token_id, token in enumerate(tokens)]
     return torch.tensor(token_bytes_list, dtype=torch.int32, device=device)

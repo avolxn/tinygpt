@@ -10,7 +10,6 @@ from typing import Any
 import torch
 from transformers import PreTrainedConfig
 
-# Architecture and recipe reference, recorded in every student checkpoint.
 NANOCHAT_REVISION = "92d63d4e8bb4df75c3b71618f31ddde2378b2bcd"
 
 
@@ -30,11 +29,10 @@ class TinyGPTConfig(PreTrainedConfig):  # type: ignore[no-untyped-call]
         depth = transformer_depth if transformer_depth is not None else int(kwargs.get("num_hidden_layers", 12))
         if depth < 1:
             raise ValueError("transformer_depth must be positive")
-        # Transformers/vLLM hybrid configs count all cache-bearing blocks:
-        # one input convolution, followed by the requested Transformer depth.
+
         kwargs["num_hidden_layers"] = depth + 1
         kwargs.setdefault("intermediate_size", 4 * int(kwargs.get("hidden_size", 768)))
-        # PyTorch 2.10's RMSNorm uses the accumulator epsilon, also for bf16 inputs.
+
         kwargs.setdefault("rms_norm_eps", torch.finfo(torch.float32).eps)
         defaults = {
             "vocab_size": 50304,

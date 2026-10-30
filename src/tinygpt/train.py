@@ -162,7 +162,7 @@ def build_training_arguments(
         fp16=False,
         prediction_loss_only=True,
         disable_tqdm=disable_tqdm,
-        fsdp=fsdp,  # type: ignore[arg-type]  # Transformers accepts bool; its annotation still says str.
+        fsdp=fsdp,  # type: ignore[arg-type]
         fsdp_config=fsdp_config,
         ddp_find_unused_parameters=False,
         torch_compile=device_type == "cuda",
@@ -184,7 +184,6 @@ class PreBatchedIterableDataset(IterableDataset[dict[str, torch.Tensor]]):
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         for inputs, targets in self._loader:
-            # Trainer collects micro-batches before backward; packing iterators reuse buffers.
             yield {
                 "input_ids": inputs.clone(),
                 "labels": targets.clone(),
@@ -351,7 +350,7 @@ class TinyGPTTrainer(Trainer):
         groups = [{k: group[k] for k in ("lr", "initial_lr")} for group in self.optimizer.param_groups]
         scheduler_state = self.lr_scheduler.state_dict()
         super()._load_optimizer_and_scheduler(self._optimizer_checkpoint)
-        # Retain reference pretraining moments while starting the distillation schedule.
+
         for group, settings in zip(self.optimizer.param_groups, groups, strict=True):
             group.update(settings)
         self.lr_scheduler.load_state_dict(scheduler_state)

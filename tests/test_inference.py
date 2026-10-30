@@ -74,7 +74,7 @@ def test_vllm_cached_decoding_matches_training_model(tmp_path) -> None:
         reference.smear_lambda.fill_(0.5)
     reference.save_pretrained(tmp_path)
     tokenizer.save(str(tmp_path))
-    # Different prompt lengths exercise per-request smear state and short attention.
+
     prompts = [torch.randint(9, config.vocab_size, (length,)).tolist() for length in (9, 145)]
     engine = LLM(
         model=str(tmp_path),

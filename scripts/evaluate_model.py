@@ -117,7 +117,7 @@ def run_categorical_eval(
     if max_problems is not None and max_problems <= 0:
         raise ValueError(f"max_problems must be positive, got {max_problems}")
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
-    num_batches = -(-num_problems // batch_size)  # ceil_div
+    num_batches = -(-num_problems // batch_size)
     num_passed, total = 0, 0
 
     for i in range(num_batches):
@@ -239,9 +239,6 @@ if __name__ == "__main__":
         evaluation_results.update(evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task))
         print0(f"CORE: {evaluation_results['core']:.6f}")
 
-    # -----------------------------------------------------------------------------
-    # Sampling
-
     if "sample" in eval_modes and rank == 0:
         assert vllm is not None
         print0("\n" + "=" * 70)
@@ -263,9 +260,6 @@ if __name__ == "__main__":
             )
             print0(sample)
 
-    # -----------------------------------------------------------------------------
-    # BPB
-
     if "bpb" in eval_modes:
         print0("\n" + "=" * 70)
         print0("BPB Evaluation")
@@ -285,9 +279,6 @@ if __name__ == "__main__":
             bpb = evaluate_bpb(model, loader, steps, token_bytes)
             evaluation_results[f"{split}_bpb"] = bpb
             print0(f"{split} bpb: {bpb:.6f}")
-
-    # -----------------------------------------------------------------------------
-    # Chat eval (categorical + generative)
 
     if "chat" in eval_modes:
         assert vllm is not None
@@ -338,7 +329,6 @@ if __name__ == "__main__":
             evaluation_results[task_name] = acc
             print0(f"{task_name}: {100 * acc:.2f}%")
 
-        # ChatCORE metric (mean-centered accuracy over baseline chance levels)
         if all(t in results for t in ALL_TASKS):
             centered = [(results[t] - BASELINES[t]) / (1.0 - BASELINES[t]) for t in ALL_TASKS]
             chatcore = sum(centered) / len(centered)

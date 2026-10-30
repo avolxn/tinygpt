@@ -58,13 +58,13 @@ parser.add_argument("--resume-from", type=str, default="", help="Distillation mo
 parser.add_argument(
     "--sharding-strategy", type=str, default="FULL_SHARD", choices=["FULL_SHARD", "SHARD_GRAD_OP", "NO_SHARD"]
 )
-# Training horizon
+
 parser.add_argument("--num-iterations", type=int, default=-1, help="Optimization steps (-1 = one conversational epoch)")
-# Batch sizes (default: inherit from pretrain metadata when available)
+
 parser.add_argument("--device-batch-size", type=int, default=None)
 parser.add_argument("--total-batch-size", type=int, default=None, help="Total batch size in tokens")
 parser.add_argument("--max-seq-len", type=int, default=None, help="Sequence length (default: from checkpoint)")
-# Optimizer
+
 parser.add_argument("--matrix-lr", type=float, default=None)
 parser.add_argument("--lm-head-lr", type=float, default=None)
 parser.add_argument("--embedding-lr", type=float, default=None)
@@ -72,14 +72,14 @@ parser.add_argument("--scalar-lr", type=float, default=None)
 parser.add_argument("--init-lr-frac", type=float, default=0.8)
 parser.add_argument("--weight-decay", type=float, default=0.0)
 parser.add_argument("--grad-clip", type=float, default=0.0)
-# LR schedule
+
 parser.add_argument("--warmup-ratio", type=float, default=0.0)
 parser.add_argument("--warmdown-ratio", type=float, default=0.5)
 parser.add_argument("--final-lr-frac", type=float, default=0.0)
-# Evaluation
+
 parser.add_argument("--eval-every", type=int, default=200)
 parser.add_argument("--eval-tokens", type=int, default=40 * 524288)
-# Distillation
+
 parser.add_argument(
     "--teacher-model",
     type=str,
@@ -95,7 +95,7 @@ parser.add_argument(
 )
 parser.add_argument("--distill-alpha", type=float, default=0.75, help="Teacher KL weight in (0, 1]")
 parser.add_argument("--distill-temperature", type=float, default=1.5, help="Temperature for KL distillation")
-# Task mixture
+
 parser.add_argument(
     "--tasks",
     type=str,

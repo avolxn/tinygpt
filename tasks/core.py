@@ -127,7 +127,7 @@ def evaluate_core(
         random.Random(1337).shuffle(data)
         count = min(len(data), max_per_task) if max_per_task > 0 else len(data)
         correct = torch.zeros((), dtype=torch.float32, device=device)
-        # Equal forward counts keep FSDP collectives aligned for uneven task lengths.
+
         for batch in range((count + world - 1) // world):
             index = batch * world + rank
             real = index < count

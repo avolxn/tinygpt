@@ -102,8 +102,6 @@ def masked_distillation_loss(
         per_token = F.kl_div(log_probs, probabilities, reduction="none").sum(dim=-1)
         return per_token.masked_select(mask).sum()
 
-    # Recompute vocabulary-sized intermediates per chunk during backward instead
-    # of retaining several full (batch, sequence, vocabulary) probability tensors.
     size = student_logits.size(-1)
     loss = student_logits.new_zeros(())
     for student, teacher, mask in zip(
