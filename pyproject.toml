@@ -87,7 +87,7 @@ cpu = [
 ]
 gpu = [
     "torchao==0.16.0; platform_system == 'Linux'",
-    "kernels>=0.12.0",
+    "kernels>=0.16.0,<0.17.0",
     "torch==2.10.0",
     "torchvision==0.25.0+cu128; platform_system == 'Linux'",
     "torchaudio==2.10.0+cu128; platform_system == 'Linux'",
