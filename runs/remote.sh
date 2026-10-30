@@ -22,6 +22,7 @@ if ! command -v uv >/dev/null; then
 fi
 export PATH="$HOME/.local/bin:$PWD/bin:$PATH"
 export UV_CACHE_DIR="$PWD/.cache/uv"
+export UV_PROJECT_ENVIRONMENT="$HOME/.cache/tinygpt/.venv"
 if ! command -v docker >/dev/null; then
   mkdir -p bin
   curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-28.0.1.tgz |
@@ -49,7 +50,7 @@ fi
     CORE_MAX_PER_TASK RESUME_STEPS MLFLOW_EXPERIMENT_NAME; do
     printf 'export %s=%q\n' "$name" "${!name}"
   done
-  printf 'export PYTHON_BIN=%q TORCHRUN_BIN=%q\n' "$REMOTE_WORKSPACE/.venv/bin/python" "$REMOTE_WORKSPACE/.venv/bin/torchrun"
+  echo 'export PYTHON_BIN="$HOME/.cache/tinygpt/.venv/bin/python" TORCHRUN_BIN="$HOME/.cache/tinygpt/.venv/bin/torchrun"'
   printf 'export PYTHONPATH=%q\n' "$REMOTE_WORKSPACE/src:$REMOTE_WORKSPACE"
   printf 'export DOCKER_HOST=%q\n' "unix://$REMOTE_WORKSPACE/docker.sock"
   echo 'export MLFLOW_TRACKING_URI=http://127.0.0.1:15000 OMP_NUM_THREADS=1'
