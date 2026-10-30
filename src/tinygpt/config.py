@@ -8,13 +8,13 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 import torch
-from transformers import NanoChatConfig
+from transformers import PreTrainedConfig
 
 # Architecture and recipe reference, recorded in every student checkpoint.
 NANOCHAT_REVISION = "92d63d4e8bb4df75c3b71618f31ddde2378b2bcd"
 
 
-class TinyGPTConfig(NanoChatConfig):  # type: ignore[no-untyped-call]
+class TinyGPTConfig(PreTrainedConfig):  # type: ignore[no-untyped-call]
     """Describe the nanochat architecture used by the student.
 
     Args:
@@ -24,6 +24,7 @@ class TinyGPTConfig(NanoChatConfig):  # type: ignore[no-untyped-call]
     """
 
     model_type = "tinygpt"
+    num_key_value_heads: int | None
 
     def __init__(self, window_pattern: str = "SSSL", transformer_depth: int | None = None, **kwargs: Any) -> None:
         depth = transformer_depth if transformer_depth is not None else int(kwargs.get("num_hidden_layers", 12))
@@ -35,6 +36,40 @@ class TinyGPTConfig(NanoChatConfig):  # type: ignore[no-untyped-call]
         kwargs.setdefault("intermediate_size", 4 * int(kwargs.get("hidden_size", 768)))
         # PyTorch 2.10's RMSNorm uses the accumulator epsilon, also for bf16 inputs.
         kwargs.setdefault("rms_norm_eps", torch.finfo(torch.float32).eps)
+        defaults = {
+            "vocab_size": 50304,
+            "hidden_size": 768,
+            "num_attention_heads": 6,
+            "num_key_value_heads": None,
+            "max_position_embeddings": 2048,
+            "hidden_act": "relu2",
+            "attention_dropout": 0.0,
+            "initializer_range": 0.02,
+            "attention_bias": False,
+            "final_logit_softcapping": 15.0,
+            "bos_token_id": 0,
+            "eos_token_id": 1,
+            "pad_token_id": 1,
+            "tie_word_embeddings": False,
+        }
+        for name, value in defaults.items():
+            kwargs.setdefault(name, value)
+        for name in (
+            "vocab_size",
+            "hidden_size",
+            "intermediate_size",
+            "num_hidden_layers",
+            "num_attention_heads",
+            "num_key_value_heads",
+            "max_position_embeddings",
+            "hidden_act",
+            "attention_dropout",
+            "rms_norm_eps",
+            "initializer_range",
+            "attention_bias",
+            "final_logit_softcapping",
+        ):
+            setattr(self, name, kwargs.pop(name))
         super().__init__(**kwargs)
         self.transformer_depth = depth
         self.layers_block_type = ["mamba"] + ["attention"] * depth

@@ -1,7 +1,7 @@
 """Nanochat student using Transformers model, attention, and serialization APIs.
 
 The architecture follows karpathy/nanochat's GPT at the revision in config.py.
-Transformers supplies RoPE, ReLU² MLPs, attention backends, and checkpoint loading.
+Transformers supplies attention backends and checkpoint loading.
 Value embeddings, residual scalars, smear, backout, and initialization follow
 the reference because these components are absent from Transformers NanoChat.
 """
@@ -17,11 +17,6 @@ from torch.nn import functional as F
 from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
-from transformers.models.nanochat.modeling_nanochat import (
-    NanoChatMLP,
-    NanoChatRotaryEmbedding,
-    apply_rotary_pos_emb,
-)
 
 from tinygpt.config import TinyGPTConfig
 from tinygpt.utils import compute_dtype
@@ -30,6 +25,55 @@ from tinygpt.utils import compute_dtype
 def norm(x: torch.Tensor, eps: float | None = None) -> torch.Tensor:
     """Apply nanochat's parameter-free RMS normalization."""
     return F.rms_norm(x, (x.size(-1),), eps=eps)
+
+
+class RotaryEmbedding(nn.Module):
+    """Compute nanochat rotary embeddings in float32 for stable positions."""
+
+    inv_freq: torch.Tensor
+
+    def __init__(self, config: TinyGPTConfig) -> None:
+        super().__init__()
+        self.dim = config.hidden_size // config.num_attention_heads
+        self.base = config.rope_parameters["rope_theta"]
+        self.register_buffer("inv_freq", self._frequencies(), persistent=False)
+
+    def _frequencies(self) -> torch.Tensor:
+        return cast(torch.Tensor, 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float32) / self.dim)))
+
+    def forward(self, x: torch.Tensor, positions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return cosine and sine values for the requested positions."""
+        device_type = x.device.type if x.device.type != "mps" else "cpu"
+        with torch.autocast(device_type, enabled=False):
+            frequencies = positions.float().unsqueeze(-1) * self.inv_freq.float()
+            angles = torch.cat((frequencies, frequencies), dim=-1)
+            return angles.cos().to(x.dtype), angles.sin().to(x.dtype)
+
+
+def apply_rotary_pos_emb(
+    q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply nanochat's inverse rotary transform to queries and keys."""
+    cos, sin = cos.unsqueeze(1), sin.unsqueeze(1)
+
+    def rotate(x: torch.Tensor) -> torch.Tensor:
+        first, second = x.chunk(2, dim=-1)
+        return x * cos + torch.cat((second, -first), dim=-1) * sin
+
+    return rotate(q), rotate(k)
+
+
+class MLP(nn.Module):
+    """Apply the nanochat feed-forward layer with squared ReLU."""
+
+    def __init__(self, config: TinyGPTConfig) -> None:
+        super().__init__()
+        self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
+        self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Transform hidden states through the feed-forward layer."""
+        return cast(torch.Tensor, self.fc2(F.relu(self.fc1(x)).square()))
 
 
 class Attention(nn.Module):
@@ -102,7 +146,7 @@ class Block(nn.Module):
         super().__init__()
         self.eps = config.rms_norm_eps
         self.self_attn = Attention(config, layer_idx)
-        self.mlp = NanoChatMLP(config)  # type: ignore[no-untyped-call]
+        self.mlp = MLP(config)
 
     def forward(
         self,
@@ -149,7 +193,7 @@ class TinyGPTForCausalLM(PreTrainedModel):  # type: ignore[no-untyped-call]
         self.smear_gate = nn.Linear(min(24, config.hidden_size), 1, bias=False)
         self.smear_lambda = nn.Parameter(torch.empty(1))
         self.backout_lambda = nn.Parameter(torch.empty(1))
-        self.rotary_emb = NanoChatRotaryEmbedding(config)
+        self.rotary_emb = RotaryEmbedding(config)
         self.post_init()  # type: ignore[no-untyped-call]
 
     def get_input_embeddings(self) -> nn.Embedding:
@@ -180,12 +224,12 @@ class TinyGPTForCausalLM(PreTrainedModel):  # type: ignore[no-untyped-call]
             nn.init.zeros_(module.o_proj.weight)
             if module.ve_gate is not None:
                 nn.init.uniform_(module.ve_gate.weight, 0.0, 0.02)
-        elif isinstance(module, NanoChatMLP):
+        elif isinstance(module, MLP):
             bound = math.sqrt(3 / self.config.hidden_size) * 0.4
             nn.init.uniform_(module.fc1.weight, -bound, bound)
             nn.init.zeros_(module.fc2.weight)
-        elif isinstance(module, NanoChatRotaryEmbedding):
-            super()._init_weights(module)  # type: ignore[no-untyped-call]
+        elif isinstance(module, RotaryEmbedding):
+            module.inv_freq = module._frequencies().to(module.inv_freq.device)
         elif module is self:
             nn.init.zeros_(self.smear_lambda)
             nn.init.constant_(self.backout_lambda, 0.2)
