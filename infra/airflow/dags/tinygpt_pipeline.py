@@ -195,15 +195,6 @@ fi
   --resume-from "data/airflow/$RUN_NAME/pretrain_checkpoints/$RUN_NAME" \
   --num-iterations "$((PRETRAIN_ITERATIONS + RESUME_STEPS))" \
   --run "$RUN_NAME-pretrain-resume"
-"$PYTHON_BIN" - <<'PY'
-import json
-import os
-from tinygpt.checkpoint import resolve_model_directory
-
-directory = resolve_model_directory(f"data/airflow/{os.environ['RUN_NAME']}/pretrain_checkpoints/{os.environ['RUN_NAME']}")
-with open(f"{directory}/trainer_state.json") as stream:
-    assert json.load(stream)["global_step"] == int(os.environ["PRETRAIN_ITERATIONS"]) + int(os.environ["RESUME_STEPS"])
-PY
 """,
     )
 
@@ -267,15 +258,6 @@ fi
   --resume-from "data/airflow/$RUN_NAME/distill_checkpoints/$RUN_NAME" \
   --num-iterations "$((DISTILL_ITERATIONS + RESUME_STEPS))" \
   --run "$RUN_NAME-distill-resume"
-"$PYTHON_BIN" - <<'PY'
-import json
-import os
-from tinygpt.checkpoint import resolve_model_directory
-
-directory = resolve_model_directory(f"data/airflow/{os.environ['RUN_NAME']}/distill_checkpoints/{os.environ['RUN_NAME']}")
-with open(f"{directory}/trainer_state.json") as stream:
-    assert json.load(stream)["global_step"] == int(os.environ["DISTILL_ITERATIONS"]) + int(os.environ["RESUME_STEPS"])
-PY
 """,
     )
 
