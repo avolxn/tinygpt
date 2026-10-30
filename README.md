@@ -53,8 +53,7 @@ student, runs distillation, and evaluates the resulting checkpoint.
 `TEACHER_MODEL`, `TEACHER_DIR`, `TEACHER_DEVICE`, `STUDENT_RUN`, and `DISTILL_RUN`
 override the corresponding defaults.
 `DEVICE_BATCH_SIZE` and `DISTILL_BATCH_SIZE` control per-GPU batches while
-preserving the global token batch through accumulation. Set `FP8=1` to enable
-TorchAO FP8 pretraining.
+preserving the global token batch through accumulation. FP8 pretraining is enabled by default; set `FP8=0` to disable it.
 
 A short end-to-end run is available through:
 
@@ -95,7 +94,7 @@ The generated Airflow login password is stored inside the container at
 
 GPU workers require the NVIDIA Container Toolkit and
 `AIRFLOW_GPU=1 bash runs/airflow.sh`. The GPU scheduler mounts the host Docker
-socket for isolated evaluation jobs. The DAG defaults to the full d20 recipe;
+socket for isolated evaluation jobs. The DAG defaults to the full d24 speedrun recipe;
 its parameters can be reduced for shorter runs.
 
 To keep Airflow, MLflow, and the evaluation sandbox on a local machine while
@@ -112,7 +111,7 @@ worker to local MLflow and the local Docker sandbox; neither service requires a
 public port. The local machine must remain awake and connected throughout the
 run. Checkpoints remain on the worker's persistent `/workspace` volume.
 
-For an end-to-end validation on two H100 GPUs, keep `depth=20` and
+For an end-to-end validation on two H100 GPUs, set `depth=24` and
 `max_seq_len=2048`, set `nproc_per_node=2`, `tensor_parallel_size=2`,
 `device_batch_size=2`, `distill_batch_size=1`, `total_batch_size=16384`,
 `pretrain_iterations=20`, `distill_iterations=20`, `resume_steps=2`,
@@ -120,7 +119,7 @@ For an end-to-end validation on two H100 GPUs, keep `depth=20` and
 `max_eval_problems=2`. Leave `chat_eval_tasks` empty to cover every benchmark.
 This executes every stage with the real teacher and student, including both
 checkpoint resumes; the reduced training horizon does not measure final model
-quality. FP8 can be checked in a separate run with `fp8=true`.
+quality. The previous GPU validation used BF16; FP8 requires a separate GPU validation.
 
 Direct training runs use local SQLite tracking by default. Set
 `MLFLOW_TRACKING_URI` to connect to the MLflow server and
@@ -144,5 +143,5 @@ uv run --no-sync vllm serve data/distill_checkpoints/distill/checkpoint-STEP --d
 
 Training ranks and inference tensor parallelism are independent. Set
 `VLLM_TENSOR_PARALLEL_SIZE` for the pipeline, or `--vllm-tensor-parallel-size`
-for individual scripts. The default is one GPU; the d20 model has ten attention
+for individual scripts. The default is one GPU; the d24 model has twelve attention
 heads, so eight-way tensor parallelism is not valid.

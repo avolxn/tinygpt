@@ -75,7 +75,7 @@ parser.add_argument(
     help="FSDP sharding strategy",
 )
 
-parser.add_argument("--depth", type=int, default=20)
+parser.add_argument("--depth", type=int, default=24)
 parser.add_argument("--aspect-ratio", type=int, default=64)
 parser.add_argument("--head-dim", type=int, default=128)
 parser.add_argument("--max-seq-len", type=int, default=2048)
@@ -90,9 +90,9 @@ parser.add_argument("--val-txt", default="", help="Separate local validation tex
 parser.add_argument("--text-field", type=str, default="text")
 
 parser.add_argument("--num-iterations", type=int, default=-1)
-parser.add_argument("--target-param-data-ratio", type=float, default=12)
+parser.add_argument("--target-param-data-ratio", type=float, default=8)
 
-parser.add_argument("--device-batch-size", type=int, default=32)
+parser.add_argument("--device-batch-size", type=int, default=16)
 parser.add_argument("--total-batch-size", type=int, default=-1)
 
 parser.add_argument("--matrix-lr", type=float, default=0.02, help="LR for transformer matrix weights (Muon)")

@@ -20,7 +20,7 @@ DEVICE_BATCH_SIZE="${DEVICE_BATCH_SIZE:-16}"
 DISTILL_BATCH_SIZE="${DISTILL_BATCH_SIZE:-4}"
 VLLM_TENSOR_PARALLEL_SIZE="${VLLM_TENSOR_PARALLEL_SIZE:-1}"
 PRETRAIN_ARGS=()
-if [ "${FP8:-0}" = "1" ]; then
+if [ "${FP8:-1}" = "1" ]; then
   PRETRAIN_ARGS+=(--fp8)
 fi
 
@@ -48,8 +48,8 @@ echo "==> Pretraining student with teacher tokenizer"
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.pretrain \
   --teacher-model "$TEACHER_DIR" \
   --device-type "$DEVICE_TYPE" \
-  --depth 20 \
-  --target-param-data-ratio 12 \
+  --depth 24 \
+  --target-param-data-ratio 8 \
   --device-batch-size "$DEVICE_BATCH_SIZE" \
   --run "$MLFLOW_RUN" \
   --run-name "$STUDENT_RUN" \
