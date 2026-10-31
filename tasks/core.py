@@ -74,7 +74,7 @@ def tokenize_prompts(
     prompts: list[str], kind: str, tokenizer: HuggingFaceTokenizer
 ) -> tuple[list[list[int]], list[int]]:
     """Locate continuation boundaries using the reference common-prefix/suffix rules."""
-    tokens = tokenizer.encode(prompts, prepend=tokenizer.get_bos_token_id())
+    tokens = tokenizer.encode_batch(prompts, prepend=tokenizer.get_bos_token_id())
     if kind == "language_modeling":
         prefix, complete = tokens
         if prefix != complete[: len(prefix)] or len(prefix) >= len(complete):

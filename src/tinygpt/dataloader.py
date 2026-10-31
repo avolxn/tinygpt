@@ -197,7 +197,7 @@ def streaming_data_loader(
 
     def refill_buffer(doc_buffer: list[list[int]]) -> bool:
         doc_batch = next(batches)
-        token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
+        token_lists = tokenizer.encode_batch(doc_batch, prepend=bos_token)
         if not token_lists:
             return False
         non_empty = [tokens for tokens in token_lists if tokens]
@@ -249,7 +249,7 @@ def text_data_loader(
 
     def refill_buffer(doc_buffer: list[list[int]]) -> bool:
         lines = next(batches)
-        for tokens in tokenizer.encode(lines, prepend=bos_token):
+        for tokens in tokenizer.encode_batch(lines, prepend=bos_token):
             if tokens:
                 doc_buffer.append(tokens)
         return bool(doc_buffer)

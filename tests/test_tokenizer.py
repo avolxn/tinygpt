@@ -48,7 +48,7 @@ def test_encode_decode_roundtrip(tokenizer: HuggingFaceTokenizer) -> None:
 
 def test_encode_batch(tokenizer: HuggingFaceTokenizer) -> None:
     texts = ["Hello!", "World?"]
-    ids = tokenizer.encode(texts)
+    ids = tokenizer.encode_batch(texts)
     assert isinstance(ids, list)
     assert len(ids) == 2
     for i, text in enumerate(texts):

@@ -1,7 +1,7 @@
 """Teacher tokenization and chat rendering through Hugging Face."""
 
 import re
-from typing import Any, cast, overload
+from typing import Any, cast
 
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
@@ -89,7 +89,7 @@ class HuggingFaceTokenizer:
             raise ValueError("Tokenizer must define EOS")
         return int(self.tokenizer.eos_token_id)
 
-    def _encode_one(
+    def encode(
         self,
         text: str,
         prepend: str | int | None = None,
@@ -128,47 +128,26 @@ class HuggingFaceTokenizer:
                 ids.append(tok)
         return ids
 
-    @overload
-    def encode(
+    def encode_batch(
         self,
-        text: str,
+        texts: list[str],
         prepend: str | int | None = None,
         append: str | int | None = None,
-    ) -> list[int]: ...
-
-    @overload
-    def encode(
-        self,
-        text: list[str],
-        prepend: str | int | None = None,
-        append: str | int | None = None,
-    ) -> list[list[int]]: ...
-
-    def encode(
-        self,
-        text: str | list[str],
-        prepend: str | int | None = None,
-        append: str | int | None = None,
-    ) -> list[int] | list[list[int]]:
-        """Encode a string or list of strings into token id(s).
+    ) -> list[list[int]]:
+        """Encode a batch of strings, optionally adding boundary tokens.
 
         Args:
-            text: A single string or a list of strings to encode.
-            prepend: Optional special token (string name or id) to prepend to each encoding.
-            append: Optional special token (string name or id) to append to each encoding.
+            texts: Strings to encode.
+            prepend: Optional special token name or ID to prepend to each sequence.
+            append: Optional special token name or ID to append to each sequence.
 
         Returns:
-            A flat list of ints for a single string, or a list of lists for batch input.
+            One list of token IDs per input string.
 
         Raises:
-            ValueError: If text is not a str or list.
+            ValueError: If prepend or append names an unknown special token.
         """
-        if isinstance(text, str):
-            return self._encode_one(text, prepend=prepend, append=append)
-        elif isinstance(text, list):
-            return [self._encode_one(t, prepend=prepend, append=append) for t in text]
-        else:
-            raise ValueError(f"Invalid input type: {type(text)}")
+        return [self.encode(text, prepend=prepend, append=append) for text in texts]
 
     def decode(self, ids: list[int]) -> str:
         """Decode a list of token ids back to a string, preserving special tokens.

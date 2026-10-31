@@ -64,7 +64,7 @@ def test_local_text_is_sharded(tokenizer, tmp_path, monkeypatch, rank, expected,
 
 def make_in_memory_loader(tokenizer, docs, B, T, device="cpu"):
     """Exercise production packing with an in-memory document source."""
-    documents = cycle(tokenizer.encode(docs, prepend=tokenizer.get_bos_token_id()))
+    documents = cycle(tokenizer.encode_batch(docs, prepend=tokenizer.get_bos_token_id()))
 
     def refill_buffer(buffer):
         buffer.extend(islice(documents, 16))
