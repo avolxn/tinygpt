@@ -19,7 +19,7 @@ class TinyGPTConfig(PreTrainedConfig):  # type: ignore[no-untyped-call]
     Args:
         window_pattern: Repeated short/full attention pattern, with a full final layer.
         transformer_depth: Number of Transformer blocks, excluding the input smear cache.
-        **kwargs: Standard Transformers NanoChat configuration fields.
+        **kwargs: Standard Transformers configuration fields.
     """
 
     model_type = "tinygpt"

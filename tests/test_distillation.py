@@ -154,8 +154,8 @@ def test_teacher_snapshot_keeps_native_weights_and_tokenizer(tmp_path, monkeypat
 
     monkeypatch.setattr("huggingface_hub.model_info", lambda *a, **kw: SimpleNamespace(sha="pinned-revision"))
     monkeypatch.setattr("huggingface_hub.snapshot_download", download)
-    monkeypatch.setattr(sys, "argv", ["prepare_teacher", "--model", "example/teacher", "--out-dir", str(target)])
-    runpy.run_module("scripts.prepare_teacher", run_name="__main__")
+    monkeypatch.setattr(sys, "argv", ["download_teacher", "--model", "example/teacher", "--out-dir", str(target)])
+    runpy.run_module("scripts.download_teacher", run_name="__main__")
     for name in ("config.json", "model.safetensors", "tokenizer.json", "tokenizer_config.json"):
         assert (source / name).read_bytes() == (target / name).read_bytes()
     validate_teacher_tokenizer_compatibility(tokenizer, HuggingFaceTokenizer.from_directory(str(target)))

@@ -125,8 +125,8 @@ with DAG(
         append_env=True,
         do_xcom_push=False,
     )
-    prepare_teacher = bash_task(
-        "prepare_teacher",
+    download_teacher = bash_task(
+        "download_teacher",
         """set -euo pipefail
 if [[ "$DEVICE_TYPE" == "cuda" ]]; then
 "$PYTHON_BIN" - <<'PY'
@@ -141,7 +141,7 @@ PY
 fi
 ARTIFACT_DIR="data/airflow/$RUN_NAME"
 mkdir -p "$ARTIFACT_DIR"
-"$PYTHON_BIN" -m scripts.prepare_teacher \
+"$PYTHON_BIN" -m scripts.download_teacher \
   --model "$TEACHER_MODEL" \
   --out-dir "$ARTIFACT_DIR/teacher"
 """,
@@ -285,5 +285,5 @@ fi
         retries=1,
     )
 
-    prepare_worker >> prepare_teacher >> pretrain >> resume_pretrain >> evaluate_base
+    prepare_worker >> download_teacher >> pretrain >> resume_pretrain >> evaluate_base
     evaluate_base >> distill >> resume_distill >> evaluate_chat

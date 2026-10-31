@@ -73,7 +73,7 @@ CPU execution is supported with `DEVICE_TYPE=cpu`; vLLM evaluation is skipped.
 Both modes download the full teacher model. Generated artifacts are stored under
 `data/`, which is excluded from version control.
 
-Individual stages are exposed as `scripts.prepare_teacher`, `scripts.pretrain`,
+Individual stages are exposed as `scripts.download_teacher`, `scripts.pretrain`,
 `scripts.distill`, and `scripts.evaluate_model`. Each module provides `--help`.
 Local text validation requires a separate `--val-txt`; `--resume-from` requires a
 complete Trainer checkpoint.

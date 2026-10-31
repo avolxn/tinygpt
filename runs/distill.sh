@@ -40,7 +40,7 @@ fi
 # shellcheck source=/dev/null
 source .venv/bin/activate
 
-python -m scripts.prepare_teacher \
+python -m scripts.download_teacher \
   --model "$TEACHER_MODEL" \
   --out-dir "$TEACHER_DIR"
 
