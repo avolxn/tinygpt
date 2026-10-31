@@ -11,7 +11,9 @@ Usage:
 
 import itertools
 import math
+import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -21,12 +23,21 @@ from tokenizers.decoders import ByteLevel
 from tinygpt.train import causal_lm_loss
 
 
+@dataclass(frozen=True)
+class TokenBytes:
+    """UTF-8 byte counts in running text and immediately after a document separator."""
+
+    values: torch.Tensor
+    initial_values: torch.Tensor
+    bos_token_id: int
+
+
 @torch.no_grad()
 def evaluate_bpb(
     model: torch.nn.Module,
     batches: Iterator[tuple[torch.Tensor, torch.Tensor]],
     steps: int,
-    token_bytes: torch.Tensor,
+    token_bytes: TokenBytes,
 ) -> float:
     """Evaluate bits-per-byte on *steps* batches from *batches*.
 
@@ -34,8 +45,7 @@ def evaluate_bpb(
         model: Transformers causal language model
         batches: iterable of (x, y) batches
         steps: number of batches to evaluate
-        token_bytes: 1-D int tensor of shape (vocab_size,); entry i is the
-                     number of UTF-8 bytes for token i, or 0 for special tokens
+        token_bytes: Byte counts with document-boundary handling; special tokens count as zero.
 
     Returns:
         Bits per byte (lower is better).
@@ -51,8 +61,13 @@ def evaluate_bpb(
 
         valid = y >= 0
         y_safe = torch.where(valid, y, torch.zeros_like(y))
-        num_bytes2d = torch.where(valid, token_bytes[y_safe], torch.zeros_like(y, dtype=token_bytes.dtype))
-        total_nats += (loss2d * (num_bytes2d > 0)).sum()
+        sizes = torch.where(
+            x.reshape(-1).eq(token_bytes.bos_token_id),
+            token_bytes.initial_values[y_safe],
+            token_bytes.values[y_safe],
+        )
+        num_bytes2d = torch.where(valid, sizes, torch.zeros_like(sizes))
+        total_nats += (loss2d * (valid & token_bytes.values[y_safe].gt(0))).sum()
         total_bytes += num_bytes2d.sum()
 
     world_size = dist.get_world_size() if dist.is_initialized() else 1
@@ -67,24 +82,43 @@ def evaluate_bpb(
     return total_nats_val / (math.log(2) * total_bytes_val)
 
 
-def compute_token_bytes(tokenizer: Any, device: torch.device | str = "cpu") -> torch.Tensor:
-    """Build the token_bytes tensor from a tokenizer.
+def compute_token_bytes(tokenizer: Any, device: torch.device | str = "cpu") -> TokenBytes:
+    """Count decoded UTF-8 bytes, including SentencePiece document-boundary behavior.
 
-    Entry i is the number of UTF-8 bytes that token i decodes to, or 0 for
-    special tokens (they should not contribute to the bpb metric).
+    Byte-fallback tokens count as one raw byte even when a single token cannot
+    form valid UTF-8. Special tokens do not contribute to the BPB denominator.
 
     Args:
         tokenizer: HuggingFaceTokenizer instance
         device: where to place the resulting tensor
 
     Returns:
-        1-D int32 tensor of shape (vocab_size,)
+        Byte-count tables and the document separator ID.
     """
     native = tokenizer.tokenizer
-    if not isinstance(native.backend_tokenizer.decoder, ByteLevel):
-        raise ValueError("BPB evaluation requires the teacher's byte-level tokenizer")
+    decoder = native.backend_tokenizer.decoder
+    if decoder is None:
+        raise ValueError("BPB evaluation requires a tokenizer decoder")
     special_ids = set(native.all_special_ids)
     tokens = native.convert_ids_to_tokens(list(range(tokenizer.get_vocab_size())))
 
-    token_bytes_list = [0 if token_id in special_ids else len(token) for token_id, token in enumerate(tokens)]
-    return torch.tensor(token_bytes_list, dtype=torch.int32, device=device)
+    prefix_bytes = len(decoder.decode(["a"]).encode("utf-8"))
+    token_bytes_list = []
+    initial_bytes_list = []
+    for token_id, token in enumerate(tokens):
+        if token_id in special_ids:
+            size = initial_size = 0
+        elif isinstance(decoder, ByteLevel):
+            size = initial_size = len(token)
+        elif re.fullmatch(r"<0x[0-9A-Fa-f]{2}>", token):
+            size = initial_size = 1
+        else:
+            size = len(decoder.decode(["a", token]).encode("utf-8")) - prefix_bytes
+            initial_size = len(decoder.decode([token]).encode("utf-8"))
+        token_bytes_list.append(size)
+        initial_bytes_list.append(initial_size)
+    return TokenBytes(
+        torch.tensor(token_bytes_list, dtype=torch.int32, device=device),
+        torch.tensor(initial_bytes_list, dtype=torch.int32, device=device),
+        tokenizer.get_bos_token_id(),
+    )

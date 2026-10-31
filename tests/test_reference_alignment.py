@@ -9,7 +9,7 @@ from transformers import TrainerCallback, TrainingArguments
 
 from tinygpt.config import compute_scaled_total_batch_size, compute_scaled_weight_decay, make_config
 from tinygpt.dataloader import CLIMBMIX_DATASET, resolve_dataset_source
-from tinygpt.metrics import compute_token_bytes, evaluate_bpb
+from tinygpt.metrics import TokenBytes, compute_token_bytes, evaluate_bpb
 from tinygpt.model import TinyGPTForCausalLM
 from tinygpt.optimizer import get_lr_multiplier, make_param_groups
 from tinygpt.train import TinyGPTTrainer, causal_lm_loss
@@ -21,8 +21,8 @@ def test_bpb_counts_raw_bytes_instead_of_unicode_replacement_characters():
     tokenizer = make_test_tokenizer(["Hello café."])
     counts = compute_token_bytes(tokenizer)
     for text in ("café", "こんにちは", "😀"):
-        assert sum(counts[token].item() for token in tokenizer.encode(text)) == len(text.encode("utf-8"))
-    assert all(counts[token] == 0 for token in tokenizer.tokenizer.all_special_ids)
+        assert sum(counts.values[token].item() for token in tokenizer.encode(text)) == len(text.encode("utf-8"))
+    assert all(counts.values[token] == 0 for token in tokenizer.tokenizer.all_special_ids)
 
 
 def test_distillation_lr_fraction_applies_to_every_parameter_family(tmp_path):
@@ -117,7 +117,12 @@ def _distributed_bpb_worker(rank, rendezvous):
     try:
         inputs = torch.tensor([[rank, rank]])
         labels = torch.tensor([[1, -1]]) if rank == 0 else torch.tensor([[0, 0]])
-        actual = evaluate_bpb(Model(), iter([(inputs, labels)]), 1, torch.ones(2, dtype=torch.int32))
+        actual = evaluate_bpb(
+            Model(),
+            iter([(inputs, labels)]),
+            1,
+            TokenBytes(torch.ones(2, dtype=torch.int32), torch.ones(2, dtype=torch.int32), -1),
+        )
         expected = (math.log(math.exp(2) + 1) + 2 * math.log(1 + math.e)) / (3 * math.log(2))
         assert actual == pytest.approx(expected)
     finally:
@@ -139,7 +144,7 @@ def test_validation_bpb_weights_supervised_tokens():
     inputs = torch.tensor([[1, 2, 3, 4]])
     labels = [torch.tensor([[2, -1, -1, -1]]), torch.tensor([[2, 3, 4, 5]])]
     expected = sum(causal_lm_loss(model, inputs, y, reduction="sum").item() for y in labels) / (5 * math.log(2))
-    token_bytes = torch.ones(32, dtype=torch.int32)
+    token_bytes = TokenBytes(torch.ones(32, dtype=torch.int32), torch.ones(32, dtype=torch.int32), -1)
     actual = evaluate_bpb(model, iter((inputs, y) for y in labels), 2, token_bytes)
     assert actual == pytest.approx(expected)
     assert math.isinf(evaluate_bpb(model, iter([(inputs, torch.full_like(inputs, -1))]), 1, token_bytes))
@@ -277,3 +282,39 @@ def test_scheduler_handles_zero_warmup_and_warmdown():
 
     with pytest.raises(ValueError, match="warmdown_ratio"):
         get_lr_multiplier(0, 10, warmup_steps=0, warmdown_ratio=1.1)
+
+
+def test_bpb_supports_sentencepiece_byte_fallback():
+    from tokenizers import Tokenizer, decoders
+    from tokenizers.models import WordLevel
+    from transformers import PreTrainedTokenizerFast
+
+    from tinygpt.tokenizer import HuggingFaceTokenizer
+
+    backend = Tokenizer(WordLevel({"<unk>": 0, "▁hi": 1, "▁é": 2, "<0xC3>": 3, "<0xA9>": 4, "</s>": 5}))
+    backend.decoder = decoders.Sequence(
+        [
+            decoders.Replace("▁", " "),
+            decoders.ByteFallback(),
+            decoders.Fuse(),
+            decoders.Strip(" ", 1, 0),
+        ]
+    )
+    native = PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        unk_token="<unk>",
+        eos_token="</s>",
+        chat_template="{{ messages }}",
+    )
+    sizes = compute_token_bytes(HuggingFaceTokenizer(native))
+    assert sizes.values.tolist() == [0, 3, 3, 1, 1, 0]
+    assert sizes.initial_values.tolist() == [0, 2, 2, 1, 1, 0]
+
+
+@pytest.mark.parametrize("initial_bytes", [0, 2])
+def test_bpb_uses_initial_bytes_only_at_document_boundaries(initial_bytes):
+    model = TinyGPTForCausalLM(make_config(1, aspect_ratio=8, head_dim=8, vocab_size=32, sequence_len=8)).eval()
+    inputs, labels = torch.tensor([[0, 1]]), torch.tensor([[1, 1]])
+    counts = TokenBytes(torch.full((32,), 3), torch.full((32,), initial_bytes), 0)
+    expected = causal_lm_loss(model, inputs, labels, reduction="sum").item() / ((3 + initial_bytes) * math.log(2))
+    assert evaluate_bpb(model, iter([(inputs, labels)]), 1, counts) == pytest.approx(expected)
