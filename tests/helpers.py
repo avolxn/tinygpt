@@ -3,8 +3,12 @@ from collections.abc import Iterable
 from tokenizers import Tokenizer, decoders, pre_tokenizers
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
+from transformers import PreTrainedTokenizerFast
 
-from tinygpt.tokenizer import SPECIAL_TOKENS, HuggingFaceTokenizer
+from tinygpt.tokenizer import HuggingFaceTokenizer
+
+SPECIAL_TOKENS = ["<bos>", "<eos>", "<user>", "<assistant>", "<system>"]
+CHAT_TEMPLATE = "{{ bos_token }}{% for message in messages %}{{ '<' + message['role'] + '>' + message['content'] }}{% if message['role'] == 'assistant' %}{{ eos_token }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<assistant>' }}{% endif %}"
 
 
 def make_test_tokenizer(texts: Iterable[str], vocab_size: int = 512) -> HuggingFaceTokenizer:
@@ -21,4 +25,12 @@ def make_test_tokenizer(texts: Iterable[str], vocab_size: int = 512) -> HuggingF
             special_tokens=SPECIAL_TOKENS,
         ),
     )
-    return HuggingFaceTokenizer(tokenizer)
+    return HuggingFaceTokenizer(
+        PreTrainedTokenizerFast(
+            tokenizer_object=tokenizer,
+            bos_token="<bos>",
+            eos_token="<eos>",
+            additional_special_tokens=SPECIAL_TOKENS,
+            chat_template=CHAT_TEMPLATE,
+        )
+    )

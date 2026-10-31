@@ -302,7 +302,7 @@ class TinyGPTTrainer(Trainer):
         teacher_input_ids = input_ids.to(teacher_device)
         with torch.no_grad():
             teacher_logits = model_logits(self._teacher_model, teacher_input_ids)
-        teacher_logits = teacher_logits.to(student_logits.device)
+        teacher_logits = teacher_logits[..., : student_logits.size(-1)].to(student_logits.device)
 
         distill_loss = masked_distillation_loss(
             student_logits,

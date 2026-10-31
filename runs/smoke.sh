@@ -9,8 +9,8 @@ mkdir -p data
 
 MLFLOW_RUN="${MLFLOW_RUN:-smoke}"
 DEVICE_TYPE="${DEVICE_TYPE:-cpu}"
-TEACHER_MODEL="${TEACHER_MODEL:-karpathy/nanochat-d32}"
-TEACHER_DIR="${TEACHER_DIR:-data/teacher_smoke}"
+TEACHER_MODEL="${TEACHER_MODEL:-mistralai/Mistral-7B-Instruct-v0.3}"
+TEACHER_DIR="${TEACHER_DIR:-data/teachers/${TEACHER_MODEL//\//--}}"
 TEACHER_DEVICE="${TEACHER_DEVICE:-same}"
 
 if [ "$DEVICE_TYPE" = "cuda" ]; then

@@ -250,13 +250,13 @@ if __name__ == "__main__":
             "If yesterday was Friday, then tomorrow will be",
             "The opposite of hot is",
         ]:
-            tokens = tokenizer.encode(prompt, prepend="<|bos|>")
+            tokens = tokenizer.encode(prompt, prepend=tokenizer.get_bos_token_id())
             sample = vllm.generate(
                 tokens,
                 max_tokens=args.max_new_tokens,
                 temperature=0,
                 top_k=args.top_k,
-                stop=["<|assistant_end|>", "<|bos|>"],
+                stop=[tokenizer.decode([tokenizer.get_eos_token_id()])],
             )
             print0(sample)
 

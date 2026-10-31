@@ -10,8 +10,8 @@ mkdir -p data
 
 MLFLOW_RUN="${MLFLOW_RUN:-distill}"
 DEVICE_TYPE="${DEVICE_TYPE:-cuda}"
-TEACHER_MODEL="${TEACHER_MODEL:-karpathy/nanochat-d32}"
-TEACHER_DIR="${TEACHER_DIR:-data/teacher}"
+TEACHER_MODEL="${TEACHER_MODEL:-mistralai/Mistral-7B-Instruct-v0.3}"
+TEACHER_DIR="${TEACHER_DIR:-data/teachers/${TEACHER_MODEL//\//--}}"
 STUDENT_RUN="${STUDENT_RUN:-student}"
 DISTILL_RUN="${DISTILL_RUN:-distill}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"

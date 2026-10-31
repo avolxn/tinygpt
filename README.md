@@ -12,14 +12,16 @@ and taking the tokenizer from the teacher.
 ## Architecture
 
 The reference implementation is pinned to nanochat commit `92d63d4`. The student
-has 20 Transformer blocks with ReLU² MLPs, rotary QK-normalized attention,
+has 24 Transformer blocks with ReLU² MLPs, rotary QK-normalized attention,
 `SSSL` short/full attention windows, value embeddings, residual scalars,
 input smear, and backout. Transformers provides the model format and supported
 components; the remaining architecture is implemented in the project.
 
-The default teacher is `karpathy/nanochat-d32`, downloaded from a pinned converted
-Transformers revision. Its tokenizer and token IDs are preserved. Pretraining
-uses ClimbMix with nanochat's row-group partitioning and BOS-aligned best-fit
+The default teacher is `mistralai/Mistral-7B-Instruct-v0.3`. Any Transformers causal
+language model with a fast tokenizer, EOS token, and a text chat template can be
+selected through `TEACHER_MODEL` or the Airflow `teacher_model` parameter. Teacher
+weights are downloaded directly from Hugging Face; the tokenizer, token IDs, and
+native chat template are preserved. Pretraining uses ClimbMix with nanochat's row-group partitioning and BOS-aligned best-fit
 packing. Distillation uses SmolTalk, MMLU, and GSM8K with the reference sampling
 ratios and assistant-token masks. Its loss combines supervised cross-entropy
 and temperature-scaled teacher KL divergence.
@@ -51,7 +53,13 @@ NPROC_PER_NODE=8 bash runs/distill.sh
 The script installs locked dependencies, prepares the teacher, pretrains the
 student, runs distillation, and evaluates the resulting checkpoint.
 `TEACHER_MODEL`, `TEACHER_DIR`, `TEACHER_DEVICE`, `STUDENT_RUN`, and `DISTILL_RUN`
-override the corresponding defaults.
+override the corresponding defaults. For example, `TEACHER_MODEL=Qwen/Qwen3-8B`
+selects a Qwen teacher. The default teacher directory is derived from the model
+ID; use a separate `TEACHER_DIR` when changing revision. The student vocabulary
+follows the selected tokenizer, so its
+parameter count also depends on the teacher. Replacing a teacher during
+distillation or resume requires the same tokenizer, token IDs, and chat template;
+a different tokenizer requires a new student.
 `DEVICE_BATCH_SIZE` and `DISTILL_BATCH_SIZE` control per-GPU batches while
 preserving the global token batch through accumulation. FP8 pretraining is enabled by default; set `FP8=0` to disable it.
 

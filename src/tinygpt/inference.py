@@ -109,7 +109,7 @@ class VLLM:
         temperature: float,
         top_k: int | None = None,
     ) -> str:
-        """Generate a chat response with nanochat's calculator tool protocol.
+        """Generate a chat response with the dataset calculator annotations.
 
         Args:
             prompt: Tokenized conversation ending with the assistant prefix.
@@ -121,9 +121,6 @@ class VLLM:
         Returns:
             Assistant text, including calculator markers and supplied outputs.
         """
-        vocabulary = tokenizer.get_vocab()
-        python_start, python_end = (vocabulary[name] for name in ("<|python_start|>", "<|python_end|>"))
-        endings = [vocabulary["<|assistant_end|>"], tokenizer.get_bos_token_id()]
         generated: list[int] = []
         remaining = max_tokens
         while remaining > 0:
@@ -131,7 +128,9 @@ class VLLM:
                 max_tokens=remaining,
                 temperature=temperature,
                 top_k=top_k or -1,
-                stop_token_ids=[python_end, *endings],
+                stop=["</calculator>"],
+                include_stop_str_in_output=True,
+                stop_token_ids=[tokenizer.get_eos_token_id()],
                 skip_special_tokens=False,
             )
             response = self._llm.generate([{"prompt_token_ids": prompt + generated}], params, use_tqdm=False)[
@@ -140,16 +139,16 @@ class VLLM:
             tokens = list(response.token_ids)
             if not tokens:
                 break
-            remaining -= len(tokens)
             generated.extend(tokens)
-            if tokens[-1] in endings:
-                generated.pop()
+            remaining -= len(tokens)
+            text = tokenizer.decode(generated)
+            if not text.endswith("</calculator>") or "<calculator>" not in text:
                 break
-            if tokens[-1] == python_end and python_start in generated:
-                start = len(generated) - 1 - generated[::-1].index(python_start)
-                result = use_calculator(tokenizer.decode(generated[start + 1 : -1]))
-                if result is not None:
-                    forced = tokenizer.encode(result, prepend="<|output_start|>", append="<|output_end|>")[:remaining]
-                    remaining -= len(forced)
-                    generated.extend(forced)
-        return tokenizer.decode(generated)
+            expression = text.rsplit("<calculator>", 1)[1].removesuffix("</calculator>")
+            result = use_calculator(expression)
+            if result is None:
+                break
+            forced = tokenizer.encode("<result>" + result + "</result>")[:remaining]
+            generated.extend(forced)
+            remaining -= len(forced)
+        return tokenizer.decode(generated).removesuffix(tokenizer.decode([tokenizer.get_eos_token_id()]))

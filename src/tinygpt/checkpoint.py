@@ -14,12 +14,12 @@ import json
 import logging
 import os
 import platform
-import shutil
 import subprocess
 import sys
 from typing import Any, cast
 
 import torch
+from transformers import AutoTokenizer
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
@@ -30,12 +30,6 @@ from tinygpt.utils import compute_dtype
 logger = logging.getLogger(__name__)
 TRAINER_STATE_NAME = "trainer_state.json"
 METADATA_NAME = "tinygpt_metadata.json"
-TOKENIZER_FILES = (
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "special_tokens_map.json",
-    "chat_template.jinja",
-)
 
 
 def get_checkpoint_dir(out_dir: str, run_name: str, phase: str = "pretrain") -> str:
@@ -72,9 +66,7 @@ def build_checkpoint_metadata(
         "python_version": platform.python_version(),
         "platform": platform.platform(),
         "torch_version": torch.__version__,
-        "teacher_source": _load_optional_json(os.path.join(getattr(args, "teacher_model", ""), CONFIG_NAME)).get(
-            "teacher_source"
-        ),
+        "teacher_source": _load_optional_json(os.path.join(getattr(args, "teacher_model", ""), "teacher_source.json")),
     }
 
 
@@ -131,10 +123,7 @@ def save_checkpoint_assets(
         logger.info("Saved metadata to: %s", metadata_path)
 
     if tokenizer_dir is not None:
-        for filename in TOKENIZER_FILES:
-            source = os.path.join(tokenizer_dir, filename)
-            if os.path.exists(source):
-                shutil.copy2(source, os.path.join(output_dir, filename))
+        AutoTokenizer.from_pretrained(tokenizer_dir, use_fast=True).save_pretrained(output_dir)
 
 
 def build_model_from_checkpoint(

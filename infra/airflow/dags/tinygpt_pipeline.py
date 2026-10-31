@@ -10,7 +10,7 @@ from airflow.sdk import DAG, Param
 PYTHON_BIN = "/opt/tinygpt/.venv/bin/python"
 TORCHRUN_BIN = "/opt/tinygpt/.venv/bin/torchrun"
 WORKSPACE = "/workspace"
-TEACHER_MODEL = "karpathy/nanochat-d32"
+TEACHER_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 
 COMMON_ENV = {
     "PYTHON_BIN": PYTHON_BIN,

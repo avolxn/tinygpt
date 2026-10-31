@@ -198,7 +198,7 @@ print0(f"Loading teacher model from {args.teacher_model} on {teacher_device}")
 teacher_model, teacher_meta = load_teacher_model(args.teacher_model, device=teacher_device)
 teacher_tokenizer = HuggingFaceTokenizer.from_directory(args.teacher_model)
 validate_teacher_tokenizer_compatibility(tokenizer, teacher_tokenizer)
-if meta["model_config"]["vocab_size"] != teacher_meta["model_config"]["vocab_size"]:
+if meta["model_config"]["vocab_size"] > teacher_meta["model_config"]["vocab_size"]:
     raise ValueError(
         "Student/teacher model vocab sizes differ. "
         f"student={meta['model_config']['vocab_size']}, "

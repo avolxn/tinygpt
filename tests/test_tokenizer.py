@@ -12,22 +12,18 @@ from tests.helpers import make_test_tokenizer
 from tinygpt.tokenizer import HuggingFaceTokenizer
 
 
-def test_system_message_matches_nanochat_user_prefix() -> None:
+def test_native_system_message_is_preserved() -> None:
     tokenizer = make_test_tokenizer(["Be concise. Hello. Hi."])
-    system = {
+    conversation = {
         "messages": [
             {"role": "system", "content": "Be concise."},
             {"role": "user", "content": "Hello."},
             {"role": "assistant", "content": "Hi."},
         ]
     }
-    merged = {
-        "messages": [
-            {"role": "user", "content": "Be concise.\n\nHello."},
-            {"role": "assistant", "content": "Hi."},
-        ]
-    }
-    assert tokenizer.render_conversation(system) == tokenizer.render_conversation(merged)
+    ids, mask = tokenizer.render_conversation(conversation)
+    assert "<system>Be concise." in tokenizer.decode(ids)
+    assert "Be concise." not in tokenizer.decode([t for t, m in zip(ids, mask, strict=True) if m])
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
@@ -67,13 +63,13 @@ def test_encode_with_prepend(tokenizer: HuggingFaceTokenizer) -> None:
 
 def test_special_tokens_present(tokenizer: HuggingFaceTokenizer) -> None:
     specials = tokenizer.get_special_tokens()
-    assert "<|bos|>" in specials
-    assert "<|user_start|>" in specials
-    assert "<|assistant_start|>" in specials
+    assert "<bos>" in specials
+    assert "<user>" in specials
+    assert "<assistant>" in specials
 
 
 def test_encode_special(tokenizer: HuggingFaceTokenizer) -> None:
-    bos_id = tokenizer.encode_special("<|bos|>")
+    bos_id = tokenizer.encode_special("<bos>")
     assert isinstance(bos_id, int)
     assert bos_id >= 0
 
@@ -124,8 +120,8 @@ def test_render_conversation_mask_assistant_only(tokenizer: HuggingFaceTokenizer
     }
     ids, mask = tokenizer.render_conversation(conv)
 
-    user_start = tokenizer.encode_special("<|user_start|>")
-    user_end = tokenizer.encode_special("<|user_end|>")
+    user_start = tokenizer.encode_special("<user>")
+    user_end = tokenizer.encode_special("<assistant>")
     if user_start in ids and user_end in ids:
         i_start = ids.index(user_start)
         i_end = ids.index(user_end)
@@ -169,12 +165,9 @@ def test_tool_output_is_not_supervised(tokenizer: HuggingFaceTokenizer) -> None:
         ]
     }
     ids, mask = tokenizer.render_conversation(conversation)
-    output_start = ids.index(tokenizer.encode_special("<|output_start|>"))
-    output_end = ids.index(tokenizer.encode_special("<|output_end|>"))
-    assert not any(mask[output_start : output_end + 1])
-    python_start = ids.index(tokenizer.encode_special("<|python_start|>"))
-    python_end = ids.index(tokenizer.encode_special("<|python_end|>"))
-    assert all(mask[python_start : python_end + 1])
+    supervised = tokenizer.decode([token for token, include in zip(ids, mask, strict=True) if include])
+    assert "<result>" not in supervised
+    assert "<calculator>print(2)</calculator>" in supervised
     assert mask[-1] == 1
 
 
@@ -182,4 +175,4 @@ def test_completion_prompt_contains_token_ids(tokenizer: HuggingFaceTokenizer) -
     conversation = {"messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi"}]}
     ids = tokenizer.render_for_completion(conversation)
     assert all(isinstance(token, int) for token in ids)
-    assert ids[-1] == tokenizer.encode_special("<|assistant_start|>")
+    assert ids[-1] == tokenizer.encode_special("<assistant>")

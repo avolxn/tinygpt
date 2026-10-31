@@ -66,7 +66,7 @@ def test_vllm_cached_decoding_matches_training_model(tmp_path) -> None:
     torch.manual_seed(42)
     tokenizer = make_test_tokenizer(["Hello from TinyGPT. The sky is blue."])
     config = make_config(2, aspect_ratio=32, head_dim=32, vocab_size=tokenizer.get_vocab_size(), sequence_len=256)
-    config.eos_token_id = tokenizer.encode_special("<|assistant_end|>")
+    config.eos_token_id = tokenizer.get_eos_token_id()
     reference = TinyGPTForCausalLM(config).eval()
     with torch.no_grad():
         for parameter in reference.parameters():
@@ -103,3 +103,40 @@ def test_vllm_cached_decoding_matches_training_model(tmp_path) -> None:
                 log_probs = reference(inputs).logits[0, -1].log_softmax(-1)
                 assert abs(completion.logprobs[step][token].logprob - log_probs[token].item()) < 0.08
                 assert log_probs[token] >= log_probs.max() - 0.08
+
+
+def test_calculator_continuation_uses_native_eos(monkeypatch):
+    from tests.helpers import make_test_tokenizer
+
+    tokenizer = make_test_tokenizer(["<calculator>2+2</calculator><result>4</result>#### 4"])
+    responses = iter(
+        [
+            tokenizer.encode("<calculator>2+2</calculator>"),
+            tokenizer.encode("#### 4", append=tokenizer.get_eos_token_id()),
+        ]
+    )
+    requests = []
+    settings = []
+
+    class Engine:
+        def generate(self, prompts, params, use_tqdm):
+            requests.append(prompts[0]["prompt_token_ids"])
+            return [SimpleNamespace(outputs=[SimpleNamespace(token_ids=next(responses))])]
+
+    def sampling_params(**kwargs):
+        settings.append(kwargs)
+        return kwargs
+
+    def calculator(expression):
+        assert expression == "2+2"
+        return "4"
+
+    monkeypatch.setattr("tinygpt.inference.use_calculator", calculator)
+    backend = VLLM.__new__(VLLM)
+    backend._llm = Engine()
+    backend._sampling_params = sampling_params
+    prompt = tokenizer.encode("Question")
+    answer = backend.generate_conversation(prompt, tokenizer, max_tokens=128, temperature=0)
+    assert answer == "<calculator>2+2</calculator><result>4</result>#### 4"
+    assert "<result>4</result>" in tokenizer.decode(requests[1])
+    assert settings[0]["stop_token_ids"] == [tokenizer.get_eos_token_id()]

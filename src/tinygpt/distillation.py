@@ -9,8 +9,6 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from transformers import AutoModelForCausalLM
 
-from tinygpt.tokenizer import SPECIAL_TOKENS
-
 _TOKENIZER_PROBES = (
     "Hello world!",
     "The quick brown fox jumps over 13 lazy dogs.\n",
@@ -57,14 +55,12 @@ def validate_teacher_tokenizer_compatibility(
         if student_get_vocab() != teacher_get_vocab():
             raise ValueError("Teacher/student tokenizers have different token-to-id mappings")
 
-    for token in SPECIAL_TOKENS:
-        student_id = student_tokenizer.encode_special(token)
-        teacher_id = teacher_tokenizer.encode_special(token)
-        if student_id != teacher_id:
+    for attribute in ("bos_token_id", "eos_token_id", "chat_template"):
+        student = getattr(getattr(student_tokenizer, "tokenizer", student_tokenizer), attribute, None)
+        teacher = getattr(getattr(teacher_tokenizer, "tokenizer", teacher_tokenizer), attribute, None)
+        if student != teacher:
             raise ValueError(
-                "Teacher/student special token ids differ for "
-                f"{token!r}: student={student_id}, teacher={teacher_id}. "
-                "Online KL distillation requires identical token ids."
+                f"Teacher/student tokenizers differ in {attribute}; a different tokenizer requires a new student"
             )
 
     for probe in _TOKENIZER_PROBES:

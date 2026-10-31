@@ -40,6 +40,7 @@ from tinygpt.config import (
     make_config,
 )
 from tinygpt.dataloader import CLIMBMIX_DATASET, streaming_data_loader, text_data_loader
+from tinygpt.distillation import validate_teacher_tokenizer_compatibility
 from tinygpt.distributed import (
     compute_cleanup,
     compute_init,
@@ -158,7 +159,7 @@ config._attn_implementation = args.attention_backend or (
     "flash_attention_3" if device_type == "cuda" and compute_dtype == torch.bfloat16 else "sdpa"
 )
 config.bos_token_id = tokenizer.get_bos_token_id()
-config.eos_token_id = tokenizer.encode_special("<|assistant_end|>")
+config.eos_token_id = tokenizer.get_eos_token_id()
 config.pad_token_id = config.eos_token_id
 model_config_kwargs = config.to_dict()
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
@@ -169,6 +170,7 @@ if args.resume_from:
     print0(f"Resuming model weights from {args.resume_from}")
     resolved_resume_dir = resolve_model_directory(args.resume_from)
     print0(f"Resolved resume checkpoint: {resolved_resume_dir}")
+    validate_teacher_tokenizer_compatibility(HuggingFaceTokenizer.from_directory(resolved_resume_dir), tokenizer)
     model, resume_meta = build_model_from_checkpoint(resolved_resume_dir, device, phase="train")
     start_step = int(resume_meta.get("step", 0))
     print0(f"Resumed at step {start_step}")

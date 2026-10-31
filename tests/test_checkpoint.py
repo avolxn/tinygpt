@@ -87,11 +87,9 @@ def test_checkpoint_assets_copy_tokenizer_files() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tokenizer_dir = os.path.join(tmp, "tokenizer")
         out_dir = os.path.join(tmp, "checkpoint")
-        os.makedirs(tokenizer_dir)
-        with open(os.path.join(tokenizer_dir, "tokenizer.json"), "w", encoding="utf-8") as f:
-            f.write("{}")
-        with open(os.path.join(tokenizer_dir, "tokenizer_config.json"), "w", encoding="utf-8") as f:
-            f.write("{}")
+        from tests.helpers import make_test_tokenizer
+
+        make_test_tokenizer(["Hello world"]).save(tokenizer_dir)
 
         model.save_pretrained(out_dir)
         save_checkpoint_assets(out_dir, tokenizer_dir=tokenizer_dir)

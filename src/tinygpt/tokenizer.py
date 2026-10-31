@@ -1,78 +1,17 @@
-"""BPE tokenizers used by tinygpt.
+"""Teacher tokenization and chat rendering through Hugging Face."""
 
-On-disk runtime format:
-- `tokenizer.json`: HuggingFace tokenizers BPE
-
-Teacher preparation verifies the required special tokens without changing token IDs.
-"""
-
+import re
 from typing import Any, cast, overload
 
-from tokenizers import Tokenizer as HFTokenizer
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
-
-SPECIAL_TOKENS = [
-    "<|bos|>",
-    "<|user_start|>",
-    "<|user_end|>",
-    "<|assistant_start|>",
-    "<|assistant_end|>",
-    "<|python_start|>",
-    "<|python_end|>",
-    "<|output_start|>",
-    "<|output_end|>",
-]
-
-
-CHAT_TEMPLATE = """
-{{- bos_token -}}
-{%- for message in messages -%}
-  {%- set offset = 1 if messages[0]['role'] == 'system' else 0 -%}
-  {%- if loop.index0 < offset -%}{%- continue -%}{%- endif -%}
-  {%- if message['role'] != ('user' if (loop.index0 - offset) % 2 == 0 else 'assistant') -%}
-    {{- raise_exception('Messages must alternate user and assistant roles') -}}
-  {%- endif -%}
-  {%- if message['role'] == 'user' -%}
-    {{- '<|user_start|>' -}}
-    {%- if offset and loop.index0 == 1 -%}{{- messages[0]['content'] + '\n\n' -}}{%- endif -%}
-    {{- message['content'] + '<|user_end|>' -}}
-  {%- else -%}
-    {{- '<|assistant_start|>' -}}
-    {%- if message['content'] is string -%}
-      {% generation %}{{- message['content'] -}}{% endgeneration %}
-    {%- else -%}
-      {%- for part in message['content'] -%}
-        {%- if part['type'] == 'text' -%}
-          {% generation %}{{- part['text'] -}}{% endgeneration %}
-        {%- elif part['type'] == 'python' -%}
-          {% generation %}{{- '<|python_start|>' + part['text'] + '<|python_end|>' -}}{% endgeneration %}
-        {%- elif part['type'] == 'python_output' -%}
-          {{- '<|output_start|>' + part['text'] + '<|output_end|>' -}}
-        {%- else -%}
-          {{- raise_exception('Unknown assistant content type') -}}
-        {%- endif -%}
-      {%- endfor -%}
-    {%- endif -%}
-    {% generation %}{{- '<|assistant_end|>' -}}{% endgeneration %}
-  {%- endif -%}
-{%- endfor -%}
-{%- if add_generation_prompt -%}{{- '<|assistant_start|>' -}}{%- endif -%}
-"""
 
 
 class HuggingFaceTokenizer:
-    """Light wrapper around Hugging Face Tokenizer with conversation utilities."""
+    """Use the selected teacher's vocabulary and native chat template."""
 
-    def __init__(self, tokenizer: HFTokenizer | PreTrainedTokenizerFast) -> None:
-        if isinstance(tokenizer, HFTokenizer):
-            if tokenizer.token_to_id("<|bos|>") is None:
-                raise ValueError("Teacher tokenizer must contain <|bos|>")
-            tokenizer = PreTrainedTokenizerFast(  # type: ignore[no-untyped-call]
-                tokenizer_object=tokenizer,
-                bos_token="<|bos|>",
-                additional_special_tokens=SPECIAL_TOKENS,
-                chat_template=CHAT_TEMPLATE,
-            )
+    def __init__(self, tokenizer: PreTrainedTokenizerFast) -> None:
+        if not tokenizer.is_fast or not tokenizer.chat_template:
+            raise ValueError("A fast tokenizer with a chat template is required")
         self.tokenizer = tokenizer
 
     @classmethod
@@ -85,7 +24,16 @@ class HuggingFaceTokenizer:
         Returns:
             A HuggingFaceTokenizer loaded from the directory.
         """
-        return cls(AutoTokenizer.from_pretrained(tokenizer_dir, local_files_only=True, use_fast=True))
+        return cls(
+            cast(
+                PreTrainedTokenizerFast,
+                AutoTokenizer.from_pretrained(
+                    tokenizer_dir,
+                    local_files_only=True,
+                    use_fast=True,
+                ),
+            )
+        )
 
     def get_vocab_size(self) -> int:
         """Return the total vocabulary size including special tokens.
@@ -111,26 +59,35 @@ class HuggingFaceTokenizer:
         """Return the token id for a special token string, or None if not found.
 
         Args:
-            text: Special token string, e.g. '<|bos|>'.
+            text: Special token string, as defined by the teacher.
 
         Returns:
             Integer token id, or None if the token is not in the vocabulary.
         """
-        return cast("int | None", self.tokenizer.convert_tokens_to_ids(text))
+        return self.get_vocab().get(text)
 
     def get_bos_token_id(self) -> int:
-        """Return the teacher's nanochat BOS token ID.
-
-        Returns:
-            Integer BOS token id.
+        """Return BOS, or EOS as the document separator for tokenizers without BOS.
 
         Raises:
-            RuntimeError: If the required <|bos|> token is missing.
+            ValueError: If the tokenizer defines neither token.
         """
-        bos = self.encode_special("<|bos|>")
-        if bos is None:
-            raise RuntimeError("Failed to find BOS token in tokenizer")
-        return bos
+        token_id = self.tokenizer.bos_token_id
+        if token_id is None:
+            token_id = self.tokenizer.eos_token_id
+        if token_id is None:
+            raise ValueError("Tokenizer must define BOS or EOS for document boundaries")
+        return int(token_id)
+
+    def get_eos_token_id(self) -> int:
+        """Return the native end-of-sequence token.
+
+        Raises:
+            ValueError: If the tokenizer does not define EOS.
+        """
+        if self.tokenizer.eos_token_id is None:
+            raise ValueError("Tokenizer must define EOS")
+        return int(self.tokenizer.eos_token_id)
 
     def _encode_one(
         self,
@@ -232,46 +189,108 @@ class HuggingFaceTokenizer:
         """
         self.tokenizer.save_pretrained(tokenizer_dir)
 
+    @staticmethod
+    def _messages(conversation: dict[str, Any]) -> list[dict[str, Any]]:
+        """Render dataset calculator annotations as ordinary text without new tokens."""
+        messages = []
+        for message in conversation["messages"]:
+            content = message["content"]
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    kind, text = part["type"], part["text"]
+                    if kind == "python":
+                        text = "<calculator>" + text + "</calculator>"
+                    elif kind == "python_output":
+                        text = "<result>" + text + "</result>"
+                    elif kind != "text":
+                        raise ValueError(f"Unknown content type: {kind}")
+                    parts.append(text)
+                content = "".join(parts)
+            messages.append({**message, "content": content})
+        return messages
+
     def render_conversation(
         self,
         conversation: dict[str, Any],
         max_tokens: int = 2048,
     ) -> tuple[list[int], list[int]]:
-        """Render tokens and assistant supervision with Transformers chat templates."""
+        """Apply the native chat template and supervise assistant text and turn endings.
+
+        Args:
+            conversation: Messages with text or structured calculator content.
+            max_tokens: Maximum encoded sequence length.
+
+        Returns:
+            Token IDs and an assistant-only loss mask, excluding calculator results.
+
+        Raises:
+            ValueError: If limits or the template's content rendering are unsupported.
+        """
         if max_tokens <= 0:
             raise ValueError(f"max_tokens must be positive, got {max_tokens}")
-        encoded: Any = self.tokenizer.apply_chat_template(
-            conversation["messages"],
-            return_dict=True,
-            return_assistant_tokens_mask=True,
+        messages = self._messages(conversation)
+        rendered = cast(str, self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False))
+        spans: list[tuple[int, int]] = []
+        excluded: list[tuple[int, int]] = []
+        cursor = 0
+        for i, message in enumerate(messages):
+            if message["role"] != "assistant" or not message["content"].strip():
+                continue
+            prefix = cast(str, self.tokenizer.apply_chat_template(messages[: i + 1], tokenize=False))
+            content = message["content"].strip()
+            start = prefix.rfind(content)
+            if start < 0:
+                raise ValueError("Chat template must preserve assistant content")
+            suffix = prefix[start + len(content) :]
+            start = rendered.find(content + suffix, cursor)
+            if start < 0:
+                raise ValueError("Chat template must preserve assistant text and turn endings")
+            end = start + len(content) + len(suffix)
+            spans.append((start, end))
+            cursor = end
+            excluded.extend(
+                (start + m.start(), start + m.end()) for m in re.finditer(r"<result>.*?</result>", content, re.S)
+            )
+        encoded = self.tokenizer(
+            rendered,
+            add_special_tokens=False,
+            return_offsets_mapping=True,
             truncation=True,
             max_length=max_tokens,
         )
-        return list(encoded["input_ids"]), list(encoded["assistant_masks"])
+        mask = [
+            int(
+                end > start
+                and any(start < b and end > a for a, b in spans)
+                and not any(start < b and end > a for a, b in excluded)
+            )
+            for start, end in encoded["offset_mapping"]
+        ]
+        return list(encoded["input_ids"]), mask
 
     def render_for_completion(self, conversation: dict[str, Any]) -> list[int]:
-        """Render a conversation for completion, omitting the last assistant turn.
-
-        Strips the final assistant message and appends <|assistant_start|> so the
-        model can generate the assistant response from scratch.
+        """Apply the teacher's generation prompt to all turns before the final answer.
 
         Args:
-            conversation: Conversation dict whose last message must be from the assistant.
+            conversation: Conversation whose final message is an assistant answer.
 
         Returns:
-            List of token ids ending with the <|assistant_start|> token.
+            Token IDs ready for assistant generation.
 
         Raises:
-            ValueError: If the last message is not from the assistant.
-            RuntimeError: If <|assistant_start|> is missing from the tokenizer.
+            ValueError: If the final assistant message is missing.
         """
-        messages = conversation["messages"]
+        messages = self._messages(conversation)
         if not messages:
             raise ValueError("Conversation must contain at least one assistant message")
         if messages[-1]["role"] != "assistant":
             raise ValueError("Last message must be from assistant")
         return list(
             self.tokenizer.apply_chat_template(
-                messages[:-1], tokenize=True, return_dict=False, add_generation_prompt=True
+                messages[:-1],
+                tokenize=True,
+                return_dict=False,
+                add_generation_prompt=True,
             )
         )
