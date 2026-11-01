@@ -71,6 +71,7 @@ docker compose "${COMPOSE_FILES[@]}" exec -T airflow airflow dags trigger tinygp
 LAST_STATE=''
 while true; do
   STATE="$(docker compose "${COMPOSE_FILES[@]}" exec -T airflow airflow dags state tinygpt_training "$RUN_ID")"
+  STATE="${STATE%%,*}"
   if [[ "$STATE" != "$LAST_STATE" ]]; then
     echo "Pipeline: $STATE"
     LAST_STATE="$STATE"
