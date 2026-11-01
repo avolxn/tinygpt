@@ -35,8 +35,8 @@ COMMON_ENV = {
     "DISTILL_TASKS": "{{ params.distill_tasks }}",
     "CHAT_EVAL_TASKS": "{{ params.chat_eval_tasks }}",
     "MAX_EVAL_PROBLEMS": "{{ params.max_eval_problems }}",
-    "EVAL_TOKENS": "{{ params.eval_tokens }}",
-    "EVAL_EVERY": "{{ params.eval_every }}",
+    "EVAL_TOKENS": "{{ params.eval_tokens if params.eval_tokens is not none else '' }}",
+    "EVAL_EVERY": "{{ params.eval_every if params.eval_every is not none else '' }}",
     "CORE_MAX_PER_TASK": "{{ params.core_max_per_task }}",
     "RESUME_STEPS": "{{ params.resume_steps }}",
 }
@@ -114,8 +114,8 @@ with DAG(
             enum=["", "ARC-Easy", "ARC-Challenge", "MMLU", "GSM8K", "HumanEval"],
         ),
         "max_eval_problems": Param(-1, type="integer", minimum=-1),
-        "eval_tokens": Param(80 * 524288, type="integer", minimum=1),
-        "eval_every": Param(250, type="integer", minimum=1),
+        "eval_tokens": Param(None, type=["integer", "null"], minimum=1),
+        "eval_every": Param(None, type=["integer", "null"], minimum=1),
         "core_max_per_task": Param(-1, type="integer", minimum=-1),
         "resume_steps": Param(0, type="integer", minimum=0, description="Additional steps to verify checkpoint resume"),
     },
@@ -166,12 +166,12 @@ ARGS=(
   --device-batch-size "$DEVICE_BATCH_SIZE"
   --total-batch-size "$TOTAL_BATCH_SIZE"
   --num-iterations "$PRETRAIN_ITERATIONS"
-  --eval-every "$EVAL_EVERY"
-  --eval-tokens "$EVAL_TOKENS"
   --out-dir "$ARTIFACT_DIR"
   --run-name "$RUN_NAME"
   --run "$RUN_NAME-pretrain"
 )
+if [[ -n "$EVAL_EVERY" ]]; then ARGS+=(--eval-every "$EVAL_EVERY"); fi
+if [[ -n "$EVAL_TOKENS" ]]; then ARGS+=(--eval-tokens "$EVAL_TOKENS"); fi
 if [[ -n "$TXT_INPUT" ]]; then
   ARGS+=(--txt "$TXT_INPUT" --eval-every -1)
 fi
@@ -234,12 +234,12 @@ ARGS=(
   --max-seq-len "$MAX_SEQ_LEN"
   --device-batch-size "$DISTILL_BATCH_SIZE"
   --num-iterations "$DISTILL_ITERATIONS"
-  --eval-every "$EVAL_EVERY"
-  --eval-tokens "$EVAL_TOKENS"
   --out-dir "$ARTIFACT_DIR"
   --run-name "$RUN_NAME"
   --run "$RUN_NAME-distill"
 )
+if [[ -n "$EVAL_EVERY" ]]; then ARGS+=(--eval-every "$EVAL_EVERY"); fi
+if [[ -n "$EVAL_TOKENS" ]]; then ARGS+=(--eval-tokens "$EVAL_TOKENS"); fi
 if [[ "$NPROC_PER_NODE" -eq 1 ]]; then
   "$PYTHON_BIN" -m "${ARGS[@]}"
 else

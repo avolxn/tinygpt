@@ -125,11 +125,19 @@ class Attention(nn.Module):
             )
         else:
             length = x.size(1)
-            positions = torch.arange(length, device=x.device)
-            distance = positions[:, None] - positions[None, :]
-            mask = (distance >= 0) & (distance <= self.sliding_window)
+            mask = None
+            if self.sliding_window < length - 1:
+                positions = torch.arange(length, device=x.device)
+                distance = positions[:, None] - positions[None, :]
+                mask = (distance >= 0) & (distance <= self.sliding_window)
             output = F.scaled_dot_product_attention(
-                q, k, v, attn_mask=mask, scale=self.scaling, enable_gqa=self.num_key_value_groups != 1
+                q,
+                k,
+                v,
+                attn_mask=mask,
+                is_causal=mask is None,
+                scale=self.scaling,
+                enable_gqa=self.num_key_value_groups != 1,
             ).transpose(1, 2)
         return cast(torch.Tensor, self.o_proj(output.reshape(*x.shape)))
 
