@@ -177,3 +177,31 @@ def test_batched_calculator_resumes_only_active_request(monkeypatch):
     assert "trailing" not in continued
     assert "<result>4</result>" in continued
     assert calls[1][1][0]["max_tokens"] < 128
+
+
+def test_generative_evaluation_batches_samples_and_preserves_any_pass():
+    from scripts.evaluate_model import run_generative_eval
+
+    class Task:
+        def __len__(self):
+            return 3
+
+        def __getitem__(self, index):
+            return index
+
+        def evaluate(self, problem, completion):
+            return completion == str(problem)
+
+    class Engine:
+        def __init__(self):
+            self.sizes = []
+
+        def generate_conversations(self, prompts, tokenizer, **kwargs):
+            self.sizes.append(len(prompts))
+            return ["bad" if i % 2 == 0 else str(prompt[0]) for i, prompt in enumerate(prompts)]
+
+    engine = Engine()
+    tokenizer = SimpleNamespace(render_for_completion=lambda problem: [problem])
+    accuracy = run_generative_eval(Task(), engine, tokenizer, 2, 32, 0, 50, batch_size=2)
+    assert accuracy == 1.0
+    assert engine.sizes == [4, 2]
