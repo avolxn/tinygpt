@@ -83,7 +83,7 @@ def document_batches(
                 path = hf_hub_download(CLIMBMIX_DATASET, filename, repo_type="dataset", revision=CLIMBMIX_REVISION)
                 parquet = pq.ParquetFile(path)
                 for row_group in range(rank, parquet.num_row_groups, world_size):
-                    texts = parquet.read_row_group(row_group).column(text_field).to_pylist()
+                    texts = parquet.read_row_group(row_group, columns=[text_field]).column(text_field).to_pylist()
                     for offset in range(0, len(texts), batch_size):
                         yield texts[offset : offset + batch_size]
     ds = load_dataset(resolved_name, split=resolved_split, data_files=data_files, streaming=True)

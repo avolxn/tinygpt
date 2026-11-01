@@ -55,6 +55,16 @@ def test_encode_batch(tokenizer: HuggingFaceTokenizer) -> None:
         assert tokenizer.decode(ids[i]) == text
 
 
+@pytest.mark.parametrize("prepend,append", [(None, None), ("<bos>", "<assistant>"), (0, 1)])
+def test_batch_encoding_matches_individual_sequences(tokenizer, prepend, append) -> None:
+    texts = ["", "Hello world!", "  Python\n", "Привет 🌍"]
+    expected = [tokenizer.encode(text, prepend, append) for text in texts]
+    assert tokenizer.encode_batch(texts, prepend, append) == expected
+    assert tokenizer.encode_batch([], prepend, append) == []
+    with pytest.raises(ValueError, match="Unknown special token"):
+        tokenizer.encode_batch(texts, prepend="<missing>")
+
+
 def test_encode_with_prepend(tokenizer: HuggingFaceTokenizer) -> None:
     bos = tokenizer.get_bos_token_id()
     ids = tokenizer.encode("hello", prepend=bos)

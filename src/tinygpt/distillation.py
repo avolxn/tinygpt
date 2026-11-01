@@ -89,14 +89,12 @@ def masked_distillation_loss(
         )
 
     valid_mask = labels.ne(-1)
-    if not bool(valid_mask.any()):
-        return student_logits.new_zeros(())
 
     def chunk_loss(student: torch.Tensor, teacher: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         log_probs = F.log_softmax(student.float() / temperature, dim=-1)
         probabilities = F.softmax(teacher.float() / temperature, dim=-1)
         per_token = F.kl_div(log_probs, probabilities, reduction="none").sum(dim=-1)
-        return per_token.masked_select(mask).sum()
+        return torch.where(mask, per_token, 0.0).sum()
 
     size = student_logits.size(-1)
     loss = student_logits.new_zeros(())
@@ -107,4 +105,4 @@ def masked_distillation_loss(
         strict=True,
     ):
         loss = loss + checkpoint(chunk_loss, student, teacher, mask, use_reentrant=False, preserve_rng_state=False)
-    return loss / valid_mask.sum() * (temperature**2)
+    return loss / valid_mask.sum().clamp_min(1) * (temperature**2)

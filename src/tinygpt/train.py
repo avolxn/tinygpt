@@ -79,14 +79,14 @@ def causal_lm_loss(
 ) -> torch.Tensor:
     """Compute loss against labels that are already shifted by the dataloader."""
     logits = model_logits(model, input_ids)
-    if reduction == "mean" and not bool(labels.ne(-1).any()):
-        return logits.sum() * 0.0
     loss = torch.nn.functional.cross_entropy(
         logits.reshape(-1, logits.size(-1)),
         labels.reshape(-1),
         ignore_index=-1,
-        reduction=reduction,
+        reduction="sum" if reduction == "mean" else reduction,
     )
+    if reduction == "mean":
+        return loss / labels.ne(-1).sum().clamp_min(1)
     return loss.reshape(labels.shape) if reduction == "none" else loss
 
 
@@ -244,6 +244,7 @@ class TinyGPTTrainer(Trainer):
         self._teacher_model = teacher_model
         self._distill_alpha = distill_alpha
         self._distill_temperature = distill_temperature
+        self._distill_metrics: torch.Tensor | None = None
         self._checkpoint_metadata = checkpoint_metadata or {}
         self._tokenizer_dir = tokenizer_dir
         self._optimizer_checkpoint = optimizer_checkpoint
@@ -289,14 +290,12 @@ class TinyGPTTrainer(Trainer):
             return (loss, {"loss": loss}) if return_outputs else loss
 
         student_logits = model_logits(model, input_ids)
-        if bool(labels.ne(-1).any()):
-            ce_loss = torch.nn.functional.cross_entropy(
-                student_logits.view(-1, student_logits.size(-1)),
-                labels.view(-1),
-                ignore_index=-1,
-            )
-        else:
-            ce_loss = student_logits.sum() * 0.0
+        ce_loss = torch.nn.functional.cross_entropy(
+            student_logits.reshape(-1, student_logits.size(-1)),
+            labels.reshape(-1),
+            ignore_index=-1,
+            reduction="sum",
+        ) / labels.ne(-1).sum().clamp_min(1)
 
         teacher_device = next(self._teacher_model.parameters()).device
         teacher_input_ids = input_ids.to(teacher_device)
@@ -310,6 +309,8 @@ class TinyGPTTrainer(Trainer):
             labels,
             temperature=self._distill_temperature,
         )
+        metrics = torch.stack((ce_loss.detach(), distill_loss.detach(), ce_loss.new_ones(())))
+        self._distill_metrics = metrics if self._distill_metrics is None else self._distill_metrics + metrics
         loss = (1.0 - self._distill_alpha) * ce_loss + self._distill_alpha * distill_loss
         outputs = {
             "loss": loss,
@@ -317,6 +318,19 @@ class TinyGPTTrainer(Trainer):
             "distill_loss": distill_loss.detach(),
         }
         return (loss, outputs) if return_outputs else loss
+
+    def log(self, logs: dict[str, float], start_time: float | None = None) -> None:
+        """Report mean CE and KL with native Trainer metrics at logging intervals.
+
+        Args:
+            logs: Metrics emitted by Trainer.
+            start_time: Training start time used for throughput metrics.
+        """
+        if self._distill_metrics is not None and ("loss" in logs or "train_loss" in logs):
+            ce, kl, count = self.accelerator.reduce(self._distill_metrics, reduction="sum").tolist()
+            logs = {**logs, "ce_loss": ce / count, "distill_loss": kl / count}
+            self._distill_metrics = None
+        super().log(logs, start_time)
 
     def create_optimizer(self, model: Any = None) -> torch.optim.Optimizer:
         """Create the selected optimizer with project parameter groups.

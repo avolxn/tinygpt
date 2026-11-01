@@ -64,7 +64,7 @@ class HuggingFaceTokenizer:
         Returns:
             Integer token id, or None if the token is not in the vocabulary.
         """
-        return self.get_vocab().get(text)
+        return cast(int | None, self.tokenizer.backend_tokenizer.token_to_id(text))
 
     def get_bos_token_id(self) -> int:
         """Return BOS, or EOS as the document separator for tokenizers without BOS.
@@ -147,7 +147,16 @@ class HuggingFaceTokenizer:
         Raises:
             ValueError: If prepend or append names an unknown special token.
         """
-        return [self.encode(text, prepend=prepend, append=append) for text in texts]
+        if not texts:
+            return []
+        boundaries = []
+        for token in (prepend, append):
+            token_id = self.encode_special(token) if isinstance(token, str) else token
+            if token is not None and token_id is None:
+                raise ValueError(f"Unknown special token: {token!r}")
+            boundaries.append([] if token_id is None else [token_id])
+        encoded = self.tokenizer(texts, add_special_tokens=False, return_attention_mask=False)["input_ids"]
+        return [boundaries[0] + ids + boundaries[1] for ids in encoded]
 
     def decode(self, ids: list[int]) -> str:
         """Decode a list of token ids back to a string, preserving special tokens.

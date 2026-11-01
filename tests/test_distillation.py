@@ -56,6 +56,16 @@ def test_chunked_distillation_matches_full_loss_and_gradients() -> None:
     torch.testing.assert_close(actual_grad, expected_grad)
 
 
+def test_distillation_with_no_supervised_tokens_has_zero_gradients() -> None:
+    student = torch.randn(2, 3, 7, requires_grad=True)
+    teacher = torch.randn_like(student)
+    labels = torch.full((2, 3), -1)
+    loss = masked_distillation_loss(student, teacher, labels, temperature=1.5)
+    loss.backward()
+    assert loss.item() == 0
+    torch.testing.assert_close(student.grad, torch.zeros_like(student))
+
+
 def test_validate_teacher_tokenizer_compatibility_accepts_matching_tokenizers() -> None:
     student = FakeTokenizer(vocab_size=64)
     teacher = FakeTokenizer(vocab_size=64)
@@ -118,6 +128,13 @@ def test_native_teacher_distillation_with_padded_vocabulary(tmp_path, architectu
     loss.backward()
     assert student.lm_head.weight.grad is not None
     assert all(parameter.grad is None for parameter in teacher.parameters())
+    totals = trainer._distill_metrics.clone()
+    trainer.log({"loss": loss.item()})
+    metrics = trainer.state.log_history[-1]
+    assert metrics["ce_loss"] == pytest.approx(totals[0].item())
+    assert metrics["distill_loss"] == pytest.approx(totals[1].item())
+    assert metrics["loss"] == pytest.approx(0.25 * metrics["ce_loss"] + 0.75 * metrics["distill_loss"])
+    assert trainer._distill_metrics is None
 
 
 def test_teacher_snapshot_keeps_native_weights_and_tokenizer(tmp_path, monkeypatch):
