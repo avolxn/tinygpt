@@ -348,3 +348,16 @@ def test_batched_muon_matches_independent_matrix_updates(shape):
         torch.testing.assert_close(actual, expected)
         torch.testing.assert_close(first, expected_first)
         torch.testing.assert_close(variance, expected_variance)
+
+
+@pytest.mark.parametrize("step,expected", [(0, 0.85), (150, 0.9), (300, 0.95), (500, 0.95)])
+def test_distillation_momentum_matches_reference(step, expected):
+    from types import SimpleNamespace
+
+    from tinygpt.train import ConversationScheduleCallback
+
+    optimizer = SimpleNamespace(param_groups=[{"kind": "muon", "momentum": 0.97}, {"kind": "adamw"}])
+    callback = ConversationScheduleCallback([0.0], 0.0, 0.5, 0.0)
+    callback.on_step_begin(None, SimpleNamespace(global_step=step), None, optimizer=optimizer)
+    assert optimizer.param_groups[0]["momentum"] == pytest.approx(expected)
+    assert "momentum" not in optimizer.param_groups[1]

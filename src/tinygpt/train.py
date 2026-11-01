@@ -495,6 +495,15 @@ class ConversationScheduleCallback(TrainerCallback):
         self.warmdown = warmdown
         self.final_lr = final_lr
 
+    def on_step_begin(
+        self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs: Any
+    ) -> None:
+        """Ramp conversational Muon momentum from 0.85 to 0.95 over 300 updates."""
+        fraction = min(state.global_step / 300, 1.0)
+        for group in kwargs["optimizer"].param_groups:
+            if group["kind"] == "muon":
+                group["momentum"] = (1 - fraction) * 0.85 + fraction * 0.95
+
     def on_step_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs: Any) -> None:
         """Synchronize consumed progress and apply the next optimizer step's rates."""
         progress = torch.tensor(self.progress[0], device=args.device)
