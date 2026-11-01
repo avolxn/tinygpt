@@ -16,12 +16,14 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/tinygpt/.venv \
 
 WORKDIR /opt/tinygpt
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --extra "${TINYGPT_EXTRA}" --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --extra "${TINYGPT_EXTRA}" --no-install-project
 
 COPY src ./src
 COPY scripts ./scripts
 COPY tasks ./tasks
-RUN uv sync --frozen --no-dev --extra "${TINYGPT_EXTRA}"
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --extra "${TINYGPT_EXTRA}"
 
 COPY infra/airflow/dags /opt/airflow/dags
 RUN mkdir -p /mlflow/artifacts && chown -R airflow:root /mlflow
