@@ -29,7 +29,8 @@ and temperature-scaled teacher KL divergence.
 Training uses Transformers Trainer, FSDP2, gradient accumulation, and mixed
 precision. Muon follows nanochat's Polar Express update, variance reduction,
 cautious decay, parameter groups, and schedules; other parameters use PyTorch
-AdamW. Complete matrices are gathered for Muon updates under FSDP2. Optional
+AdamW. Muon batches equal-shaped matrices across ranks using native DTensor redistribution
+and compiled updates, while FSDP2 retains parameter sharding. Optional
 FP8 pretraining uses TorchAO on H100 or newer GPUs.
 
 Checkpoints use the Hugging Face format and include tokenizer assets and run

@@ -41,7 +41,7 @@ def test_distillation_lr_fraction_applies_to_every_parameter_family(tmp_path):
         assert actual["lr"] == pytest.approx(original["lr"] * 0.8)
 
 
-def _fsdp_optimizer_worker(rank, rendezvous):
+def _fsdp_optimizer_worker(rank, rendezvous, world_size):
     from torch.distributed.checkpoint.state_dict import (
         StateDictOptions,
         get_optimizer_state_dict,
@@ -53,7 +53,7 @@ def _fsdp_optimizer_worker(rank, rendezvous):
     from tinygpt.optimizer import make_optimizer
 
     torch.set_num_threads(1)
-    torch.distributed.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2)
+    torch.distributed.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=world_size)
     try:
         torch.manual_seed(42)
         reference = TinyGPTForCausalLM(make_config(3, aspect_ratio=16, head_dim=16, vocab_size=64, sequence_len=8))
@@ -61,16 +61,21 @@ def _fsdp_optimizer_worker(rank, rendezvous):
             for parameter in reference.parameters():
                 parameter.add_(torch.randn_like(parameter) * 0.03)
         model = copy.deepcopy(reference)
-        mesh = init_device_mesh("cpu", (2,))
+        mesh = init_device_mesh("cpu", (world_size,))
         for layer in model.layers:
             fully_shard(layer, mesh=mesh)
         fully_shard(model, mesh=mesh)
-        optimizer = make_optimizer(model, weight_decay=0.0)
-        expected_optimizer = make_optimizer(reference, weight_decay=0.0)
-        inputs = torch.randint(0, 64, (2, 8))
+        optimizer = make_optimizer(model, weight_decay=0.1)
+        expected_optimizer = make_optimizer(reference, weight_decay=0.1)
+        inputs = torch.randint(0, 64, (world_size, 8))
         for iteration in range(2):
             model(inputs[rank : rank + 1]).logits.square().mean().backward()
             reference(inputs).logits.square().mean().backward()
+            for name, parameter in model.named_parameters():
+                gradient = parameter.grad.full_tensor()
+                reference_gradient = dict(reference.named_parameters())[name].grad
+                torch.testing.assert_close(gradient, reference_gradient, rtol=2e-4, atol=2e-6)
+                reference_gradient.copy_(gradient)
             optimizer.step()
             expected_optimizer.step()
             for name, parameter in model.named_parameters():
@@ -87,7 +92,7 @@ def _fsdp_optimizer_worker(rank, rendezvous):
                 state = get_optimizer_state_dict(
                     model, optimizer, options=StateDictOptions(full_state_dict=True, cpu_offload=True)
                 )
-                optimizer = make_optimizer(model, weight_decay=0.0)
+                optimizer = make_optimizer(model, weight_decay=0.1)
                 set_optimizer_state_dict(
                     model, optimizer, state, options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
                 )
@@ -95,11 +100,12 @@ def _fsdp_optimizer_worker(rank, rendezvous):
         torch.distributed.destroy_process_group()
 
 
-def test_fsdp2_muon_matches_unsharded_training_and_resumes(tmp_path):
+@pytest.mark.parametrize("world_size", [2, 4])
+def test_fsdp2_muon_matches_unsharded_training_and_resumes(tmp_path, world_size):
     torch.multiprocessing.spawn(
         _fsdp_optimizer_worker,
-        args=((tmp_path / "fsdp-rendezvous").as_uri(),),
-        nprocs=2,
+        args=((tmp_path / "fsdp-rendezvous").as_uri(), world_size),
+        nprocs=world_size,
         join=True,
     )
 
@@ -318,3 +324,26 @@ def test_bpb_uses_initial_bytes_only_at_document_boundaries(initial_bytes):
     counts = TokenBytes(torch.full((32,), 3), torch.full((32,), initial_bytes), 0)
     expected = causal_lm_loss(model, inputs, labels, reduction="sum").item() / ((3 + initial_bytes) * math.log(2))
     assert evaluate_bpb(model, iter([(inputs, labels)]), 1, counts) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("shape", [(8, 16), (16, 8), (8, 8)])
+def test_batched_muon_matches_independent_matrix_updates(shape):
+    from tinygpt.optimizer import muon_update
+
+    torch.manual_seed(17)
+    gradient = torch.randn(3, *shape)
+    first = torch.randn_like(gradient)
+    variance_shape = (*gradient.shape[:-1], 1) if shape[0] >= shape[1] else (3, 1, shape[1])
+    variance = torch.rand(variance_shape)
+    expected_first, expected_variance = first.clone(), variance.clone()
+    for momentum in (0.85, 0.95):
+        expected = torch.stack(
+            [
+                muon_update(g, m, v, momentum, 0.9, 5)
+                for g, m, v in zip(gradient, expected_first, expected_variance, strict=True)
+            ]
+        )
+        actual = muon_update(gradient, first, variance, momentum, 0.9, 5)
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(first, expected_first)
+        torch.testing.assert_close(variance, expected_variance)

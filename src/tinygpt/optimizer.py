@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import torch
 from torch import nn
-from torch.distributed.tensor import DTensor, distribute_tensor
+from torch.distributed.tensor import DTensor, Shard
 
 from tinygpt.utils import compute_dtype
 
@@ -92,14 +92,14 @@ def muon_update(
     gradient: torch.Tensor,
     momentum_buffer: torch.Tensor,
     variance_buffer: torch.Tensor,
-    momentum: float,
+    momentum: float | torch.Tensor,
     beta2: float,
     ns_steps: int,
 ) -> torch.Tensor:
-    """Compute nanochat's Polar Express and NorMuon update on a complete matrix.
+    """Compute nanochat's Polar Express and NorMuon update on complete matrices.
 
     Args:
-        gradient: Full synchronized matrix gradient.
+        gradient: Full matrix gradients with optional leading batch dimensions.
         momentum_buffer: Full first moment, updated in place.
         variance_buffer: Factored second moment, updated in place.
         momentum: Current Nesterov momentum coefficient.
@@ -128,9 +128,23 @@ def muon_update(
     v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
     variance_buffer.lerp_(v_mean.to(variance_buffer.dtype), 1 - beta2)
     step_size = variance_buffer.clamp_min(1e-10).rsqrt()
-    v_norm = (v_mean.sum() * g.size(red_dim)).sqrt()
-    v_norm_new = ((v_mean * g.size(red_dim)) * step_size.float().square()).sum().sqrt()
+    v_norm = (v_mean.sum(dim=(-2, -1), keepdim=True) * g.size(red_dim)).sqrt()
+    v_norm_new = ((v_mean * g.size(red_dim)) * step_size.float().square()).sum(dim=(-2, -1), keepdim=True).sqrt()
     return cast(torch.Tensor, g * (step_size * (v_norm / v_norm_new.clamp_min(1e-10))).to(g.dtype))
+
+
+def apply_muon_update(
+    parameters: torch.Tensor,
+    update: torch.Tensor,
+    lr: torch.Tensor,
+    weight_decay: torch.Tensor,
+) -> None:
+    """Apply the reference cautious update to a batch of local parameter shards."""
+    parameters.sub_(lr * update + lr * weight_decay * parameters * (update * parameters >= 0))
+
+
+compiled_muon_update = torch.compile(muon_update, fullgraph=True, dynamic=False)
+compiled_apply_muon_update = torch.compile(apply_muon_update, fullgraph=True, dynamic=False)
 
 
 class MuonAdamW(torch.optim.AdamW):
@@ -141,11 +155,11 @@ class MuonAdamW(torch.optim.AdamW):
     """
 
     def __init__(self, param_groups: list[dict[str, Any]]) -> None:
-        super().__init__(param_groups)
+        super().__init__(param_groups, foreach=True)
 
     @torch.no_grad()
     def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]
-        """Update AdamW groups and gather complete Muon matrices under FSDP2."""
+        """Batch Muon matrices across ranks and update local FSDP shards."""
         loss = None
         if closure is not None:
             with torch.enable_grad():
@@ -159,35 +173,63 @@ class MuonAdamW(torch.optim.AdamW):
         for group in groups:
             if group["kind"] != "muon":
                 continue
+            buckets: dict[tuple[int, ...], list[torch.Tensor]] = {}
             for parameter in group["params"]:
-                if parameter.grad is None:
-                    continue
-                sharded = isinstance(parameter, DTensor)
-                gradient = parameter.grad.full_tensor() if sharded else parameter.grad
-                full_parameter = parameter.full_tensor() if sharded else parameter
-                state = self.state[parameter]
-                if not state:
-                    state["step"] = torch.tensor(0.0)
-                    state["momentum_buffer"] = torch.zeros_like(parameter)
-                    rows, cols = parameter.shape
-                    state["variance_buffer"] = gradient.new_zeros((rows, 1) if rows >= cols else (1, cols))
-                state["step"] += 1
-                first = state["momentum_buffer"]
-                full_first = first.full_tensor() if sharded else first
-                variance = state["variance_buffer"]
-                full_variance = variance.full_tensor() if isinstance(variance, DTensor) else variance
-                update = muon_update(
-                    gradient, full_first, full_variance, group["momentum"], group["beta2"], group["ns_steps"]
+                if parameter.grad is not None:
+                    buckets.setdefault(tuple(parameter.shape), []).append(parameter)
+            batches = []
+            for parameters in buckets.values():
+                gradient = torch.stack([parameter.grad for parameter in parameters if parameter.grad is not None])
+                if isinstance(gradient, DTensor):
+                    gradient = gradient.redistribute(placements=[Shard(0)], async_op=True)
+                batches.append((parameters, gradient))
+            for parameters, gradient in batches:
+                for parameter in parameters:
+                    parameter_state = self.state[parameter]
+                    if not parameter_state:
+                        parameter_state["step"] = torch.tensor(0.0)
+                    parameter_state["step"] += 1
+                state = self.state[parameters[0]]
+                if "momentum_buffer" not in state:
+                    state["momentum_buffer"] = torch.zeros_like(gradient)
+                    red_dim = -1 if gradient.size(-2) >= gradient.size(-1) else -2
+                    state["variance_buffer"] = torch.zeros_like(gradient.mean(dim=red_dim, keepdim=True))
+                first, variance = state["momentum_buffer"], state["variance_buffer"]
+                if first.shape != gradient.shape:
+                    raise ValueError("Muon state does not match its matrix buckets; start a new training run")
+                local_gradient = gradient.to_local() if isinstance(gradient, DTensor) else gradient
+                local_first = first.to_local() if isinstance(first, DTensor) else first
+                local_variance = variance.to_local() if isinstance(variance, DTensor) else variance
+                kernel = compiled_muon_update if local_gradient.is_cuda else muon_update
+                local_update = kernel(
+                    local_gradient,
+                    local_first,
+                    local_variance,
+                    torch.tensor(group["momentum"]),
+                    group["beta2"],
+                    group["ns_steps"],
                 )
-                lr = group["lr"] * math.sqrt(max(1.0, parameter.size(-2) / parameter.size(-1)))
-                full_parameter.sub_(
-                    lr * update + lr * group["weight_decay"] * full_parameter * (update * full_parameter >= 0)
-                )
-                if sharded:
-                    parameter.copy_(distribute_tensor(full_parameter, parameter.device_mesh, parameter.placements))
-                    first.copy_(distribute_tensor(full_first, parameter.device_mesh, parameter.placements))
-                    if isinstance(variance, DTensor):
-                        variance.copy_(distribute_tensor(full_variance, variance.device_mesh, variance.placements))
+                stacked = torch.stack(parameters)
+                if isinstance(stacked, DTensor):
+                    update = (
+                        DTensor.from_local(
+                            local_update,
+                            stacked.device_mesh,
+                            [Shard(0)],
+                            shape=stacked.shape,
+                            stride=stacked.stride(),
+                        )
+                        .redistribute(placements=stacked.placements, async_op=True)
+                        .to_local()
+                    )
+                    local_parameters = stacked.to_local()
+                else:
+                    update, local_parameters = local_update, stacked
+                lr = group["lr"] * math.sqrt(max(1.0, parameters[0].size(-2) / parameters[0].size(-1)))
+                apply = compiled_apply_muon_update if local_parameters.is_cuda else apply_muon_update
+                apply(local_parameters, update, torch.tensor(lr), torch.tensor(group["weight_decay"]))
+                destinations = [p.to_local() if isinstance(p, DTensor) else p for p in parameters]
+                torch._foreach_copy_(destinations, list(local_parameters.unbind()))
         return loss
 
 
