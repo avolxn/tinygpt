@@ -102,7 +102,7 @@ The generated Airflow login password is stored inside the container at
 `/opt/airflow/simple_auth_manager_passwords.json.generated`.
 
 GPU workers require the NVIDIA Container Toolkit and
-`AIRFLOW_GPU=1 bash runs/airflow.sh`. The GPU scheduler mounts the host Docker
+`AIRFLOW_GPU=1 bash runs/airflow.sh run`. The GPU scheduler mounts the host Docker
 socket for isolated evaluation jobs. The DAG defaults to the full d24 speedrun recipe;
 its parameters can be reduced for shorter runs.
 
@@ -111,8 +111,14 @@ training on a Runpod GPU worker, register the local SSH public key with Runpod
 and use its direct TCP SSH address:
 
 ```bash
-REMOTE_HOST=root@GPU_HOST REMOTE_PORT=SSH_PORT bash runs/airflow.sh
+REMOTE_HOST=root@GPU_HOST REMOTE_PORT=SSH_PORT bash runs/airflow.sh run
 ```
+
+An optional JSON file supplies DAG parameters: `bash runs/airflow.sh run config.json`.
+The `run` command starts the stack and triggers teacher preparation, training,
+evaluation, and tracking automatically, waits for completion, and exits with a
+nonzero status if the DAG fails. The GPU worker must already be available;
+the launcher does not provision cloud resources.
 
 The scheduler copies the project to `/workspace/tinygpt` on the worker and
 installs the locked GPU dependencies. OpenSSH reverse forwarding connects the
@@ -128,7 +134,8 @@ For an end-to-end validation on two H100 GPUs, set `depth=24` and
 `max_eval_problems=2`. Leave `chat_eval_tasks` empty to cover every benchmark.
 This executes every stage with the real teacher and student, including both
 checkpoint resumes; the reduced training horizon does not measure final model
-quality. The previous GPU validation used BF16; FP8 requires a separate GPU validation.
+quality. GPU validation on 2×H100 SXM passed FP8 pretraining, pretraining resume, CORE/BPB,
+online distillation, distillation resume, and all five chat benchmarks with vLLM TP=2.
 
 Direct training runs use local SQLite tracking by default. Set
 `MLFLOW_TRACKING_URI` to connect to the MLflow server and

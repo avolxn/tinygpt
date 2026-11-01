@@ -4,6 +4,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+ACTION="${1:-up}"
+if [[ "$ACTION" != "up" && "$ACTION" != "run" ]]; then
+  echo "Usage: bash runs/airflow.sh [up|run [config.json]]" >&2
+  exit 2
+fi
+CONF='{}'
+if [[ "$ACTION" == "run" && -n "${2:-}" ]]; then
+  CONF="$(cat "$2")"
+fi
+
 if [[ "$(uname)" == "Darwin" ]]; then
   export MLFLOW_PORT="${MLFLOW_PORT:-5001}"
 fi
@@ -46,4 +56,28 @@ if [[ "${AIRFLOW_GPU:-0}" == "1" ]]; then
   COMPOSE_FILES+=(-f infra/airflow/compose.gpu.yaml)
 fi
 
-docker compose "${COMPOSE_FILES[@]}" up --build
+if [[ "$ACTION" == "up" ]]; then
+  exec docker compose "${COMPOSE_FILES[@]}" up --build
+fi
+
+docker compose "${COMPOSE_FILES[@]}" up --build -d
+docker compose "${COMPOSE_FILES[@]}" exec -T airflow airflow dags reserialize
+docker compose "${COMPOSE_FILES[@]}" exec -T airflow airflow dags unpause tinygpt_training
+LOGICAL_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_ID="manual__$LOGICAL_DATE"
+docker compose "${COMPOSE_FILES[@]}" exec -T airflow airflow dags trigger tinygpt_training \
+  --logical-date "$LOGICAL_DATE" --run-id "$RUN_ID" --conf "$CONF"
+
+LAST_STATE=''
+while true; do
+  STATE="$(docker compose "${COMPOSE_FILES[@]}" exec -T airflow airflow dags state tinygpt_training "$RUN_ID")"
+  if [[ "$STATE" != "$LAST_STATE" ]]; then
+    echo "Pipeline: $STATE"
+    LAST_STATE="$STATE"
+  fi
+  case "$STATE" in
+    success) exit 0 ;;
+    failed) exit 1 ;;
+  esac
+  sleep 15
+done
