@@ -49,7 +49,7 @@ fi
   printf 'export PYTHONPATH=%q\n' "$REMOTE_WORKSPACE/src:$REMOTE_WORKSPACE"
   printf 'export DOCKER_HOST=%q\n' "unix://$REMOTE_WORKSPACE/docker.sock"
   echo 'export MLFLOW_TRACKING_URI=http://127.0.0.1:15000 OMP_NUM_THREADS=1'
-  echo 'export PATH="$PWD/bin:$PATH"'
+  echo 'export PATH="$HOME/.cache/tinygpt/.venv/bin:$PWD/bin:$PATH"'
   echo 'export HF_HOME="$PWD/.cache/huggingface" TORCHINDUCTOR_CACHE_DIR="$PWD/.cache/torchinductor"'
   cat
 } | "${SSH[@]}" -o ExitOnForwardFailure=yes \

@@ -47,7 +47,10 @@ def bash_task(task_id: str, bash_command: str, *, retries: int = 0, trigger_rule
     return BashOperator(
         task_id=task_id,
         bash_command=(
-            "TASK_SCRIPT=$(cat <<'TINYGPT_TASK'\n" + bash_command + "\nTINYGPT_TASK\n)\n"
+            f'export PATH="{PYTHON_BIN.rsplit("/", 1)[0]}:$PATH"\n'
+            + "TASK_SCRIPT=$(cat <<'TINYGPT_TASK'\n"
+            + bash_command
+            + "\nTINYGPT_TASK\n)\n"
             'if [[ -n "${REMOTE_HOST:-}" ]]; then\n'
             '  printf "%s\\n" "$TASK_SCRIPT" | bash runs/remote.sh\n'
             'else\n  bash -c "$TASK_SCRIPT"\nfi\n'
