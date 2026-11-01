@@ -96,6 +96,7 @@ def _fsdp_optimizer_worker(rank, rendezvous, world_size):
                 set_optimizer_state_dict(
                     model, optimizer, state, options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
                 )
+        torch.distributed.barrier()
     finally:
         torch.distributed.destroy_process_group()
 
