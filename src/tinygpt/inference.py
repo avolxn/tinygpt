@@ -114,41 +114,79 @@ class VLLM:
         Args:
             prompt: Tokenized conversation ending with the assistant prefix.
             tokenizer: The unchanged teacher tokenizer.
-            max_tokens: Total sampled-token budget across tool continuations.
+            max_tokens: Token budget including supplied calculator results.
             temperature: Sampling temperature, with zero selecting greedy decoding.
             top_k: Optional vocabulary sampling cap.
 
         Returns:
             Assistant text, including calculator markers and supplied outputs.
         """
-        generated: list[int] = []
-        remaining = max_tokens
-        while remaining > 0:
-            params = self._sampling_params(
-                max_tokens=remaining,
-                temperature=temperature,
-                top_k=top_k or -1,
-                stop=["</calculator>"],
-                include_stop_str_in_output=True,
-                stop_token_ids=[tokenizer.get_eos_token_id()],
-                skip_special_tokens=False,
+        return self.generate_conversations(
+            [prompt], tokenizer, max_tokens=max_tokens, temperature=temperature, top_k=top_k
+        )[0]
+
+    def generate_conversations(
+        self,
+        prompts: list[list[int]],
+        tokenizer: HuggingFaceTokenizer,
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_k: int | None = None,
+    ) -> list[str]:
+        """Batch chat completions and resume only requests that call the calculator.
+
+        Args:
+            prompts: Tokenized conversations ending with the assistant prefix.
+            tokenizer: The unchanged teacher tokenizer.
+            max_tokens: Token budget per response, including supplied tool results.
+            temperature: Sampling temperature; zero selects greedy decoding.
+            top_k: Optional vocabulary sampling cap.
+
+        Returns:
+            Assistant responses in input order, including calculator results.
+        """
+        if max_tokens <= 0 or temperature < 0 or (top_k is not None and top_k <= 0):
+            raise ValueError("Require positive max_tokens/top_k and non-negative temperature")
+        texts = ["" for _ in prompts]
+        generated: list[list[int]] = [[] for _ in prompts]
+        remaining = [max_tokens for _ in prompts]
+        active = list(range(len(prompts)))
+        eos = tokenizer.decode([tokenizer.get_eos_token_id()])
+        while active:
+            params = [
+                self._sampling_params(
+                    max_tokens=remaining[i],
+                    temperature=temperature,
+                    top_k=top_k if top_k is not None else -1,
+                    stop=["</calculator>"],
+                    include_stop_str_in_output=True,
+                    stop_token_ids=[tokenizer.get_eos_token_id()],
+                    skip_special_tokens=False,
+                )
+                for i in active
+            ]
+            outputs = self._llm.generate(
+                [{"prompt_token_ids": prompts[i] + generated[i]} for i in active], params, use_tqdm=False
             )
-            response = self._llm.generate([{"prompt_token_ids": prompt + generated}], params, use_tqdm=False)[
-                0
-            ].outputs[0]
-            tokens = list(response.token_ids)
-            if not tokens:
-                break
-            generated.extend(tokens)
-            remaining -= len(tokens)
-            text = tokenizer.decode(generated)
-            if not text.endswith("</calculator>") or "<calculator>" not in text:
-                break
-            expression = text.rsplit("<calculator>", 1)[1].removesuffix("</calculator>")
-            result = use_calculator(expression)
-            if result is None:
-                break
-            forced = tokenizer.encode("<result>" + result + "</result>")[:remaining]
-            generated.extend(forced)
-            remaining -= len(forced)
-        return tokenizer.decode(generated).removesuffix(tokenizer.decode([tokenizer.get_eos_token_id()]))
+            continuations = []
+            for i, output in zip(active, outputs, strict=True):
+                if not output.outputs:
+                    raise RuntimeError("vLLM returned an incomplete completion batch")
+                response = output.outputs[0]
+                texts[i] += response.text
+                remaining[i] -= len(response.token_ids)
+                if remaining[i] <= 0 or not texts[i].endswith("</calculator>") or "<calculator>" not in texts[i]:
+                    continue
+                expression = texts[i].rsplit("<calculator>", 1)[1].removesuffix("</calculator>")
+                result = use_calculator(expression)
+                if result is None:
+                    continue
+                forced = tokenizer.encode("<result>" + result + "</result>")[: remaining[i]]
+                texts[i] += tokenizer.decode(forced)
+                remaining[i] -= len(forced)
+                if remaining[i] > 0:
+                    generated[i] = tokenizer.encode(texts[i])
+                    continuations.append(i)
+            active = continuations
+        return [text.removesuffix(eos) for text in texts]

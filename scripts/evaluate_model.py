@@ -43,6 +43,7 @@ def run_generative_eval(
     temperature: float,
     top_k: int,
     max_problems: int | None = None,
+    batch_size: int = 32,
 ) -> float:
     """Evaluate a generative task by sampling completions and checking any-pass.
 
@@ -55,10 +56,13 @@ def run_generative_eval(
         temperature: Sampling temperature.
         top_k: Top-k sampling parameter.
         max_problems: Cap on problems to evaluate; None means all.
+        batch_size: Number of problems to generate together.
 
     Returns:
         Pass rate (fraction of problems where any sample is correct).
     """
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
     if num_samples <= 0:
         raise ValueError(f"num_samples must be positive, got {num_samples}")
     if max_new_tokens <= 0:
@@ -72,18 +76,20 @@ def run_generative_eval(
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
     num_passed, total = 0, 0
 
-    for i in range(num_problems):
-        conversation = task_object[i]
-        encoded_prompt = tokenizer.render_for_completion(conversation)
-        completions = [
-            vllm.generate_conversation(
-                encoded_prompt, tokenizer, max_tokens=max_new_tokens, temperature=temperature, top_k=top_k
-            )
-            for _ in range(num_samples)
-        ]
-        passed = any(task_object.evaluate(conversation, c) for c in completions)
-        total += 1
-        num_passed += int(passed)
+    for start in range(0, num_problems, batch_size):
+        conversations = [task_object[i] for i in range(start, min(start + batch_size, num_problems))]
+        prompts = [tokenizer.render_for_completion(conversation) for conversation in conversations]
+        completions = vllm.generate_conversations(
+            [prompt for prompt in prompts for _ in range(num_samples)],
+            tokenizer,
+            max_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+        )
+        for i, conversation in enumerate(conversations):
+            samples = completions[i * num_samples : (i + 1) * num_samples]
+            num_passed += int(any(task_object.evaluate(conversation, completion) for completion in samples))
+            total += 1
         print(f"\r\033[K{num_passed}/{total} ({100 * num_passed / total:.2f}%)", end="", flush=True)
 
     print()
@@ -320,6 +326,7 @@ if __name__ == "__main__":
                     temperature=args.temperature,
                     top_k=args.top_k,
                     max_problems=args.max_problems,
+                    batch_size=args.device_batch_size,
                 )
             else:
                 acc = run_categorical_eval(

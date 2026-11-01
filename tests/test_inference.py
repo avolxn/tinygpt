@@ -121,7 +121,8 @@ def test_calculator_continuation_uses_native_eos(monkeypatch):
     class Engine:
         def generate(self, prompts, params, use_tqdm):
             requests.append(prompts[0]["prompt_token_ids"])
-            return [SimpleNamespace(outputs=[SimpleNamespace(token_ids=next(responses))])]
+            tokens = next(responses)
+            return [SimpleNamespace(outputs=[SimpleNamespace(token_ids=tokens, text=tokenizer.decode(tokens))])]
 
     def sampling_params(**kwargs):
         settings.append(kwargs)
@@ -140,3 +141,39 @@ def test_calculator_continuation_uses_native_eos(monkeypatch):
     assert answer == "<calculator>2+2</calculator><result>4</result>#### 4"
     assert "<result>4</result>" in tokenizer.decode(requests[1])
     assert settings[0]["stop_token_ids"] == [tokenizer.get_eos_token_id()]
+
+
+def test_batched_calculator_resumes_only_active_request(monkeypatch):
+    from tests.helpers import make_test_tokenizer
+
+    tokenizer = make_test_tokenizer(["<calculator>2+2</calculator><result>4</result>#### 4 Done trailing"])
+    calls = []
+
+    class Engine:
+        def generate(self, prompts, params, use_tqdm):
+            calls.append((prompts, params))
+            texts = ["<calculator>2+2</calculator>", "Done"] if len(calls) == 1 else ["#### 4"]
+            return [
+                SimpleNamespace(
+                    outputs=[
+                        SimpleNamespace(
+                            text=text,
+                            token_ids=tokenizer.encode(text + (" trailing" if "calculator" in text else "")),
+                        )
+                    ]
+                )
+                for text in texts
+            ]
+
+    monkeypatch.setattr("tinygpt.inference.use_calculator", lambda expression: "4" if expression == "2+2" else None)
+    backend = VLLM.__new__(VLLM)
+    backend._llm = Engine()
+    backend._sampling_params = lambda **kwargs: kwargs
+    prompts = [tokenizer.encode("First"), tokenizer.encode("Second")]
+    results = backend.generate_conversations(prompts, tokenizer, max_tokens=128, temperature=0)
+    assert results == ["<calculator>2+2</calculator><result>4</result>#### 4", "Done"]
+    assert [len(call[0]) for call in calls] == [2, 1]
+    continued = tokenizer.decode(calls[1][0][0]["prompt_token_ids"])
+    assert "trailing" not in continued
+    assert "<result>4</result>" in continued
+    assert calls[1][1][0]["max_tokens"] < 128
