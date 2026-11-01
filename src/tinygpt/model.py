@@ -309,8 +309,8 @@ def enable_float8_training(model: TinyGPTForCausalLM, recipe: str) -> None:
     """
     if model.device.type != "cuda" or torch.cuda.get_device_capability(model.device)[0] < 9:
         raise ValueError("FP8 training requires an H100 or newer CUDA GPU")
-    from torchao.float8 import Float8Linear as TorchFloat8Linear
     from torchao.float8 import Float8LinearConfig
+    from torchao.float8.float8_linear import Float8Linear as TorchFloat8Linear
 
     class Float8Linear(TorchFloat8Linear):  # type: ignore[misc]
         """Use TorchAO in training and ordinary linear evaluation, as in nanochat."""
